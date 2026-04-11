@@ -3,6 +3,9 @@
   const log = document.getElementById('log');
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
+  const native = window.StructaNative;
+  const contracts = window.StructaContracts;
+  const projectCode = contracts?.baseProjectCode || 'PRJ-STRUCTA-R1';
 
   const layers = {
     primary: [
@@ -34,6 +37,7 @@
     log.appendChild(row);
     while (log.children.length > 5) log.removeChild(log.firstChild);
     log.scrollTop = 9999;
+    native?.emit('ui_log', { text, strong, project_code: projectCode });
   };
 
   const setLogDrawer = open => {
@@ -255,6 +259,19 @@
   function triggerFrom(id) {
     selectTile(id);
     showHiddenFor(id);
+    native?.sendStructuredMessage({
+      project_code: projectCode,
+      entry_id: contracts?.makeEntryId('node') || `node-${Date.now()}`,
+      source_type: 'touch',
+      input_type: 'node-trigger',
+      target: id,
+      verb: 'inspect',
+      intent: `inspect ${id}`,
+      goal: `open ${id} node`,
+      approval_mode: 'human_required',
+      fallback: 'panel-sequence',
+      payload: { node_id: id }
+    });
     runSequence(id);
   }
 
@@ -271,6 +288,10 @@
 
   selectTile('core');
   showHiddenFor('core');
+  native?.emit('panel_boot', {
+    project_code: projectCode,
+    capabilities: native?.getCapabilities?.() || {}
+  });
   pushLog('Panel initialized.');
   pushLog('Four primary nodes loaded.');
   pushLog('Hold core or memory to reveal deeper layer.');

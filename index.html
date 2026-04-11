@@ -207,8 +207,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(112px, 38vh);
-      transform: translateY(calc(100% - 24px));
+      height: min(118px, 40vh);
+      transform: translateY(calc(100% - 34px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -223,17 +223,17 @@
 
     #log-handle {
       width: 100%;
-      min-height: 28px;
+      min-height: 34px;
       border: 0;
       margin: 0;
-      padding: 0 12px;
+      padding: 0 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 12px;
       box-sizing: border-box;
       color: #d9d1c2;
-      background: rgba(8,8,8,0.98);
+      background: linear-gradient(180deg, rgba(12,12,12,0.98), rgba(8,8,8,0.985));
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -244,13 +244,71 @@
       user-select: none;
       -webkit-user-select: none;
       outline: none;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+
+    #log-handle .log-copy {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    #log-handle .log-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    #log-handle .log-kicker {
+      font-size: 8px;
+      letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.42);
+    }
+
+    #log-handle .log-title {
+      font-size: 10px;
+      letter-spacing: 0.20em;
+      color: rgba(246,240,230,0.96);
+    }
+
+    #log-handle .log-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      flex: 0 0 auto;
+    }
+
+    #log-handle .log-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 22px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.05);
+      color: rgba(246,240,230,0.88);
+      font-size: 8px;
+      letter-spacing: 0.16em;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    #log-handle .log-chip.live {
+      color: rgba(255,255,255,0.66);
+      border-color: rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
     }
 
     #log-handle .handle-actions {
       display: flex;
       align-items: center;
       gap: 6px;
-      margin-left: auto;
+      margin-left: 2px;
     }
 
     #capture-launcher {
@@ -481,12 +539,12 @@
     }
 
     #log {
-      height: calc(100% - 22px);
+      height: calc(100% - 34px);
       background: rgba(8,8,8,0.98);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 9px;
       line-height: 1.35;
-      padding: 6px 10px 8px;
+      padding: 7px 12px 10px;
       box-sizing: border-box;
       overflow: hidden;
       border-top: 1px solid rgba(255,255,255,0.04);
@@ -497,6 +555,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       color: #bcbcbc;
+      opacity: 0.95;
     }
 
     .muted { color: var(--muted); }
@@ -506,7 +565,7 @@
 
     @media (max-width: 480px) {
       #welcome-tip { top: 8px; left: 8px; right: 8px; }
-      #log-drawer { height: min(96px, 34vh); }
+      #log-drawer { height: min(104px, 36vh); }
       #log { font-size: 8.5px; }
       #capture-tray { padding: 8px; }
       #capture-sheet { width: 100%; padding: 10px; border-radius: 16px 16px 8px 8px; }
@@ -540,10 +599,19 @@
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <div id="log-handle" role="button" tabindex="0" aria-label="Toggle audit log">
         <span class="grip" aria-hidden="true"></span>
-        <span class="label">AUDIT LOG</span>
-        <span class="state">SWIPE ↑</span>
-        <span class="handle-actions">
-          <button id="capture-launcher" type="button" aria-label="Open capture tray">CAPTURE</button>
+        <span class="log-copy">
+          <span class="log-text">
+            <span class="log-kicker">AUDIT</span>
+            <span class="log-title">LOG DRAWER</span>
+          </span>
+        </span>
+        <span class="log-meta">
+          <span class="log-chip live">LIVE</span>
+          <span class="state log-chip">SWIPE ↑</span>
+          <span class="log-chip" id="log-count">3 ITEMS</span>
+          <span class="handle-actions">
+            <button id="capture-launcher" type="button" aria-label="Open capture tray">CAPTURE</button>
+          </span>
         </span>
       </div>
       <div id="log">

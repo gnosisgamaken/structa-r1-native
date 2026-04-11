@@ -8,6 +8,7 @@
   const router = window.StructaActionRouter;
   const actionRail = document.getElementById('action-rail');
   const actionVerbButtons = actionRail ? Array.from(actionRail.querySelectorAll('[data-action-verb]')) : [];
+  const logCount = document.getElementById('log-count');
   const welcomeTip = document.getElementById('welcome-tip');
   const welcomeDismiss = document.getElementById('welcome-dismiss');
   const projectCode = contracts?.baseProjectCode || 'PRJ-STRUCTA-R1';
@@ -45,6 +46,10 @@
   let logOpen = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const syncLogCount = () => {
+    if (logCount) logCount.textContent = `${log.children.length} ITEMS`;
+  };
+
   const pushLog = (text, strong = '') => {
     const row = document.createElement('div');
     row.className = 'entry';
@@ -65,6 +70,7 @@
     row.appendChild(message);
     log.appendChild(row);
     while (log.children.length > 5) log.removeChild(log.firstChild);
+    syncLogCount();
     log.scrollTop = 9999;
     native?.emit('ui_log', { text, strong, project_code: projectCode });
   };
@@ -390,6 +396,7 @@
   pushLog('Panel initialized.');
   pushLog('Four primary nodes loaded.');
   pushLog('Hold core or memory to reveal deeper layer.');
+  syncLogCount();
 
   const onboardingKey = 'structa-onboarding-dismissed-v1';
   const shouldShowWelcome = !window.localStorage || !window.localStorage.getItem(onboardingKey);

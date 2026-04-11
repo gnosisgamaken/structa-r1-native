@@ -208,6 +208,12 @@
       overflow: hidden;
     }
 
+    .capture-hint {
+      color: rgba(255,255,255,0.38);
+      font-size: 10px;
+      margin-top: 4px;
+    }
+
     .capture-head {
       display: flex;
       align-items: center;
@@ -246,9 +252,32 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
 
+    .action-rail {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      scrollbar-width: none;
+    }
+
+    .action-rail::-webkit-scrollbar {
+      display: none;
+    }
+
+    .action-rail button {
+      flex: 0 0 auto;
+      padding: 6px 8px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .action-rail button.active,
     .capture-tabs button.active,
     .capture-panel.active {
       border-color: rgba(255,255,255,0.22);
@@ -343,6 +372,18 @@
     @media (max-width: 480px) {
       #log-drawer { height: min(96px, 34vh); }
       #log { font-size: 8.5px; }
+      #capture-tray { padding: 8px; }
+      #capture-sheet { width: 100%; padding: 10px; border-radius: 16px 16px 8px 8px; }
+      .capture-title { font-size: 13px; }
+      .capture-row { gap: 6px; }
+      .action-rail { gap: 5px; padding-bottom: 6px; }
+      .action-rail button,
+      #capture-close,
+      .capture-tabs button,
+      .capture-row button,
+      .capture-foot button { padding: 7px 9px; font-size: 10px; }
+      #voice-transcript { min-height: 80px; font-size: 11px; }
+      #camera-preview { aspect-ratio: 1 / 1.08; }
     }
   </style>
 </head>
@@ -374,6 +415,7 @@
           <div>
             <div class="capture-kicker">CAPTURE</div>
             <div class="capture-title">Voice, camera, selfie</div>
+            <div class="capture-hint">One intent. Silent by default. Approval gates mutations.</div>
           </div>
           <button id="capture-close" type="button">Close</button>
         </div>
@@ -383,12 +425,27 @@
           <button id="tab-camera" type="button">Camera</button>
         </div>
 
+        <div class="action-rail" id="action-rail" aria-label="Action router">
+          <button type="button" data-action-verb="build">Build</button>
+          <button type="button" data-action-verb="patch">Patch</button>
+          <button type="button" data-action-verb="delete">Delete</button>
+          <button type="button" data-action-verb="solve">Solve</button>
+          <button type="button" data-action-verb="consolidate">Consolidate</button>
+          <button type="button" data-action-verb="decide">Decide</button>
+          <button type="button" data-action-verb="research">Research</button>
+          <button type="button" data-action-verb="withdraw">Withdraw</button>
+        </div>
+
         <div class="capture-panel active" data-panel="voice">
           <div class="capture-row">
             <button id="voice-start" type="button">PTT</button>
             <button id="voice-stop" type="button">Stop</button>
           </div>
           <textarea id="voice-transcript" placeholder="Speak or type a transcript here for browser fallback"></textarea>
+          <div class="capture-row">
+            <button id="voice-journal" type="button">Journal</button>
+            <button id="voice-withdraw" type="button">Withdraw</button>
+          </div>
           <div class="capture-foot">
             <span id="voice-status">Idle</span>
             <button id="voice-submit" type="button">Submit</button>
@@ -417,6 +474,7 @@
 
   <script src="js/contracts.js"></script>
   <script src="js/validation.js"></script>
+  <script src="js/context-router.js"></script>
   <script src="js/rabbit-adapter.js"></script>
   <script src="js/voice-capture.js"></script>
   <script src="js/camera-capture.js"></script>

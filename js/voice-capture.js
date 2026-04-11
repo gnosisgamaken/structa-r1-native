@@ -4,6 +4,8 @@
   const status = document.getElementById('voice-status');
   const btnStart = document.getElementById('voice-start');
   const btnStop = document.getElementById('voice-stop');
+  const btnJournal = document.getElementById('voice-journal');
+  const btnWithdraw = document.getElementById('voice-withdraw');
   const btnSubmit = document.getElementById('voice-submit');
   const tray = document.getElementById('capture-tray');
   const tabVoice = document.getElementById('tab-voice');
@@ -90,6 +92,11 @@
     }
   }
 
+  function deriveTitle(text) {
+    const head = String(text || '').trim().split(/\n+/)[0].slice(0, 42).trim();
+    return head || 'Voice note';
+  }
+
   function submitTranscript() {
     const text = transcript?.value?.trim() || '';
     if (!text) {
@@ -100,8 +107,40 @@
     setStatus('Submitted');
   }
 
+  function saveJournal() {
+    const text = transcript?.value?.trim() || '';
+    if (!text) {
+      setStatus('Need transcript');
+      return;
+    }
+    native?.writeJournalEntry?.({
+      title: deriveTitle(text),
+      body: text,
+      source_type: 'voice',
+      meta: { entry_mode: 'manual' }
+    });
+    setStatus('Journal saved');
+  }
+
+  function withdrawEmail() {
+    const text = transcript?.value?.trim() || '';
+    if (!text) {
+      setStatus('Need transcript');
+      return;
+    }
+    native?.requestEmailWithdrawal?.({
+      title: deriveTitle(text),
+      body: text,
+      source_type: 'voice',
+      meta: { entry_mode: 'withdrawal', approval_state: 'pending' }
+    });
+    setStatus('Withdrawal queued');
+  }
+
   btnStart?.addEventListener('click', startListening);
   btnStop?.addEventListener('click', () => stopListening(true));
+  btnJournal?.addEventListener('click', saveJournal);
+  btnWithdraw?.addEventListener('click', withdrawEmail);
   btnSubmit?.addEventListener('click', submitTranscript);
   tabVoice?.addEventListener('click', () => setPanel('voice'));
   tabCamera?.addEventListener('click', () => setPanel('camera'));
@@ -114,6 +153,8 @@
     openTray,
     closeTray,
     submitTranscript,
+    saveJournal,
+    withdrawEmail,
     setStatus,
     get listening() { return listening; }
   });

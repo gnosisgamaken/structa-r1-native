@@ -5,7 +5,11 @@
   const logHandle = document.getElementById('log-handle');
   const native = window.StructaNative;
   const contracts = window.StructaContracts;
+  const router = window.StructaActionRouter;
+  const actionRail = document.getElementById('action-rail');
+  const actionVerbButtons = actionRail ? Array.from(actionRail.querySelectorAll('[data-action-verb]')) : [];
   const projectCode = contracts?.baseProjectCode || 'PRJ-STRUCTA-R1';
+  let activeVerb = router?.getContext?.().active_verb || 'inspect';
 
   const layers = {
     primary: [
@@ -45,7 +49,7 @@
     logDrawer.classList.toggle('open', open);
     logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
     const state = logHandle?.querySelector('.state');
-    if (state) state.textContent = open ? 'SWIPE ↓' : 'SWIPE ↑';
+    if (state) state.textContent = open ? `SWIPE ↓ · ${activeVerb.toUpperCase()}` : `SWIPE ↑ · ${activeVerb.toUpperCase()}`;
   };
 
   const toggleLogDrawer = () => setLogDrawer(!logOpen);
@@ -211,9 +215,27 @@
     logHandle.addEventListener('pointercancel', () => { els.drawerTouch = null; });
   }
 
+  function syncActionRail() {
+    actionVerbButtons.forEach(btn => {
+      const isActive = btn.dataset.actionVerb === activeVerb;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+
+  function setActiveVerb(verb, note = '') {
+    activeVerb = router?.canonicalizeVerb?.(verb) || verb || 'inspect';
+    native?.setActiveVerb?.(activeVerb, note || 'context');
+    syncActionRail();
+    const state = logHandle?.querySelector('.state');
+    if (state) state.textContent = logOpen ? `SWIPE ↓ · ${activeVerb.toUpperCase()}` : `SWIPE ↑ · ${activeVerb.toUpperCase()}`;
+    if (note) pushLog(`Action primed: ${activeVerb.toUpperCase()}`, note.toUpperCase());
+  }
+
   function selectTile(id) {
     active = focusOrder.indexOf(id) >= 0 ? focusOrder.indexOf(id) : active;
     Object.entries(els.tiles).forEach(([key, el]) => el.classList.toggle('selected', key === id));
+    native?.setActiveNode?.(id);
   }
 
   function flash(id) {
@@ -259,19 +281,21 @@
   function triggerFrom(id) {
     selectTile(id);
     showHiddenFor(id);
+    const routeVerb = activeVerb || 'inspect';
     native?.sendStructuredMessage({
       project_code: projectCode,
       entry_id: contracts?.makeEntryId('node') || `node-${Date.now()}`,
       source_type: 'touch',
       input_type: 'node-trigger',
       target: id,
-      verb: 'inspect',
-      intent: `inspect ${id}`,
-      goal: `open ${id} node`,
-      approval_mode: 'human_required',
+      verb: routeVerb,
+      intent: `${routeVerb} ${id}`,
+      goal: `${routeVerb} ${id} node`,
+      approval_mode: ['build', 'patch', 'delete', 'withdraw', 'export'].includes(routeVerb) ? 'human_required' : 'optional',
       fallback: 'panel-sequence',
-      payload: { node_id: id }
+      payload: { node_id: id, active_verb: routeVerb }
     });
+    pushLog(`${routeVerb.toUpperCase()} → ${id.toUpperCase()}`, 'ROUTE');
     runSequence(id);
   }
 
@@ -290,11 +314,20 @@
   showHiddenFor('core');
   native?.emit('panel_boot', {
     project_code: projectCode,
-    capabilities: native?.getCapabilities?.() || {}
+    capabilities: native?.getCapabilities?.() || {},
+    context: native?.getContext?.() || {}
   });
+  syncActionRail();
   pushLog('Panel initialized.');
   pushLog('Four primary nodes loaded.');
   pushLog('Hold core or memory to reveal deeper layer.');
+
+  actionVerbButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      setActiveVerb(btn.dataset.actionVerb || 'inspect', 'action');
+      pushLog(`Verb selected: ${activeVerb.toUpperCase()}`, 'MODE');
+    });
+  });
 
   document.addEventListener('keydown', e => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextTile(1); }
@@ -302,6 +335,14 @@
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerFrom(focusOrder[active]); }
     else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); window.StructaVoice?.open?.(); }
     else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); window.StructaCamera?.open?.(); }
+    else if (e.key === 'b' || e.key === 'B') { e.preventDefault(); setActiveVerb('build'); }
+    else if (e.key === 'p' || e.key === 'P') { e.preventDefault(); setActiveVerb('patch'); }
+    else if (e.key === 'd' || e.key === 'D') { e.preventDefault(); setActiveVerb('delete'); }
+    else if (e.key === 's' || e.key === 'S') { e.preventDefault(); setActiveVerb('solve'); }
+    else if (e.key === 'r' || e.key === 'R') { e.preventDefault(); setActiveVerb('research'); }
+    else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); setActiveVerb('withdraw'); }
+    else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); setActiveVerb('consolidate'); }
+    else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); setActiveVerb('decide'); }
     else if (e.key === 'Escape' || e.key === 'Backspace') {
       if (window.StructaVoice?.closeTray) window.StructaVoice.closeTray();
       if (window.StructaCamera?.stop) window.StructaCamera.stop();

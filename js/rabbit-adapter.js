@@ -1,11 +1,13 @@
 (() => {
   const contracts = window.StructaContracts;
   const validation = window.StructaValidation;
+  const router = window.StructaActionRouter;
   const runtimeEvents = [];
   const memory = {
     messages: [],
     journals: [],
-    assets: []
+    assets: [],
+    exports: []
   };
 
   function hasBridge() {
@@ -44,7 +46,7 @@
   function saveFallback() {
     if (!window.localStorage) return;
     try {
-      const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, runtimeEvents };
+      const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, exports: memory.exports, runtimeEvents };
       window.localStorage.setItem('structa-native-cache-v1', JSON.stringify(blob));
     } catch (_) {
       // ignore quota or serialization issues in browser fallback
@@ -64,6 +66,7 @@
   }
 
   function sendStructuredMessage(raw = {}) {
+    const routed = router?.routeAction?.(raw);
     const verdict = validation.validateEnvelope(raw);
     if (!verdict.ok) {
       const error = validation.validationMessage('Structured message', verdict.errors);
@@ -72,6 +75,15 @@
     }
 
     const payload = verdict.value;
+    if (routed?.ok) {
+      payload.meta = {
+        ...(payload.meta || {}),
+        route: routed.route,
+        context_snapshot: routed.context_snapshot,
+        context_summary: router?.summarizeContext?.(routed.context_snapshot)
+      };
+      emit('action_routed', routed.route);
+    }
     emit('message_prepared', payload);
     const result = postPayload({
       ...payload,
@@ -81,6 +93,32 @@
     });
     emit('message_sent', { payload, result });
     return { ok: true, payload, result, capabilities: getCapabilities() };
+  }
+
+  function buildJournalExport(raw = {}) {
+    const now = new Date().toISOString();
+    return {
+      project_code: raw.project_code || contracts.baseProjectCode,
+      entry_id: raw.entry_id || contracts.makeEntryId('export'),
+      source_type: raw.source_type || 'voice',
+      destination: raw.destination || 'email',
+      approval_state: raw.approval_state || 'pending',
+      title: raw.title || 'Journal export',
+      body: raw.body || '',
+      journals: [...memory.journals],
+      assets: [...memory.assets],
+      runtime_events: [...runtimeEvents],
+      created_at: raw.created_at || now,
+      meta: raw.meta || {}
+    };
+  }
+
+  function queueJournalExport(raw = {}) {
+    const payload = buildJournalExport(raw);
+    memory.exports.push(payload);
+    saveFallback();
+    emit('journal_export_prepared', payload);
+    return payload;
   }
 
   function writeJournalEntry(raw = {}) {
@@ -107,6 +145,29 @@
       approval_mode: 'human_required',
       fallback: 'store-only',
       payload
+    });
+  }
+
+  function requestEmailWithdrawal(raw = {}) {
+    const bundle = queueJournalExport({
+      ...raw,
+      title: raw.title || 'Email withdrawal',
+      body: raw.body || (raw.note || ''),
+      destination: 'email',
+      approval_state: 'pending'
+    });
+    return sendStructuredMessage({
+      project_code: bundle.project_code,
+      entry_id: bundle.entry_id,
+      source_type: bundle.source_type,
+      input_type: 'withdrawal',
+      target: 'export',
+      verb: 'withdraw',
+      intent: `withdraw journal export via email`,
+      goal: bundle.body || 'prepare email export',
+      approval_mode: 'human_required',
+      fallback: 'store-only',
+      payload: bundle
     });
   }
 
@@ -189,14 +250,21 @@
       messages: [...memory.messages],
       journals: [...memory.journals],
       assets: [...memory.assets],
+      exports: [...memory.exports],
       runtimeEvents: [...runtimeEvents]
     };
   }
 
   window.StructaNative = Object.freeze({
     getCapabilities,
+    getContext: () => router?.getContext?.() || null,
+    routeAction: (raw = {}) => router?.routeAction?.(raw) || { ok: false },
+    setActiveVerb: (verb, target) => router?.setActiveVerb?.(verb, target),
+    setActiveNode: node => router?.setActiveNode?.(node),
     sendStructuredMessage,
     writeJournalEntry,
+    requestEmailWithdrawal,
+    queueJournalExport,
     storeAsset,
     openCamera,
     setCameraFacing,

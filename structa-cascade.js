@@ -8,6 +8,8 @@
   const router = window.StructaActionRouter;
   const actionRail = document.getElementById('action-rail');
   const actionVerbButtons = actionRail ? Array.from(actionRail.querySelectorAll('[data-action-verb]')) : [];
+  const welcomeTip = document.getElementById('welcome-tip');
+  const welcomeDismiss = document.getElementById('welcome-dismiss');
   const projectCode = contracts?.baseProjectCode || 'PRJ-STRUCTA-R1';
   let activeVerb = router?.getContext?.().active_verb || 'inspect';
 
@@ -37,7 +39,21 @@
   const pushLog = (text, strong = '') => {
     const row = document.createElement('div');
     row.className = 'entry';
-    row.innerHTML = `<span class="muted">[${stamp()}]</span> ${strong ? `<span class="accent">${strong}</span> ` : ''}${text}`;
+    const time = document.createElement('span');
+    time.className = 'muted';
+    time.textContent = `[${stamp()}]`;
+    row.appendChild(time);
+    row.appendChild(document.createTextNode(' '));
+    if (strong) {
+      const accent = document.createElement('span');
+      accent.className = 'accent';
+      accent.textContent = strong;
+      row.appendChild(accent);
+      row.appendChild(document.createTextNode(' '));
+    }
+    const message = document.createElement('span');
+    message.textContent = text;
+    row.appendChild(message);
     log.appendChild(row);
     while (log.children.length > 5) log.removeChild(log.firstChild);
     log.scrollTop = 9999;
@@ -329,6 +345,16 @@
   pushLog('Panel initialized.');
   pushLog('Four primary nodes loaded.');
   pushLog('Hold core or memory to reveal deeper layer.');
+
+  const onboardingKey = 'structa-onboarding-dismissed-v1';
+  const shouldShowWelcome = !window.localStorage || !window.localStorage.getItem(onboardingKey);
+  if (welcomeTip && shouldShowWelcome) welcomeTip.classList.add('show');
+  welcomeDismiss?.addEventListener('click', () => {
+    welcomeTip?.classList.remove('show');
+    try {
+      window.localStorage?.setItem(onboardingKey, '1');
+    } catch (_) {}
+  });
 
   actionVerbButtons.forEach(btn => {
     btn.addEventListener('click', () => {

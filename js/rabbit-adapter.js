@@ -7,8 +7,18 @@
     messages: [],
     journals: [],
     assets: [],
+    captures: [],
     exports: []
   };
+  const MAX_RUNTIME_EVENTS = 200;
+  const MAX_MEMORY_ITEMS = 120;
+  const MAX_EXPORTS = 40;
+
+  function pushLimited(list, item, limit = MAX_MEMORY_ITEMS) {
+    list.push(item);
+    if (list.length > limit) list.splice(0, list.length - limit);
+    return item;
+  }
 
   function hasBridge() {
     return typeof window.PluginMessageHandler !== 'undefined' && typeof window.PluginMessageHandler.postMessage === 'function';
@@ -34,7 +44,7 @@
       payload,
       created_at: new Date().toISOString()
     };
-    runtimeEvents.push(record);
+    pushLimited(runtimeEvents, record, MAX_RUNTIME_EVENTS);
     try {
       window.dispatchEvent(new CustomEvent('structa-native-event', { detail: record }));
     } catch (_) {
@@ -46,7 +56,7 @@
   function saveFallback() {
     if (!window.localStorage) return;
     try {
-      const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, exports: memory.exports, runtimeEvents };
+      const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, captures: memory.captures, exports: memory.exports, runtimeEvents };
       window.localStorage.setItem('structa-native-cache-v1', JSON.stringify(blob));
     } catch (_) {
       // ignore quota or serialization issues in browser fallback
@@ -59,7 +69,7 @@
       return { sent: true, bridge: 'PluginMessageHandler' };
     }
 
-    memory.messages.push(payload);
+    pushLimited(memory.messages, payload);
     saveFallback();
     console.log('[Structa Native Fallback]', payload);
     return { sent: false, bridge: 'fallback' };
@@ -115,7 +125,7 @@
 
   function queueJournalExport(raw = {}) {
     const payload = buildJournalExport(raw);
-    memory.exports.push(payload);
+    pushLimited(memory.exports, payload, MAX_EXPORTS);
     saveFallback();
     emit('journal_export_prepared', payload);
     return payload;
@@ -130,7 +140,7 @@
     }
 
     const payload = verdict.value;
-    memory.journals.push(payload);
+    pushLimited(memory.journals, payload);
     saveFallback();
     emit('journal_written', payload);
     return sendStructuredMessage({
@@ -180,9 +190,24 @@
     }
 
     const payload = verdict.value;
-    memory.assets.push(payload);
+    pushLimited(memory.assets, payload);
     saveFallback();
     emit('asset_stored', payload);
+    return { ok: true, payload };
+  }
+
+  function storeCaptureBundle(raw = {}) {
+    const verdict = validation.validateCaptureBundle(raw);
+    if (!verdict.ok) {
+      const error = validation.validationMessage('Capture bundle', verdict.errors);
+      emit('validation_failed', { kind: 'capture_bundle', errors: verdict.errors, raw });
+      return { ok: false, error, payload: verdict.value };
+    }
+
+    const payload = verdict.value;
+    pushLimited(memory.captures, payload);
+    saveFallback();
+    emit('capture_bundle_stored', payload);
     return { ok: true, payload };
   }
 
@@ -250,6 +275,7 @@
       messages: [...memory.messages],
       journals: [...memory.journals],
       assets: [...memory.assets],
+      captures: [...memory.captures],
       exports: [...memory.exports],
       runtimeEvents: [...runtimeEvents]
     };
@@ -266,6 +292,7 @@
     requestEmailWithdrawal,
     queueJournalExport,
     storeAsset,
+    storeCaptureBundle,
     openCamera,
     setCameraFacing,
     startPTT,

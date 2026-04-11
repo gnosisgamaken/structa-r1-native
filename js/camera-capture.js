@@ -28,6 +28,11 @@
     tray?.setAttribute('aria-hidden', 'true');
   }
 
+  function teardown() {
+    stopStream();
+    closeTray();
+  }
+
   function stopStream() {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
@@ -78,7 +83,7 @@
     ctx.drawImage(preview, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/png');
 
-    const asset = {
+    const imageAsset = {
       kind: 'capture',
       name: `camera-${Date.now()}.png`,
       mime_type: 'image/png',
@@ -86,21 +91,37 @@
       meta: { facingMode, width: w, height: h, captured_at: new Date().toISOString() }
     };
 
-    native?.storeAsset?.(asset);
+    const bundle = {
+      project_code: window.StructaContracts?.baseProjectCode || 'PRJ-STRUCTA-R1',
+      entry_id: window.StructaContracts?.makeEntryId?.('capture') || `capture-${Date.now()}`,
+      source_type: 'camera',
+      input_type: 'image',
+      captured_at: new Date().toISOString(),
+      image_asset: imageAsset,
+      prompt_text: facingMode === 'user' ? 'selfie capture' : 'camera capture',
+      ai_response: '',
+      summary: facingMode === 'user' ? 'Selfie captured' : 'Camera frame captured',
+      approval_state: 'draft',
+      tags: [facingMode, 'capture'],
+      links: [],
+      meta: { facingMode, width: w, height: h }
+    };
+
+    native?.storeCaptureBundle?.(bundle);
     native?.sendStructuredMessage?.({
       verb: 'capture',
       target: 'capture',
-      input_type: 'image',
+      input_type: 'capture-bundle',
       source_type: 'camera',
       intent: `capture ${facingMode} image`,
-      goal: 'store visual context',
+      goal: 'store visual context bundle',
       approval_mode: 'human_required',
       fallback: 'store-only',
-      payload: asset
+      payload: bundle
     });
 
     setStatus('Captured');
-    return asset;
+    return bundle;
   }
 
   function setSelfieMode() {
@@ -120,17 +141,15 @@
   btnFlip?.addEventListener('click', flipFacing);
   btnSelfie?.addEventListener('click', setSelfieMode);
   btnCapture?.addEventListener('click', captureFrame);
-  btnClose?.addEventListener('click', () => {
-    stopStream();
-    closeTray();
-  });
+  btnClose?.addEventListener('click', teardown);
 
   window.StructaCamera = Object.freeze({
     open: openCamera,
     capture: captureFrame,
     selfie: setSelfieMode,
     flip: flipFacing,
-    stop: stopStream,
+    stop: teardown,
+    teardown,
     setStatus,
     get facingMode() { return facingMode; }
   });

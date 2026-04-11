@@ -108,6 +108,64 @@
       stroke-width: 1;
     }
 
+    #welcome-tip {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 30;
+      display: none;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    #welcome-tip.show {
+      display: flex;
+    }
+
+    .welcome-card {
+      width: min(100%, 456px);
+      border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(9,9,9,0.94);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+      border-radius: 18px;
+      padding: 12px 14px;
+      box-sizing: border-box;
+      pointer-events: auto;
+    }
+
+    .welcome-kicker {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.42);
+    }
+
+    .welcome-title {
+      margin-top: 4px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .welcome-copy {
+      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.35;
+      color: rgba(255,255,255,0.72);
+    }
+
+    #welcome-dismiss {
+      margin-top: 8px;
+      border: 1px solid rgba(255,255,255,0.11);
+      background: rgba(255,255,255,0.05);
+      color: #f6f0e6;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 11px;
+      min-height: 32px;
+    }
+
     .glow-line {
       fill: none;
       stroke: rgba(255,255,255,0.06);
@@ -383,6 +441,7 @@
 
 
     @media (max-width: 480px) {
+      #welcome-tip { top: 8px; left: 8px; right: 8px; }
       #log-drawer { height: min(96px, 34vh); }
       #log { font-size: 8.5px; }
       #capture-tray { padding: 8px; }
@@ -402,6 +461,14 @@
 </head>
 <body>
   <div id="app">
+    <div id="welcome-tip" role="status" aria-live="polite">
+      <div class="welcome-card">
+        <div class="welcome-kicker">STRUCTA</div>
+        <div class="welcome-title">One intent. One surface. No loose threads.</div>
+        <div class="welcome-copy">Tap CAPTURE, choose an action, or swipe the log drawer. Voice and camera stay silent until you act.</div>
+        <button id="welcome-dismiss" type="button">Got it</button>
+      </div>
+    </div>
     <main>
       <svg id="scene" viewBox="0 0 480 322" role="img" aria-label="Native panel composition"></svg>
     </main>
@@ -489,6 +556,7 @@
   <script src="js/validation.js"></script>
   <script src="js/context-router.js"></script>
   <script src="js/rabbit-adapter.js"></script>
+  <script src="js/capture-bundles.js"></script>
   <script src="js/voice-capture.js"></script>
   <script src="js/camera-capture.js"></script>
   <script src="structa-cascade.js"></script>

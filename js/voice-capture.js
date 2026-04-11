@@ -29,6 +29,7 @@
     tray?.classList.remove('open');
     tray?.setAttribute('aria-hidden', 'true');
     stopListening(false);
+    window.StructaCamera?.teardown?.();
   }
 
   function setPanel(panel) {

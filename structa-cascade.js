@@ -134,7 +134,7 @@
     if (n.motif === 'triangle') {
       mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 36} ${cy + 28} L ${cx - 36} ${cy + 28} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
       mk('path', { d: `M ${cx - 18} ${cy + 10} L ${cx + 18} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-      mk('circle', { cx, cy - 2, r: 9, fill: ink }, g);
+      mk('circle', { cx: cx, cy: cy - 2, r: 9, fill: ink }, g);
     }
 
     if (n.motif === 'x') {
@@ -146,7 +146,7 @@
     if (n.motif === 'diamond') {
       mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 40} ${cy} L ${cx} ${cy + 40} L ${cx - 40} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
       mk('path', { d: `M ${cx - 26} ${cy + 10} A 30 30 0 0 1 ${cx + 26} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-      mk('circle', { cx, cy - 2, r: 8, fill: ink }, g);
+      mk('circle', { cx: cx, cy: cy - 2, r: 8, fill: ink }, g);
     }
 
     if (n.motif === 'dot') {

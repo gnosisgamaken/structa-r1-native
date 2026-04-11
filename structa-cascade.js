@@ -3,45 +3,17 @@
   const log = document.getElementById('log');
   const runBtn = document.getElementById('runBtn');
 
-  const nodes = [
-    {
-      id: 'core', label: 'CORE', cls: 'core', x: 40, y: 20, w: 132, h: 132,
-      fill: 'var(--core)', symbol: 'circle-ring', motif: 'circle'
-    },
-    {
-      id: 'memory', label: 'MEMORY', cls: 'memory', x: 164, y: 20, w: 132, h: 132,
-      fill: 'var(--memory)', symbol: 'square-within', motif: 'square'
-    },
-    {
-      id: 'contract', label: 'CONTRACT', cls: 'contract', x: 288, y: 20, w: 132, h: 132,
-      fill: 'var(--contract)', symbol: 'triangle-slice', motif: 'triangle'
-    },
-    {
-      id: 'validator', label: 'VALIDATOR', cls: 'validator', x: 40, y: 184, w: 132, h: 132,
-      fill: 'var(--validator)', symbol: 'x-form', motif: 'x'
-    },
-    {
-      id: 'output', label: 'OUTPUT', cls: 'output', x: 164, y: 184, w: 132, h: 132,
-      fill: 'var(--output)', symbol: 'diamond-ring', motif: 'diamond'
-    },
-    {
-      id: 'support', label: 'SUPPORT', cls: 'support', x: 288, y: 184, w: 132, h: 132,
-      fill: 'var(--support)', symbol: 'dot-grid', motif: 'dot'
-    }
+  const tiles = [
+    { id: 'core',      label: 'CORE',      x: 14,  y: 12,  w: 148, h: 148, color: 'var(--core)' },
+    { id: 'memory',    label: 'MEMORY',    x: 166, y: 12,  w: 148, h: 148, color: 'var(--memory)' },
+    { id: 'contract',  label: 'CONTRACT',  x: 318, y: 12,  w: 148, h: 148, color: 'var(--contract)' },
+    { id: 'validator', label: 'VALIDATOR', x: 14,  y: 172, w: 148, h: 148, color: 'var(--validator)' },
+    { id: 'output',    label: 'OUTPUT',    x: 166, y: 172, w: 148, h: 148, color: 'var(--output)' },
+    { id: 'support',   label: 'SUPPORT',   x: 318, y: 172, w: 148, h: 148, color: 'var(--support)' }
   ];
 
-  const order = ['core', 'memory', 'contract', 'validator', 'output', 'support'];
-  const edges = [
-    ['core', 'memory'],
-    ['memory', 'contract'],
-    ['core', 'validator'],
-    ['contract', 'output'],
-    ['validator', 'support'],
-    ['output', 'support']
-  ];
-
-  const els = { nodes: {}, edges: [] };
-  let running = false;
+  const els = { tiles: {}, edges: [] };
+  let busy = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const pushLog = (text, strong = '') => {
@@ -60,166 +32,141 @@
     return el;
   };
 
-  const tileShape = (x, y, w, h) => `${x},${y} ${x + w},${y} ${x + w},${y + h} ${x},${y + h}`;
-  const center = n => ({ cx: n.x + n.w / 2, cy: n.y + n.h / 2 });
+  const line = (x1, y1, x2, y2, cls = 'outline') => mk('line', { x1, y1, x2, y2, class: cls });
+  const rect = (x, y, w, h, attrs = {}, parent = svg) => mk('rect', { x, y, width: w, height: h, ...attrs }, parent);
+  const circle = (cx, cy, r, attrs = {}, parent = svg) => mk('circle', { cx, cy, r, ...attrs }, parent);
+  const path = (d, attrs = {}, parent = svg) => mk('path', { d, ...attrs }, parent);
+  const text = (x, y, content, attrs = {}, parent = svg) => { const t = mk('text', { x, y, ...attrs }, parent); t.textContent = content; return t; };
 
-  const createBackdrop = () => {
-    for (let y = 12; y <= 344; y += 56) {
-      for (let x = 14; x <= 466; x += 56) {
-        const hex = mk('polygon', { points: hexPoints(x, y, 12), class: 'grid' });
+  const addBackdrop = () => {
+    for (let y = 16; y <= 352; y += 56) {
+      for (let x = 16; x <= 464; x += 56) {
+        const r = 13;
+        const pts = [];
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 3 * i + Math.PI / 6;
+          pts.push(`${(x + r * Math.cos(a)).toFixed(1)},${(y + r * Math.sin(a)).toFixed(1)}`);
+        }
+        mk('polygon', { points: pts.join(' '), class: 'outline' });
       }
     }
   };
 
-  function hexPoints(x, y, r) {
-    const pts = [];
-    for (let i = 0; i < 6; i++) {
-      const a = (Math.PI / 3) * i + Math.PI / 6;
-      pts.push(`${(x + r * Math.cos(a)).toFixed(1)},${(y + r * Math.sin(a)).toFixed(1)}`);
-    }
-    return pts.join(' ');
-  }
+  const addTile = t => {
+    const g = mk('g', { class: 'tile', 'data-node': t.id, transform: `translate(${t.x},${t.y})` });
+    rect(0, 0, t.w, t.h, { fill: t.color }, g);
+    rect(0.5, 0.5, t.w - 1, t.h - 1, { fill: 'none', stroke: 'rgba(255,255,255,0.10)', 'stroke-width': 1 }, g);
 
-  const connect = (a, b) => {
-    const p = center(a);
-    const q = center(b);
-    const dx = q.cx - p.cx;
-    const dy = q.cy - p.cy;
-    const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len;
-    const uy = dy / len;
-    return {
-      x1: p.cx + ux * (a.w * 0.38),
-      y1: p.cy + uy * (a.h * 0.38),
-      x2: q.cx - ux * (b.w * 0.38),
-      y2: q.cy - uy * (b.h * 0.38)
-    };
+    const cx = t.w / 2;
+    const cy = t.h / 2;
+    const ink = t.id === 'validator' || t.id === 'support' ? 'rgba(24,24,24,0.9)' : 'rgba(246,243,236,0.92)';
+
+    if (t.id === 'core') {
+      circle(cx, cy, 34, { fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      circle(cx, cy, 10, { fill: ink }, g);
+      path(`M ${cx - 20} ${cy + 18} A 24 24 0 0 1 ${cx + 20} ${cy + 18}`, { fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+    }
+
+    if (t.id === 'memory') {
+      rect(cx - 34, cy - 34, 68, 68, { fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      rect(cx - 14, cy - 14, 28, 28, { fill: ink }, g);
+      path(`M ${cx - 36} ${cy + 28} H ${cx + 36}`, { fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+    }
+
+    if (t.id === 'contract') {
+      path(`M ${cx} ${cy - 34} L ${cx + 34} ${cy + 28} L ${cx - 34} ${cy + 28} Z`, { fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+      path(`M ${cx - 16} ${cy + 8} H ${cx + 16}`, { fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+      circle(cx, cy - 1, 8, { fill: ink }, g);
+    }
+
+    if (t.id === 'validator') {
+      path(`M ${cx - 34} ${cy - 34} L ${cx + 34} ${cy + 34}`, { fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+      path(`M ${cx + 34} ${cy - 34} L ${cx - 34} ${cy + 34}`, { fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+      circle(cx, cy, 10, { fill: ink }, g);
+    }
+
+    if (t.id === 'output') {
+      path(`M ${cx} ${cy - 34} L ${cx + 34} ${cy} L ${cx} ${cy + 34} L ${cx - 34} ${cy} Z`, { fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+      path(`M ${cx - 24} ${cy + 10} A 28 28 0 0 1 ${cx + 24} ${cy + 10}`, { fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+      circle(cx, cy - 2, 8, { fill: ink }, g);
+    }
+
+    if (t.id === 'support') {
+      circle(cx, cy, 34, { fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      circle(cx, cy, 10, { fill: ink }, g);
+      circle(cx - 17, cy - 16, 4, { fill: ink }, g);
+      circle(cx + 17, cy + 16, 4, { fill: ink }, g);
+    }
+
+    text(cx, t.h - 14, t.label, { class: 'label' }, g);
+    els.tiles[t.id] = g;
   };
 
-  const addTile = n => {
-    const g = mk('g', { class: 'tile', 'data-node': n.id, transform: `translate(${n.x},${n.y})` });
-
-    mk('rect', {
-      x: 0, y: 0, width: n.w, height: n.h,
-      fill: `var(--${n.cls})`,
-      class: 'tile-rect'
-    }, g);
-
-    // geometric motif: solid, modular, poster-like
-    const c = center(n);
-    const cx = n.w / 2;
-    const cy = n.h / 2;
-    const palette = {
-      core: 'rgba(245,243,236,0.95)',
-      memory: 'rgba(36,30,20,0.9)',
-      contract: 'rgba(245,243,236,0.9)',
-      validator: 'rgba(36,30,20,0.88)',
-      output: 'rgba(245,243,236,0.9)',
-      support: 'rgba(36,30,20,0.9)'
+  const addEdges = () => {
+    const e = [
+      ['core', 'memory'],
+      ['memory', 'contract'],
+      ['core', 'validator'],
+      ['contract', 'output'],
+      ['validator', 'support'],
+      ['output', 'support']
+    ];
+    const centers = id => {
+      const t = tiles.find(x => x.id === id);
+      return { x: t.x + t.w / 2, y: t.y + t.h / 2 };
     };
-    const ink = palette[n.cls];
-
-    if (n.motif === 'circle') {
-      mk('circle', { cx, cy, r: 36, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
-      mk('circle', { cx, cy, r: 12, fill: ink }, g);
-      mk('path', { d: `M ${cx - 24} ${cy + 22} A 30 30 0 0 1 ${cx + 24} ${cy + 22}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-    }
-
-    if (n.motif === 'square') {
-      mk('rect', { x: 32, y: 32, width: 68, height: 68, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
-      mk('rect', { x: 52, y: 52, width: 28, height: 28, fill: ink }, g);
-      mk('path', { d: 'M34 94 H98', fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-    }
-
-    if (n.motif === 'triangle') {
-      mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 36} ${cy + 28} L ${cx - 36} ${cy + 28} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
-      mk('path', { d: `M ${cx - 18} ${cy + 10} L ${cx + 18} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-      mk('circle', { cx: cx, cy: cy - 2, r: 9, fill: ink }, g);
-    }
-
-    if (n.motif === 'x') {
-      mk('path', { d: `M ${cx - 32} ${cy - 32} L ${cx + 32} ${cy + 32}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
-      mk('path', { d: `M ${cx + 32} ${cy - 32} L ${cx - 32} ${cy + 32}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
-      mk('circle', { cx, cy, r: 10, fill: ink }, g);
-    }
-
-    if (n.motif === 'diamond') {
-      mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 40} ${cy} L ${cx} ${cy + 40} L ${cx - 40} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
-      mk('path', { d: `M ${cx - 26} ${cy + 10} A 30 30 0 0 1 ${cx + 26} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
-      mk('circle', { cx: cx, cy: cy - 2, r: 8, fill: ink }, g);
-    }
-
-    if (n.motif === 'dot') {
-      mk('circle', { cx, cy, r: 36, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
-      mk('circle', { cx, cy, r: 10, fill: ink }, g);
-      mk('circle', { cx: cx - 18, cy: cy - 18, r: 4, fill: ink }, g);
-      mk('circle', { cx: cx + 18, cy: cy + 18, r: 4, fill: ink }, g);
-    }
-
-    mk('text', { x: cx, y: n.h - 14, class: 'tile-label' }, g).textContent = n.label;
-    els.nodes[n.id] = g;
-  };
-
-  const createEdges = () => {
-    edges.forEach(([a, b]) => {
-      const line = connect(nodes.find(n => n.id === a), nodes.find(n => n.id === b));
-      const l = mk('line', { ...line, class: 'connector', 'data-edge': `${a}-${b}` });
-      els.edges.push({ id: `${a}-${b}`, el: l, a, b });
+    e.forEach(([a, b]) => {
+      const A = centers(a), B = centers(b);
+      const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      const startR = 56, endR = 56;
+      const l = line(A.x + ux * startR, A.y + uy * startR, B.x - ux * endR, B.y - uy * endR, 'connector');
+      els.edges.push({ a, b, el: l });
     });
   };
 
-  const flashNode = id => {
-    const el = els.nodes[id];
+  const flash = id => {
+    const el = els.tiles[id];
     if (!el) return;
     el.classList.add('active');
-    setTimeout(() => el.classList.remove('active'), 240);
+    setTimeout(() => el.classList.remove('active'), 220);
   };
 
   const flashEdge = (a, b) => {
-    const edge = els.edges.find(e => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+    const edge = els.edges.find(x => (x.a === a && x.b === b) || (x.a === b && x.b === a));
     if (!edge) return;
     edge.el.classList.add('active');
-    setTimeout(() => edge.el.classList.remove('active'), 240);
+    setTimeout(() => edge.el.classList.remove('active'), 220);
   };
 
-  const runCascade = () => {
-    if (running) return;
-    running = true;
-    pushLog('Card received. Starting modular cascade...', 'TRIGGER');
+  const runComposition = () => {
+    if (busy) return;
+    busy = true;
+    pushLog('Composition received. Activating matrix...', 'TRIGGER');
 
-    const seq = [
-      ['core'],
-      ['memory'],
-      ['contract'],
-      ['validator'],
-      ['output'],
-      ['support']
-    ];
-
-    seq.forEach((group, i) => {
+    const chain = ['core', 'memory', 'contract', 'validator', 'output', 'support'];
+    chain.forEach((id, i) => {
       setTimeout(() => {
-        if (i > 0) flashEdge(seq[i - 1][0], group[0]);
-        group.forEach(id => {
-          flashNode(id);
-          pushLog(`${id.toUpperCase()} activated.`);
-        });
-      }, i * 180);
+        flash(id);
+        if (i > 0) flashEdge(chain[i - 1], id);
+        pushLog(`${id.toUpperCase()} activated.`);
+      }, i * 170);
     });
 
     setTimeout(() => {
-      pushLog('Validator passed. Output stabilized.');
-      pushLog('Compact cascade complete.');
-      running = false;
-    }, 1220);
+      pushLog('Validator passed. Composition stabilized.');
+      pushLog('Poster state complete.');
+      busy = false;
+    }, 1180);
   };
 
-  runBtn.addEventListener('click', runCascade);
+  runBtn.addEventListener('click', runComposition);
 
-  createBackdrop();
-  createEdges();
-  nodes.forEach(addTile);
+  addBackdrop();
+  addEdges();
+  tiles.forEach(addTile);
 
   pushLog('Tile matrix loaded.');
-  pushLog('R1 screen profile active.');
+  pushLog('Square composition active.');
   pushLog('One-action flow only.');
 })();

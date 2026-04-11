@@ -155,6 +155,155 @@
       -webkit-user-select: none;
     }
 
+    #log-handle .handle-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    #capture-launcher {
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.04);
+      color: #f6f0e6;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font: inherit;
+      font-size: 8px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    #capture-launcher:active {
+      transform: scale(0.98);
+    }
+
+    #capture-tray {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 12px;
+      box-sizing: border-box;
+      z-index: 20;
+      background: rgba(0,0,0,0.32);
+    }
+
+    #capture-tray.open {
+      display: flex;
+    }
+
+    #capture-sheet {
+      width: min(100%, 456px);
+      max-height: 86vh;
+      border-radius: 18px 18px 10px 10px;
+      border: 1px solid rgba(255,255,255,0.09);
+      background: rgba(9,9,9,0.98);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+      padding: 12px;
+      box-sizing: border-box;
+      color: var(--text);
+      font-family: Inter, system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    .capture-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .capture-kicker {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.44);
+    }
+
+    .capture-title {
+      margin-top: 2px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #capture-close,
+    .capture-tabs button,
+    .capture-row button,
+    .capture-foot button {
+      border: 1px solid rgba(255,255,255,0.11);
+      background: rgba(255,255,255,0.04);
+      color: #f6f0e6;
+      border-radius: 999px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 11px;
+    }
+
+    .capture-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .capture-tabs button.active,
+    .capture-panel.active {
+      border-color: rgba(255,255,255,0.22);
+    }
+
+    .capture-panel {
+      display: none;
+      gap: 10px;
+      flex-direction: column;
+    }
+
+    .capture-panel.active {
+      display: flex;
+    }
+
+    .capture-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #voice-transcript {
+      width: 100%;
+      min-height: 92px;
+      resize: none;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.03);
+      color: var(--text);
+      box-sizing: border-box;
+      padding: 10px;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.4;
+      outline: none;
+    }
+
+    #camera-preview {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 14px;
+      background: #050505;
+      border: 1px solid rgba(255,255,255,0.10);
+      object-fit: cover;
+    }
+
+    .capture-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: rgba(255,255,255,0.52);
+      font-size: 11px;
+    }
+
     #log-handle .grip {
       width: 34px;
       height: 4px;
@@ -204,15 +353,64 @@
     </main>
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
-      <button id="log-handle" type="button" aria-label="Toggle audit log">
+      <div id="log-handle" role="button" tabindex="0" aria-label="Toggle audit log">
         <span class="grip" aria-hidden="true"></span>
         <span class="label">AUDIT LOG</span>
         <span class="state">SWIPE ↑</span>
-      </button>
+        <span class="handle-actions">
+          <button id="capture-launcher" type="button" aria-label="Open capture tray">CAPTURE</button>
+        </span>
+      </div>
       <div id="log">
         <div class="entry"><span class="muted">[--:--]</span> Panel loaded.</div>
         <div class="entry"><span class="muted">[--:--]</span> Four-node primary state active.</div>
         <div class="entry"><span class="muted">[--:--]</span> Hold to reveal deeper nodes.</div>
+      </div>
+    </section>
+
+    <section id="capture-tray" aria-hidden="true">
+      <div id="capture-sheet">
+        <div class="capture-head">
+          <div>
+            <div class="capture-kicker">CAPTURE</div>
+            <div class="capture-title">Voice, camera, selfie</div>
+          </div>
+          <button id="capture-close" type="button">Close</button>
+        </div>
+
+        <div class="capture-tabs">
+          <button id="tab-voice" type="button" class="active">Voice</button>
+          <button id="tab-camera" type="button">Camera</button>
+        </div>
+
+        <div class="capture-panel active" data-panel="voice">
+          <div class="capture-row">
+            <button id="voice-start" type="button">PTT</button>
+            <button id="voice-stop" type="button">Stop</button>
+          </div>
+          <textarea id="voice-transcript" placeholder="Speak or type a transcript here for browser fallback"></textarea>
+          <div class="capture-foot">
+            <span id="voice-status">Idle</span>
+            <button id="voice-submit" type="button">Submit</button>
+          </div>
+        </div>
+
+        <div class="capture-panel" data-panel="camera">
+          <video id="camera-preview" autoplay playsinline muted></video>
+          <canvas id="camera-canvas" hidden></canvas>
+          <div class="capture-row">
+            <button id="camera-open" type="button">Open</button>
+            <button id="camera-flip" type="button">Flip</button>
+            <button id="camera-selfie" type="button">Selfie</button>
+          </div>
+          <div class="capture-row">
+            <button id="camera-capture" type="button">Capture</button>
+            <button id="camera-close-session" type="button">Close cam</button>
+          </div>
+          <div class="capture-foot">
+            <span id="camera-status">Camera idle</span>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -220,6 +418,8 @@
   <script src="js/contracts.js"></script>
   <script src="js/validation.js"></script>
   <script src="js/rabbit-adapter.js"></script>
+  <script src="js/voice-capture.js"></script>
+  <script src="js/camera-capture.js"></script>
   <script src="structa-cascade.js"></script>
 </body>
 </html>

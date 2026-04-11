@@ -300,7 +300,11 @@
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextTile(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); nextTile(-1); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerFrom(focusOrder[active]); }
+    else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); window.StructaVoice?.open?.(); }
+    else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); window.StructaCamera?.open?.(); }
     else if (e.key === 'Escape' || e.key === 'Backspace') {
+      if (window.StructaVoice?.closeTray) window.StructaVoice.closeTray();
+      if (window.StructaCamera?.stop) window.StructaCamera.stop();
       if (logOpen) setLogDrawer(false);
       else pushLog('Back action received.');
     }

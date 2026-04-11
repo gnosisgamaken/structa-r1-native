@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Structa v1.1 — Panel</title>
+  <title>Structa v1.2 — Panel</title>
   <style>
     :root {
       --bg: #050505;
@@ -33,11 +33,10 @@
     body {
       display: flex;
       background:
-        radial-gradient(circle at 50% 30%, rgba(255,255,255,0.018), transparent 42%),
-        linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px),
+        radial-gradient(circle at 50% 18%, rgba(255,255,255,0.025), transparent 38%),
+        radial-gradient(circle at 50% 78%, rgba(255,255,255,0.01), transparent 36%),
         var(--bg);
-      background-size: auto, 40px 40px, 40px 40px, auto;
+      background-size: auto, auto, auto;
     }
 
     #app {
@@ -88,21 +87,11 @@
     }
 
     .tile-title {
-      font-size: 8px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      fill: rgba(255,255,255,0.48);
-      pointer-events: none;
-      user-select: none;
+      display: none;
     }
 
     .tile-note {
-      font-size: 7px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      fill: rgba(255,255,255,0.28);
-      pointer-events: none;
-      user-select: none;
+      display: none;
     }
 
     .frame {
@@ -118,7 +107,7 @@
     }
 
     #log {
-      height: 66px;
+      height: 60px;
       flex: 0 0 auto;
       border-top: 1px solid var(--line);
       background: rgba(8,8,8,0.98);
@@ -140,22 +129,10 @@
     .muted { color: var(--muted); }
     .accent { color: #ccb08d; }
 
-    .hint {
-      position: absolute;
-      left: 10px;
-      right: 10px;
-      bottom: 72px;
-      display: flex;
-      justify-content: center;
-      pointer-events: none;
-      color: rgba(255,255,255,0.30);
-      font-size: 8px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-    }
+
 
     @media (max-width: 480px) {
-      #log { height: 68px; font-size: 8.5px; }
+      #log { height: 60px; font-size: 8.5px; }
     }
   </style>
 </head>
@@ -163,7 +140,6 @@
   <div id="app">
     <main>
       <svg id="scene" viewBox="0 0 480 322" role="img" aria-label="Native panel composition"></svg>
-      <div class="hint" id="hint">tap / swipe / keys • hold core or memory for deeper layer</div>
     </main>
 
     <section id="log" aria-live="polite">

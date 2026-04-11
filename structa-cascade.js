@@ -1,7 +1,7 @@
 (() => {
   const svg = document.getElementById('scene');
   const log = document.getElementById('log');
-  const hint = document.getElementById('hint');
+
 
   const layers = {
     primary: [
@@ -51,10 +51,7 @@
 
   function addBackdrop() {
     mk('rect', { x: 8, y: 8, width: 464, height: 306, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
-    // subtle modular echoes, not clutter
-    [[78, 74], [402, 74], [78, 228], [402, 228]].forEach(([x, y]) => {
-      mk('circle', { cx: x, cy: y, r: 22, fill: 'none', stroke: 'rgba(255,255,255,0.05)', 'stroke-width': 1 });
-    });
+    mk('rect', { x: 18, y: 18, width: 444, height: 286, fill: 'none', stroke: 'rgba(255,255,255,0.03)', 'stroke-width': 1 });
   }
 
   function shapeCore(g, cx, cy, ink) {
@@ -111,12 +108,8 @@
     if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
     if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
 
-    // tiny panel note; hidden nodes carry no label by default on the first state
-    const label = text(c.cx, t.h - 14, isHidden ? '' : t.label, { class: 'tile-title' }, g);
-    els.labels[t.id] = label;
-
-    const noteText = isHidden ? '' : (t.id === 'core' ? 'press / hold' : t.id === 'memory' ? 'tap / hold' : '');
-    text(c.cx, 16, noteText, { class: 'tile-note' }, g);
+    // no labels on the home face; the panel should read as an object, not an app.
+    els.labels[t.id] = null;
 
     g.addEventListener('pointerdown', e => {
       e.preventDefault();
@@ -176,9 +169,6 @@
   function selectTile(id) {
     active = focusOrder.indexOf(id) >= 0 ? focusOrder.indexOf(id) : active;
     Object.entries(els.tiles).forEach(([key, el]) => el.classList.toggle('selected', key === id));
-    hint.textContent = id === 'core' || id === 'memory'
-      ? 'tap / swipe / keys • hold to reveal deeper layer'
-      : 'tap / swipe / keys';
   }
 
   function flash(id) {

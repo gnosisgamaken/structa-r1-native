@@ -3,125 +3,240 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Structa v0.5 — Bauhaus Hexagon</title>
+    <title>Structa v0.6 — Hexagon Engine</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
         :root {
-            --bg: #050505;
-            --text: #f4f4f0;
-            --red: #9f1d35;
-            --yellow: #e3a857;
-            --blue: #1e4b7c;
-            --neutral: #d9c2a3;
+            --bg: #060606;
+            --panel: #0d0d0d;
+            --line: #232323;
+            --text: #f2f1ea;
+            --muted: #8c8c8c;
+            --accent: #cdb48b;
+            --core: #a63b4b;
+            --memory: #d2a24e;
+            --contract: #3a6ea5;
+            --validator: #f2f1ea;
+            --output: #9f8a67;
+            --support: #8aa67e;
+        }
+
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, system-ui, sans-serif;
         }
 
         body {
-            margin: 0;
-            padding: 0;
-            background: var(--bg);
-            color: var(--text);
-            font-family: 'Space Grotesk', sans-serif;
-            height: 100vh;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            background:
+                linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px),
+                var(--bg);
+            background-size: 42px 42px;
         }
 
         header {
-            padding: 14px 20px;
-            background: #0a0a0a;
-            border-bottom: 1px solid #222;
+            height: 60px;
+            flex: 0 0 auto;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            font-size: 17px;
-            letter-spacing: -0.4px;
+            justify-content: space-between;
+            padding: 0 14px 0 16px;
+            background: rgba(9,9,9,0.96);
+            border-bottom: 1px solid var(--line);
+            box-sizing: border-box;
         }
 
-        .title { font-weight: 600; }
-        .subtitle { font-size: 13px; color: #666; font-family: 'IBM Plex Mono', monospace; }
+        .title {
+            font-size: 14px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 600;
+            white-space: nowrap;
+        }
 
-        #canvas {
-            flex: 1;
+        .meta {
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            appearance: none;
+            border: 1px solid #414141;
+            background: #101010;
+            color: var(--text);
+            height: 34px;
+            border-radius: 8px;
+            padding: 0 12px;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        button:active {
+            transform: translateY(1px);
+            background: #1a1a1a;
+        }
+
+        #stage {
             position: relative;
+            flex: 1 1 auto;
+            min-height: 0;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: 
-                linear-gradient(to right, rgba(244,244,240,0.03) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(244,244,240,0.03) 1px, transparent 1px);
-            background-size: 48px 48px;
+            overflow: hidden;
         }
 
         svg {
-            width: 92%;
-            height: 92%;
-            max-width: 420px;
-            max-height: 420px;
+            width: min(100vw, 460px);
+            height: min(100%, 720px);
+            max-height: 100%;
         }
 
-        .hex {
-            transition: all 0.6s cubic-bezier(0.23, 1, 0.32, 1);
-            cursor: pointer;
+        .grid-line {
+            stroke: rgba(255,255,255,0.05);
+            stroke-width: 1;
         }
 
-        .hex:hover { filter: brightness(1.15); }
+        .connector {
+            stroke: rgba(232,232,232,0.35);
+            stroke-width: 3.2;
+            stroke-linecap: round;
+            opacity: 0.9;
+            transition: stroke 180ms ease, opacity 180ms ease, stroke-width 180ms ease;
+        }
 
-        .symbol {
-            font-size: 42px;
+        .connector.active {
+            stroke: rgba(255,255,255,0.75);
+            stroke-width: 4.2;
+            opacity: 1;
+        }
+
+        .node-shell {
+            transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 220ms ease;
+            transform-origin: center;
+        }
+
+        .node-shell.active {
+            transform: scale(1.05);
+        }
+
+        .node-hex {
+            fill: rgba(255,255,255,0.015);
+            stroke-width: 3.2;
+            stroke-linejoin: round;
+        }
+
+        .node-hex.core { stroke: var(--core); }
+        .node-hex.memory { stroke: var(--memory); }
+        .node-hex.contract { stroke: var(--contract); }
+        .node-hex.validator { stroke: var(--validator); }
+        .node-hex.output { stroke: var(--output); }
+        .node-hex.support { stroke: var(--support); }
+
+        .icon {
+            font-family: 'SF Pro Display', 'Inter', system-ui, sans-serif;
+            font-size: 38px;
+            font-weight: 700;
             dominant-baseline: middle;
+            text-anchor: middle;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .label {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            fill: var(--muted);
             text-anchor: middle;
             pointer-events: none;
         }
 
         #log {
-            height: 138px;
-            background: #0a0a0a;
-            border-top: 1px solid #1f1f1f;
-            padding: 12px 18px;
-            font-family: 'IBM Plex Mono', monospace;
-            font-size: 13.2px;
-            line-height: 1.45;
-            color: #aaa;
-            overflow-y: auto;
+            flex: 0 0 auto;
+            height: 122px;
+            border-top: 1px solid var(--line);
+            background: rgba(7,7,7,0.98);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            padding: 10px 14px;
+            box-sizing: border-box;
+            overflow: hidden;
         }
 
-        .log-entry { margin-bottom: 4px; }
-        .impact { color: #e3a857; }
-        button {
-            background: #111;
-            color: #ddd;
-            border: 1px solid #444;
-            padding: 7px 16px;
-            border-radius: 4px;
-            font-size: 13px;
-            font-family: 'IBM Plex Mono', monospace;
+        .entry {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #bdbdbd;
         }
-        button:active {
-            background: #e3a857;
-            color: black;
+
+        .entry strong { color: var(--accent); font-weight: 600; }
+        .entry .muted { color: var(--muted); }
+
+        @media (max-width: 430px) {
+            header {
+                height: 54px;
+                padding: 0 10px 0 12px;
+                gap: 8px;
+            }
+
+            .title { font-size: 12px; }
+            .meta { display: none; }
+
+            button {
+                height: 32px;
+                padding: 0 10px;
+                font-size: 10px;
+            }
+
+            #log {
+                height: 132px;
+                font-size: 11px;
+            }
+
+            .icon { font-size: 34px; }
         }
     </style>
 </head>
 <body>
     <header>
-        <div><span class="title">Structa v0.5</span> — Bauhaus Hexagon</div>
-        <div class="subtitle">ATLAS • PROJECT COGNITION</div>
-        <div>
-            <button onclick="runTestCascade()">TRIGGER CASCADE</button>
+        <div class="title">Structa v0.6 — Hexagon Engine</div>
+        <div class="meta">Atlas • Project Cognition</div>
+        <div class="actions">
+            <button id="runBtn">Trigger Cascade</button>
         </div>
     </header>
 
-    <div id="canvas">
-        <svg id="graph" viewBox="0 0 460 460" xmlns="http://www.w3.org/2000/svg"></svg>
-    </div>
+    <main id="stage" aria-label="Structa graph">
+        <svg id="ui" viewBox="0 0 420 620" role="img" aria-label="Six-node hexagon lattice">
+            <defs>
+                <polygon id="hex" points="0,-40 34,-20 34,20 0,40 -34,20 -34,-20"></polygon>
+            </defs>
+        </svg>
+    </main>
 
-    <div id="log">
-        <div class="log-entry">Structa v0.5 Bauhaus Hexagon initialized.</div>
-        <div class="log-entry">Pure SVG. Zero canvas. Ready for geometric cascade.</div>
-    </div>
+    <section id="log" aria-live="polite">
+        <div class="entry"><span class="muted">[08:53 PM]</span> Structa v0.6 ready.</div>
+        <div class="entry"><span class="muted">[08:53 PM]</span> Portrait-first layout loaded.</div>
+    </section>
 
-    <script src="structa-cascade-v0.5.js"></script>
+    <script src="structa-cascade.js"></script>
 </body>
 </html>

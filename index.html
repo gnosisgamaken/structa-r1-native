@@ -5,20 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Structa v1.0 — Panel</title>
+  <title>Structa v1.1 — Panel</title>
   <style>
     :root {
       --bg: #050505;
-      --line: rgba(255,255,255,0.07);
+      --line: rgba(255,255,255,0.08);
       --text: #f2efe8;
-      --muted: #868686;
-      --core: #cb5e69;
-      --memory: #d8a94e;
-      --contract: #4d7cba;
-      --validator: #ece6da;
-      --output: #c79f76;
-      --support: #89b587;
-      --shadow: rgba(0,0,0,0.42);
+      --muted: #8a8a8a;
+      --core: #d15d69;
+      --memory: #d8a64c;
+      --output: #c79b73;
+      --support: #88b486;
+      --contract: #4d7ebc;
+      --validator: #ece7dc;
     }
 
     html, body {
@@ -33,10 +32,8 @@
 
     body {
       display: flex;
-      align-items: stretch;
-      justify-content: stretch;
       background:
-        radial-gradient(circle at 50% 30%, rgba(255,255,255,0.02), transparent 42%),
+        radial-gradient(circle at 50% 30%, rgba(255,255,255,0.018), transparent 42%),
         linear-gradient(to right, rgba(255,255,255,0.018) 1px, transparent 1px),
         linear-gradient(to bottom, rgba(255,255,255,0.018) 1px, transparent 1px),
         var(--bg);
@@ -49,79 +46,8 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      background: rgba(5,5,5,0.98);
-    }
-
-    .sysbar {
-      height: 30px;
-      flex: 0 0 auto;
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      align-items: center;
-      padding: 0 10px;
-      box-sizing: border-box;
-      border-bottom: 1px solid var(--line);
-      font-size: 9px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      background: rgba(6,6,6,0.98);
-    }
-
-    .sys-left, .sys-right {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: 0;
-    }
-
-    .sys-left { justify-content: flex-start; }
-    .sys-center { justify-self: center; color: var(--text); }
-    .sys-right { justify-content: flex-end; }
-
-    .back {
-      appearance: none;
-      border: 0;
-      background: transparent;
-      color: var(--text);
-      font: inherit;
-      letter-spacing: inherit;
-      text-transform: inherit;
-      padding: 0;
-    }
-
-    .battery {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--text);
-    }
-
-    .battery-icon {
-      width: 18px;
-      height: 9px;
-      border: 1px solid currentColor;
-      border-radius: 2px;
       position: relative;
-      box-sizing: border-box;
-    }
-
-    .battery-icon::after {
-      content: '';
-      position: absolute;
-      right: -3px;
-      top: 2px;
-      width: 2px;
-      height: 4px;
-      background: currentColor;
-      border-radius: 0 1px 1px 0;
-    }
-
-    .battery-fill {
-      position: absolute;
-      inset: 1px;
-      width: 49%;
-      background: currentColor;
-      border-radius: 1px;
+      background: rgba(5,5,5,0.98);
     }
 
     main {
@@ -141,17 +67,18 @@
     }
 
     .tile {
-      transition: transform 180ms cubic-bezier(.2,.8,.2,1), opacity 180ms ease;
       transform-origin: center;
+      transition: transform 180ms cubic-bezier(.18,.67,.3,1.18), opacity 180ms ease, filter 180ms ease;
       cursor: pointer;
     }
 
     .tile.selected {
-      transform: scale(1.012);
+      transform: scale(1.02);
+      filter: drop-shadow(0 0 10px rgba(255,255,255,0.06));
     }
 
     .tile.active {
-      transform: scale(1.03);
+      transform: scale(1.045);
     }
 
     .tile-rect {
@@ -160,123 +87,45 @@
       shape-rendering: geometricPrecision;
     }
 
-    .tile-ring {
-      fill: none;
-      stroke: rgba(244,241,232,0.92);
-      stroke-width: 12;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), stroke-width 220ms ease, opacity 220ms ease;
-    }
-
-    .tile.active .tile-ring { transform: scale(1.045); stroke-width: 13; }
-
-    .tile-core .ring-dot,
-    .tile-output .ring-dot,
-    .tile-support .ring-dot {
-      fill: rgba(244,241,232,0.95);
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 220ms ease;
-    }
-
-    .tile.active .ring-dot { transform: scale(1.15); }
-
-    .tile-core .crescent,
-    .tile-output .crescent {
-      fill: none;
-      stroke: rgba(244,241,232,0.95);
-      stroke-width: 10;
-      stroke-linecap: round;
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), stroke-width 220ms ease;
-    }
-
-    .tile.active .crescent { transform: scale(1.025); stroke-width: 11; }
-
-    .tile-memory .outer,
-    .tile-memory .inner {
-      fill: none;
-      stroke: rgba(32,24,16,0.92);
-      stroke-width: 12;
-      shape-rendering: geometricPrecision;
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), stroke-width 220ms ease;
-    }
-
-    .tile-memory .inner { fill: rgba(32,24,16,0.88); stroke: none; }
-    .tile.active .tile-memory .inner { transform: scale(1.08); }
-
-    .tile-contract .triangle,
-    .tile-output .diamond,
-    .tile-validator .xline,
-    .tile-support .orbit {
-      fill: none;
-      stroke: rgba(244,241,232,0.95);
-      stroke-width: 12;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), stroke-width 220ms ease;
-    }
-
-    .tile-validator .xline {
-      stroke: rgba(32,24,16,0.92);
-    }
-
-    .tile-support .orbit {
-      stroke-width: 10;
-    }
-
-    .tile.active .triangle { transform: rotate(-4deg) scale(1.03); }
-    .tile.active .diamond { transform: rotate(4deg) scale(1.04); }
-    .tile.active .xline { stroke-width: 13; }
-    .tile.active .orbit { transform: scale(1.04); }
-
-    .tile-contract .bar,
-    .tile-output .bar,
-    .tile-validator .dot,
-    .tile-support .dot,
-    .tile-core .arc {
-      fill: rgba(244,241,232,0.95);
-      transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 220ms ease;
-      transform-box: fill-box;
-      transform-origin: center;
-    }
-
-    .tile-contract .bar,
-    .tile-output .bar {
-      fill: rgba(244,241,232,0.95);
-    }
-
-    .tile.active .dot,
-    .tile.active .bar,
-    .tile.active .arc { transform: scale(1.1); }
-
-    .tile-name {
+    .tile-title {
       font-size: 8px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      fill: rgba(255,255,255,0.58);
+      fill: rgba(255,255,255,0.48);
       pointer-events: none;
       user-select: none;
-      display: none;
+    }
+
+    .tile-note {
+      font-size: 7px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      fill: rgba(255,255,255,0.28);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .frame {
+      fill: none;
+      stroke: rgba(255,255,255,0.05);
+      stroke-width: 1;
+    }
+
+    .glow-line {
+      fill: none;
+      stroke: rgba(255,255,255,0.06);
+      stroke-width: 1;
     }
 
     #log {
-      height: 72px;
+      height: 66px;
       flex: 0 0 auto;
       border-top: 1px solid var(--line);
       background: rgba(8,8,8,0.98);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 9.5px;
+      font-size: 9px;
       line-height: 1.35;
-      padding: 7px 10px;
+      padding: 6px 10px;
       box-sizing: border-box;
       overflow: hidden;
     }
@@ -289,35 +138,38 @@
     }
 
     .muted { color: var(--muted); }
-    .accent { color: #c9b08b; }
+    .accent { color: #ccb08d; }
+
+    .hint {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 72px;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+      color: rgba(255,255,255,0.30);
+      font-size: 8px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
 
     @media (max-width: 480px) {
-      .sysbar { height: 28px; font-size: 8px; }
-      #log { height: 70px; font-size: 9px; }
+      #log { height: 68px; font-size: 8.5px; }
     }
   </style>
 </head>
 <body>
   <div id="app">
-    <div class="sysbar">
-      <div class="sys-left">
-        <button class="back" id="backBtn">← back</button>
-      </div>
-      <div class="sys-center" id="statusTitle">SYSTEM READY</div>
-      <div class="sys-right">
-        <div id="clock">10:35</div>
-        <div class="battery"><div class="battery-icon"><div class="battery-fill"></div></div><span>49%</span></div>
-      </div>
-    </div>
-
     <main>
-      <svg id="scene" viewBox="0 0 480 388" role="img" aria-label="Modular live panel"></svg>
+      <svg id="scene" viewBox="0 0 480 322" role="img" aria-label="Native panel composition"></svg>
+      <div class="hint" id="hint">tap / swipe / keys • hold core or memory for deeper layer</div>
     </main>
 
     <section id="log" aria-live="polite">
       <div class="entry"><span class="muted">[--:--]</span> Panel loaded.</div>
-      <div class="entry"><span class="muted">[--:--]</span> R1-safe composition active.</div>
-      <div class="entry"><span class="muted">[--:--]</span> Tap a tile or use arrows + enter.</div>
+      <div class="entry"><span class="muted">[--:--]</span> Four-node primary state active.</div>
+      <div class="entry"><span class="muted">[--:--]</span> Hold to reveal deeper nodes.</div>
     </section>
   </div>
 

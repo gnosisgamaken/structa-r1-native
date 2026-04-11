@@ -1,24 +1,28 @@
 (() => {
   const svg = document.getElementById('scene');
   const log = document.getElementById('log');
-  const statusTitle = document.getElementById('statusTitle');
-  const clock = document.getElementById('clock');
-  const backBtn = document.getElementById('backBtn');
+  const hint = document.getElementById('hint');
 
-  const tiles = [
-    { id: 'core',      x: 14,  y: 12,  w: 148, h: 148, cls: 'tile-core',      fill: 'var(--core)' },
-    { id: 'memory',    x: 166, y: 12,  w: 148, h: 148, cls: 'tile-memory',    fill: 'var(--memory)' },
-    { id: 'contract',  x: 318, y: 12,  w: 148, h: 148, cls: 'tile-contract',  fill: 'var(--contract)' },
-    { id: 'validator', x: 14,  y: 172, w: 148, h: 148, cls: 'tile-validator', fill: 'var(--validator)' },
-    { id: 'output',    x: 166, y: 172, w: 148, h: 148, cls: 'tile-output',    fill: 'var(--output)' },
-    { id: 'support',   x: 318, y: 172, w: 148, h: 148, cls: 'tile-support',   fill: 'var(--support)' }
-  ];
+  const layers = {
+    primary: [
+      { id: 'core', label: 'CORE', x: 14,  y: 14,  w: 222, h: 140, color: 'var(--core)' },
+      { id: 'memory', label: 'MEMORY', x: 244, y: 14,  w: 222, h: 140, color: 'var(--memory)' },
+      { id: 'output', label: 'OUTPUT', x: 14,  y: 168, w: 222, h: 140, color: 'var(--output)' },
+      { id: 'support', label: 'SUPPORT', x: 244, y: 168, w: 222, h: 140, color: 'var(--support)' }
+    ],
+    hidden: [
+      { id: 'contract', label: 'CONTRACT', x: 356, y: 56, w: 110, h: 92, color: 'var(--contract)' },
+      { id: 'validator', label: 'VALIDATOR', x: 356, y: 198, w: 110, h: 92, color: 'var(--validator)' }
+    ]
+  };
 
-  const ids = tiles.map(t => t.id);
-  const els = { tiles: {}, centers: {}, shapes: {}, labels: {} };
-  let activeIndex = 0;
+  const focusOrder = ['core', 'memory', 'output', 'support'];
+  const allOrder = ['core', 'memory', 'output', 'support', 'contract', 'validator'];
+  const els = { tiles: {}, labels: {}, hidden: {}, touchStart: null };
+  let active = 0;
   let busy = false;
-  let touchStart = null;
+  let revealLayer = false;
+  let holdTimer = null;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const pushLog = (text, strong = '') => {
@@ -43,188 +47,221 @@
     return t;
   };
 
-  const centers = t => ({ cx: t.x + t.w / 2, cy: t.y + t.h / 2 });
-
-  function updateClock() {
-    clock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function setStatus(name) {
-    statusTitle.textContent = name.toUpperCase();
-  }
+  const center = t => ({ cx: t.x + t.w / 2, cy: t.y + t.h / 2 });
 
   function addBackdrop() {
-    // very faint framing lines to give a printed-panel feel without clutter
-    mk('rect', { x: 8, y: 8, width: 464, height: 372, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
+    mk('rect', { x: 8, y: 8, width: 464, height: 306, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
+    // subtle modular echoes, not clutter
+    [[78, 74], [402, 74], [78, 228], [402, 228]].forEach(([x, y]) => {
+      mk('circle', { cx: x, cy: y, r: 22, fill: 'none', stroke: 'rgba(255,255,255,0.05)', 'stroke-width': 1 });
+    });
   }
 
-  function addTile(tile) {
-    const g = mk('g', { class: `tile ${tile.cls}`, 'data-node': tile.id, transform: `translate(${tile.x},${tile.y})`, tabindex: '0' });
-    const c = centers(tile);
-    els.centers[tile.id] = c;
-    els.tiles[tile.id] = g;
+  function shapeCore(g, cx, cy, ink) {
+    mk('circle', { cx, cy, r: 31, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx, cy, r: 11, fill: ink }, g);
+    mk('path', { d: `M ${cx - 20} ${cy + 17} A 24 24 0 0 1 ${cx + 20} ${cy + 17}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+  }
 
-    mk('rect', { x: 0, y: 0, width: tile.w, height: tile.h, fill: tile.fill, class: 'tile-rect' }, g);
-    mk('rect', { x: 0.5, y: 0.5, width: tile.w - 1, height: tile.h - 1, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
+  function shapeMemory(g, cx, cy, ink) {
+    mk('rect', { x: cx - 31, y: cy - 31, width: 62, height: 62, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+    mk('rect', { x: cx - 13, y: cy - 13, width: 26, height: 26, fill: ink }, g);
+    mk('path', { d: `M ${cx - 32} ${cy + 24} H ${cx + 32}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
+  }
 
-    const cx = tile.w / 2;
-    const cy = tile.h / 2;
-    const left = cx - 36;
-    const right = cx + 36;
-    const top = cy - 36;
-    const bottom = cy + 36;
-    const ink = tile.id === 'validator' || tile.id === 'support' ? 'rgba(30,24,20,0.92)' : 'rgba(245,243,236,0.96)';
+  function shapeOutput(g, cx, cy, ink) {
+    mk('path', { d: `M ${cx} ${cy - 31} L ${cx + 31} ${cy} L ${cx} ${cy + 31} L ${cx - 31} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+    mk('path', { d: `M ${cx - 22} ${cy + 8} A 26 26 0 0 1 ${cx + 22} ${cy + 8}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx: cx, cy: cy - 2, r: 7, fill: ink }, g);
+  }
 
-    // motif group is intentionally large and bold—more poster than UI icon.
+  function shapeSupport(g, cx, cy, ink) {
+    mk('circle', { cx, cy, r: 31, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+    mk('circle', { cx, cy, r: 10, fill: ink }, g);
+    mk('circle', { cx: cx - 15, cy: cy - 14, r: 4, fill: ink }, g);
+    mk('circle', { cx: cx + 15, cy: cy + 14, r: 4, fill: ink }, g);
+  }
+
+  function shapeContract(g, cx, cy, ink) {
+    mk('path', { d: `M ${cx} ${cy - 28} L ${cx + 29} ${cy + 22} L ${cx - 29} ${cy + 22} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+    mk('path', { d: `M ${cx - 15} ${cy + 5} H ${cx + 15}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx: cx, cy: cy - 2, r: 7, fill: ink }, g);
+  }
+
+  function shapeValidator(g, cx, cy, ink) {
+    mk('path', { d: `M ${cx - 29} ${cy - 29} L ${cx + 29} ${cy + 29}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+    mk('path', { d: `M ${cx + 29} ${cy - 29} L ${cx - 29} ${cy + 29}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx, cy, r: 9, fill: ink }, g);
+  }
+
+  const drawTile = (t, isHidden = false) => {
+    const g = mk('g', { class: `tile ${isHidden ? 'hidden' : 'primary'}`, 'data-node': t.id, transform: `translate(${t.x},${t.y})`, tabindex: '0' });
+    const c = center(t);
+    const ink = (t.id === 'validator' || t.id === 'support') ? 'rgba(24,24,24,0.9)' : 'rgba(245,243,236,0.96)';
+
+    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, fill: t.color, class: 'tile-rect' }, g);
+    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
+
+    // deliberately sparse composition: big form, one secondary accent, tiny label
     const motif = mk('g', { class: 'motif' }, g);
+    if (t.id === 'core') shapeCore(motif, c.cx, c.cy, ink);
+    if (t.id === 'memory') shapeMemory(motif, c.cx, c.cy, ink);
+    if (t.id === 'output') shapeOutput(motif, c.cx, c.cy, ink);
+    if (t.id === 'support') shapeSupport(motif, c.cx, c.cy, ink);
+    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
+    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
 
-    if (tile.id === 'core') {
-      mk('circle', { cx, cy, r: 34, class: 'tile-ring', stroke: ink }, motif);
-      mk('circle', { cx, cy, r: 11, class: 'ring-dot', fill: ink }, motif);
-      mk('path', { d: `M ${cx - 22} ${cy + 18} A 26 26 0 0 1 ${cx + 22} ${cy + 18}`, class: 'crescent', stroke: ink }, motif);
-      mk('circle', { cx: cx - 13, cy: cy - 12, r: 3.5, class: 'arc', fill: ink }, motif);
-    }
+    // tiny panel note; hidden nodes carry no label by default on the first state
+    const label = text(c.cx, t.h - 14, isHidden ? '' : t.label, { class: 'tile-title' }, g);
+    els.labels[t.id] = label;
 
-    if (tile.id === 'memory') {
-      mk('rect', { x: cx - 34, y: cy - 34, width: 68, height: 68, class: 'outer', stroke: ink }, motif);
-      mk('rect', { x: cx - 14, y: cy - 14, width: 28, height: 28, class: 'inner', fill: ink }, motif);
-      mk('path', { d: `M ${left} ${cy + 26} H ${right}`, class: 'bar', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, motif);
-    }
+    const noteText = isHidden ? '' : (t.id === 'core' ? 'press / hold' : t.id === 'memory' ? 'tap / hold' : '');
+    text(c.cx, 16, noteText, { class: 'tile-note' }, g);
 
-    if (tile.id === 'contract') {
-      mk('path', { d: `M ${cx} ${top} L ${right} ${cy + 28} L ${left} ${cy + 28} Z`, class: 'triangle', stroke: ink }, motif);
-      mk('path', { d: `M ${cx - 16} ${cy + 8} H ${cx + 16}`, class: 'bar', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, motif);
-      mk('circle', { cx: cx, cy: cy - 1, r: 8, class: 'dot', fill: ink }, motif);
-    }
-
-    if (tile.id === 'validator') {
-      mk('path', { d: `M ${left} ${top} L ${right} ${bottom}`, class: 'xline', stroke: ink }, motif);
-      mk('path', { d: `M ${right} ${top} L ${left} ${bottom}`, class: 'xline', stroke: ink }, motif);
-      mk('circle', { cx, cy, r: 10, class: 'dot', fill: ink }, motif);
-    }
-
-    if (tile.id === 'output') {
-      mk('path', { d: `M ${cx} ${top} L ${right} ${cy} L ${cx} ${bottom} L ${left} ${cy} Z`, class: 'diamond', stroke: ink }, motif);
-      mk('path', { d: `M ${cx - 24} ${cy + 10} A 28 28 0 0 1 ${cx + 24} ${cy + 10}`, class: 'crescent', stroke: ink }, motif);
-      mk('circle', { cx: cx, cy: cy - 2, r: 8, class: 'dot', fill: ink }, motif);
-    }
-
-    if (tile.id === 'support') {
-      mk('circle', { cx, cy, r: 34, class: 'orbit', stroke: ink }, motif);
-      mk('circle', { cx, cy, r: 10, class: 'dot', fill: ink }, motif);
-      mk('circle', { cx: cx - 17, cy: cy - 16, r: 4, class: 'dot', fill: ink }, motif);
-      mk('circle', { cx: cx + 17, cy: cy + 16, r: 4, class: 'dot', fill: ink }, motif);
-    }
-
-    const label = text(cx, tile.h - 14, tile.id.toUpperCase(), { class: 'tile-name' }, g);
-    els.labels[tile.id] = label;
-
-    const activate = () => triggerFrom(tile.id);
     g.addEventListener('pointerdown', e => {
       e.preventDefault();
-      selectTile(tile.id);
-      activate();
+      selectTile(t.id);
+      holdTimer = setTimeout(() => {
+        if (t.id === 'core' || t.id === 'memory') {
+          toggleHiddenLayer();
+          pushLog(`${t.id.toUpperCase()} layer opened.`, 'HOLD');
+        }
+      }, 520);
+      els.touchStart = { x: e.clientX, y: e.clientY, id: t.id };
+    });
+    g.addEventListener('pointerup', e => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      const start = els.touchStart;
+      els.touchStart = null;
+      if (!start) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) triggerFrom(start.id);
     });
     g.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        selectTile(tile.id);
-        activate();
+        triggerFrom(t.id);
       }
     });
+
+    els.tiles[t.id] = g;
+  };
+
+  function toggleHiddenLayer() {
+    revealLayer = !revealLayer;
+    layers.hidden.forEach(t => {
+      const node = els.hidden[t.id];
+      if (node) node.style.opacity = revealLayer ? '1' : '0';
+      if (node) node.style.pointerEvents = revealLayer ? 'auto' : 'none';
+    });
+  }
+
+  function addHiddenTile(t) {
+    const g = mk('g', { class: 'tile hidden', 'data-node': t.id, transform: `translate(${t.x},${t.y})`, opacity: '0', tabindex: '0' });
+    const c = center(t);
+    const ink = t.id === 'validator' ? 'rgba(24,24,24,0.9)' : 'rgba(245,243,236,0.96)';
+    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, fill: t.color, class: 'tile-rect' }, g);
+    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
+    const motif = mk('g', {}, g);
+    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
+    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
+    text(c.cx, t.h - 14, t.label, { class: 'tile-title' }, g);
+    g.style.pointerEvents = 'none';
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') triggerFrom(t.id); });
+    els.hidden[t.id] = g;
   }
 
   function selectTile(id) {
-    activeIndex = ids.indexOf(id);
-    Object.entries(els.tiles).forEach(([key, el]) => {
-      el.classList.toggle('selected', key === id);
-    });
-    setStatus(id);
+    active = focusOrder.indexOf(id) >= 0 ? focusOrder.indexOf(id) : active;
+    Object.entries(els.tiles).forEach(([key, el]) => el.classList.toggle('selected', key === id));
+    hint.textContent = id === 'core' || id === 'memory'
+      ? 'tap / swipe / keys • hold to reveal deeper layer'
+      : 'tap / swipe / keys';
   }
 
   function flash(id) {
-    const el = els.tiles[id];
+    const el = els.tiles[id] || els.hidden[id];
     if (!el) return;
     el.classList.add('active');
-    setTimeout(() => el.classList.remove('active'), 240);
+    setTimeout(() => el.classList.remove('active'), 220);
+  }
+
+  function showHiddenFor(activeId) {
+    const show = activeId === 'core' || activeId === 'memory';
+    revealLayer = show;
+    layers.hidden.forEach(t => {
+      const node = els.hidden[t.id];
+      if (!node) return;
+      node.style.opacity = show ? '1' : '0';
+      node.style.pointerEvents = show ? 'auto' : 'none';
+    });
   }
 
   function runSequence(startId) {
     if (busy) return;
     busy = true;
-    const start = ids.indexOf(startId);
-    const seq = [...ids.slice(start), ...ids.slice(0, start)];
+    const base = [startId];
+    if (startId === 'core') base.push('memory', 'output', 'support');
+    if (startId === 'memory') base.push('output', 'support');
+    if (startId === 'output') base.push('support');
+    if (startId === 'support') base.push('core');
     pushLog(`Composition start: ${startId.toUpperCase()}`, 'TRIGGER');
-
-    seq.forEach((id, i) => {
+    base.forEach((id, i) => {
       setTimeout(() => {
         flash(id);
         pushLog(`${id.toUpperCase()} active.`);
-      }, i * 160);
+      }, i * 150);
     });
-
     setTimeout(() => {
       pushLog('Composition stabilized.');
       pushLog('Panel state complete.');
       busy = false;
-    }, seq.length * 160 + 140);
+    }, base.length * 150 + 120);
   }
 
   function triggerFrom(id) {
     selectTile(id);
+    showHiddenFor(id);
     runSequence(id);
   }
 
   function nextTile(dir) {
-    activeIndex = (activeIndex + dir + ids.length) % ids.length;
-    selectTile(ids[activeIndex]);
+    active = (active + dir + focusOrder.length) % focusOrder.length;
+    const id = focusOrder[active];
+    selectTile(id);
+    showHiddenFor(id);
   }
+
+  addBackdrop();
+  layers.primary.forEach(t => drawTile(t, false));
+  layers.hidden.forEach(t => addHiddenTile(t));
+
+  selectTile('core');
+  showHiddenFor('core');
+  pushLog('Panel initialized.');
+  pushLog('Four primary nodes loaded.');
+  pushLog('Hold core or memory to reveal deeper layer.');
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      nextTile(1);
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      nextTile(-1);
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      triggerFrom(ids[activeIndex]);
-    } else if (e.key === 'Escape' || e.key === 'Backspace') {
-      pushLog('Back action received.');
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextTile(1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); nextTile(-1); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerFrom(focusOrder[active]); }
+    else if (e.key === 'Escape' || e.key === 'Backspace') { pushLog('Back action received.'); }
+  });
+
+  svg.addEventListener('pointerup', e => {
+    if (els.touchStart) {
+      const dx = e.clientX - els.touchStart.x;
+      const dy = e.clientY - els.touchStart.y;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      const started = els.touchStart.id;
+      els.touchStart = null;
+      if (Math.max(adx, ady) < 10) return;
+      if (adx > ady) nextTile(dx > 0 ? 1 : -1);
+      else if (dy < 0) triggerFrom(started);
     }
   });
-
-  backBtn.addEventListener('click', () => {
-    pushLog('Back action received.');
-    if (history.length > 1) history.back();
-  });
-
-  svg.addEventListener('pointerdown', e => {
-    touchStart = { x: e.clientX, y: e.clientY };
-  });
-  svg.addEventListener('pointerup', e => {
-    if (!touchStart) return;
-    const dx = e.clientX - touchStart.x;
-    const dy = e.clientY - touchStart.y;
-    const adx = Math.abs(dx);
-    const ady = Math.abs(dy);
-    touchStart = null;
-    if (Math.max(adx, ady) < 12) return;
-    if (adx > ady) nextTile(dx > 0 ? 1 : -1);
-    else if (dy < 0) triggerFrom(ids[activeIndex]);
-  });
-
-  function init() {
-    addBackdrop();
-    tiles.forEach(addTile);
-    selectTile(ids[0]);
-    updateClock();
-    setInterval(updateClock, 1000);
-    pushLog('Panel initialized.');
-    pushLog('Touch, swipe, and key input enabled.');
-    pushLog('One action, full-screen composition.');
-  }
-
-  init();
 })();

@@ -8,16 +8,16 @@
   <title>Structa v1.2 — Panel</title>
   <style>
     :root {
-      --bg: #050505;
-      --line: rgba(255,255,255,0.08);
-      --text: #f2efe8;
-      --muted: #8a8a8a;
-      --core: #d15d69;
-      --memory: #d8a64c;
-      --output: #c79b73;
-      --support: #88b486;
-      --contract: #4d7ebc;
-      --validator: #ece7dc;
+      --bg: #020202;
+      --line: rgba(255,255,255,0.10);
+      --text: #f8f4eb;
+      --muted: #a0a0a0;
+      --core: #ff4666;
+      --memory: #ffc93a;
+      --output: #ff9b54;
+      --support: #71ff8a;
+      --contract: #4f95ff;
+      --validator: #fff8ec;
     }
 
     html, body {
@@ -33,10 +33,12 @@
     body {
       display: flex;
       background:
-        radial-gradient(circle at 50% 18%, rgba(255,255,255,0.025), transparent 38%),
-        radial-gradient(circle at 50% 78%, rgba(255,255,255,0.01), transparent 36%),
+        radial-gradient(circle at 50% 20%, rgba(255,79,105,0.10), transparent 18%),
+        radial-gradient(circle at 50% 50%, rgba(79,149,255,0.06), transparent 26%),
+        radial-gradient(circle at 50% 80%, rgba(113,255,138,0.06), transparent 22%),
+        linear-gradient(to bottom, rgba(255,255,255,0.02), transparent 22%),
         var(--bg);
-      background-size: auto, auto, auto;
+      background-size: auto, auto, auto, auto, auto;
     }
 
     #app {
@@ -73,12 +75,18 @@
 
     .tile.selected {
       transform: scale(1.02);
-      filter: drop-shadow(0 0 10px rgba(255,255,255,0.06));
     }
 
     .tile.active {
       transform: scale(1.045);
     }
+
+    .tile-core.selected { filter: drop-shadow(0 0 12px rgba(255,70,102,0.50)); }
+    .tile-memory.selected { filter: drop-shadow(0 0 12px rgba(255,201,58,0.48)); }
+    .tile-output.selected { filter: drop-shadow(0 0 12px rgba(255,155,84,0.48)); }
+    .tile-support.selected { filter: drop-shadow(0 0 12px rgba(113,255,138,0.44)); }
+    .tile-contract.selected { filter: drop-shadow(0 0 12px rgba(79,149,255,0.44)); }
+    .tile-validator.selected { filter: drop-shadow(0 0 12px rgba(255,248,236,0.42)); }
 
     .tile-rect {
       stroke: rgba(255,255,255,0.09);

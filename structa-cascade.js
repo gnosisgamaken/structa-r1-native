@@ -5,14 +5,14 @@
 
   const layers = {
     primary: [
-      { id: 'core', label: 'CORE', x: 14,  y: 14,  w: 222, h: 140, color: 'var(--core)' },
-      { id: 'memory', label: 'MEMORY', x: 244, y: 14,  w: 222, h: 140, color: 'var(--memory)' },
-      { id: 'output', label: 'OUTPUT', x: 14,  y: 168, w: 222, h: 140, color: 'var(--output)' },
-      { id: 'support', label: 'SUPPORT', x: 244, y: 168, w: 222, h: 140, color: 'var(--support)' }
+      { id: 'core', label: 'CORE', x: 10,  y: 10,  w: 230, h: 148, color: 'var(--core)' },
+      { id: 'memory', label: 'MEMORY', x: 240, y: 10,  w: 230, h: 148, color: 'var(--memory)' },
+      { id: 'output', label: 'OUTPUT', x: 10,  y: 164, w: 230, h: 148, color: 'var(--output)' },
+      { id: 'support', label: 'SUPPORT', x: 240, y: 164, w: 230, h: 148, color: 'var(--support)' }
     ],
     hidden: [
-      { id: 'contract', label: 'CONTRACT', x: 356, y: 56, w: 110, h: 92, color: 'var(--contract)' },
-      { id: 'validator', label: 'VALIDATOR', x: 356, y: 198, w: 110, h: 92, color: 'var(--validator)' }
+      { id: 'contract', label: 'CONTRACT', x: 362, y: 58, w: 94, h: 84, color: 'var(--contract)' },
+      { id: 'validator', label: 'VALIDATOR', x: 362, y: 182, w: 94, h: 84, color: 'var(--validator)' }
     ]
   };
 
@@ -50,8 +50,8 @@
   const center = t => ({ cx: t.x + t.w / 2, cy: t.y + t.h / 2 });
 
   function addBackdrop() {
-    mk('rect', { x: 8, y: 8, width: 464, height: 306, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
-    mk('rect', { x: 18, y: 18, width: 444, height: 286, fill: 'none', stroke: 'rgba(255,255,255,0.03)', 'stroke-width': 1 });
+    mk('rect', { x: 6, y: 6, width: 468, height: 310, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
+    mk('rect', { x: 14, y: 14, width: 452, height: 294, fill: 'none', stroke: 'rgba(255,255,255,0.028)', 'stroke-width': 1 });
   }
 
   function shapeCore(g, cx, cy, ink) {

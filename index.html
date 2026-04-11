@@ -3,95 +3,125 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Structa v0.4 — Cascade</title>
+    <title>Structa v0.5 — Bauhaus Hexagon</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
-        
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
         :root {
-            --bg: #0a0a0f;
-            --node: #a0b0ff;
-            --accent: #7b8cff;
-            --log: rgba(20, 25, 45, 0.85);
+            --bg: #050505;
+            --text: #f4f4f0;
+            --red: #9f1d35;
+            --yellow: #e3a857;
+            --blue: #1e4b7c;
+            --neutral: #d9c2a3;
         }
-        
+
         body {
             margin: 0;
             padding: 0;
             background: var(--bg);
-            color: #ccd;
-            font-family: 'Inter', system-ui, sans-serif;
-            overflow: hidden;
+            color: var(--text);
+            font-family: 'Space Grotesk', sans-serif;
             height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
-        
+
         header {
-            padding: 12px 20px;
-            background: rgba(10,10,15,0.9);
+            padding: 14px 20px;
+            background: #0a0a0a;
             border-bottom: 1px solid #222;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 18px;
-            letter-spacing: -0.5px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            font-size: 17px;
+            letter-spacing: -0.4px;
         }
-        
+
+        .title { font-weight: 600; }
+        .subtitle { font-size: 13px; color: #666; font-family: 'IBM Plex Mono', monospace; }
+
         #canvas {
             flex: 1;
             position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: 
+                linear-gradient(to right, rgba(244,244,240,0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(244,244,240,0.03) 1px, transparent 1px);
+            background-size: 48px 48px;
         }
-        
-        #log {
-            height: 148px;
-            background: var(--log);
-            border-top: 1px solid #334;
-            padding: 12px 20px;
-            font-size: 13px;
-            overflow-y: auto;
-            font-family: monospace;
-            line-height: 1.4;
-            color: #99a;
+
+        svg {
+            width: 92%;
+            height: 92%;
+            max-width: 420px;
+            max-height: 420px;
         }
-        
-        .log-entry {
-            margin-bottom: 6px;
-            opacity: 0.9;
-        }
-        
-        .impact { color: #7bffd1; }
-        .node { color: #a0b0ff; }
-        
-        button {
-            background: #1a1f38;
-            color: #ccd;
-            border: 1px solid #445;
-            padding: 6px 14px;
-            border-radius: 6px;
-            font-size: 13px;
+
+        .hex {
+            transition: all 0.6s cubic-bezier(0.23, 1, 0.32, 1);
             cursor: pointer;
         }
-        
-        button:hover { background: #7b8cff; color: white; border-color: #7b8cff; }
+
+        .hex:hover { filter: brightness(1.15); }
+
+        .symbol {
+            font-size: 42px;
+            dominant-baseline: middle;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+
+        #log {
+            height: 138px;
+            background: #0a0a0a;
+            border-top: 1px solid #1f1f1f;
+            padding: 12px 18px;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 13.2px;
+            line-height: 1.45;
+            color: #aaa;
+            overflow-y: auto;
+        }
+
+        .log-entry { margin-bottom: 4px; }
+        .impact { color: #e3a857; }
+        button {
+            background: #111;
+            color: #ddd;
+            border: 1px solid #444;
+            padding: 7px 16px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: 'IBM Plex Mono', monospace;
+        }
+        button:active {
+            background: #e3a857;
+            color: black;
+        }
     </style>
 </head>
 <body>
     <header>
-        <div>Structa <span style="color:#7b8cff">v0.4</span> — Cascade</div>
-        <div style="font-size:13px;color:#666">Atlas • Professional Services Cognition</div>
+        <div><span class="title">Structa v0.5</span> — Bauhaus Hexagon</div>
+        <div class="subtitle">ATLAS • PROJECT COGNITION</div>
         <div>
-            <button onclick="runTestCascade()">Run Test Cascade</button>
-            <button onclick="exportBrief()">Export Brief</button>
+            <button onclick="runTestCascade()">TRIGGER CASCADE</button>
         </div>
     </header>
+
     <div id="canvas">
-        <canvas id="mainCanvas" width="800" height="500" style="width:100%;height:100%;display:block;"></canvas>
-    </div>
-    <div id="log">
-        <div class="log-entry">Structa v0.4 initialized. Ready for impact testing.</div>
+        <svg id="graph" viewBox="0 0 460 460" xmlns="http://www.w3.org/2000/svg"></svg>
     </div>
 
-    <script src="structa-cascade.js"></script>
+    <div id="log">
+        <div class="log-entry">Structa v0.5 Bauhaus Hexagon initialized.</div>
+        <div class="log-entry">Pure SVG. Zero canvas. Ready for geometric cascade.</div>
+    </div>
+
+    <script src="structa-cascade-v0.5.js"></script>
 </body>
 </html>

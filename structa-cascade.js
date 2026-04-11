@@ -1,7 +1,8 @@
 (() => {
   const svg = document.getElementById('scene');
   const log = document.getElementById('log');
-
+  const logDrawer = document.getElementById('log-drawer');
+  const logHandle = document.getElementById('log-handle');
 
   const layers = {
     primary: [
@@ -18,11 +19,12 @@
 
   const focusOrder = ['core', 'memory', 'output', 'support'];
   const allOrder = ['core', 'memory', 'output', 'support', 'contract', 'validator'];
-  const els = { tiles: {}, labels: {}, hidden: {}, touchStart: null };
+  const els = { tiles: {}, labels: {}, hidden: {}, touchStart: null, drawerTouch: null, drawerSwipeBlock: false };
   let active = 0;
   let busy = false;
   let revealLayer = false;
   let holdTimer = null;
+  let logOpen = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const pushLog = (text, strong = '') => {
@@ -33,6 +35,16 @@
     while (log.children.length > 5) log.removeChild(log.firstChild);
     log.scrollTop = 9999;
   };
+
+  const setLogDrawer = open => {
+    logOpen = open;
+    logDrawer.classList.toggle('open', open);
+    logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const state = logHandle?.querySelector('.state');
+    if (state) state.textContent = open ? 'SWIPE ↓' : 'SWIPE ↑';
+  };
+
+  const toggleLogDrawer = () => setLogDrawer(!logOpen);
 
   const mk = (name, attrs = {}, parent = svg) => {
     const el = document.createElementNS('http://www.w3.org/2000/svg', name);
@@ -119,7 +131,7 @@
           toggleHiddenLayer();
           pushLog(`${t.id.toUpperCase()} layer opened.`, 'HOLD');
         }
-      }, 520);
+      }, 420);
       els.touchStart = { x: e.clientX, y: e.clientY, id: t.id };
     });
     g.addEventListener('pointerup', e => {
@@ -131,6 +143,11 @@
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) triggerFrom(start.id);
+    });
+    g.addEventListener('pointercancel', () => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      els.touchStart = null;
     });
     g.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -164,6 +181,30 @@
     g.style.pointerEvents = 'none';
     g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') triggerFrom(t.id); });
     els.hidden[t.id] = g;
+  }
+
+  function attachDrawerGestures() {
+    if (!logHandle) return;
+
+    logHandle.addEventListener('click', e => {
+      if (els.drawerSwipeBlock) {
+        e.preventDefault();
+        return;
+      }
+      toggleLogDrawer();
+    });
+    logHandle.addEventListener('pointerdown', e => {
+      els.drawerSwipeBlock = false;
+      els.drawerTouch = { x: e.clientX, y: e.clientY };
+    });
+    logHandle.addEventListener('pointerup', e => {
+      if (!els.drawerTouch) return;
+      const dy = e.clientY - els.drawerTouch.y;
+      els.drawerTouch = null;
+      if (dy < -20) { els.drawerSwipeBlock = true; setLogDrawer(true); setTimeout(() => { els.drawerSwipeBlock = false; }, 0); }
+      else if (dy > 20) { els.drawerSwipeBlock = true; setLogDrawer(false); setTimeout(() => { els.drawerSwipeBlock = false; }, 0); }
+    });
+    logHandle.addEventListener('pointercancel', () => { els.drawerTouch = null; });
   }
 
   function selectTile(id) {
@@ -238,7 +279,10 @@
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextTile(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); nextTile(-1); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerFrom(focusOrder[active]); }
-    else if (e.key === 'Escape' || e.key === 'Backspace') { pushLog('Back action received.'); }
+    else if (e.key === 'Escape' || e.key === 'Backspace') {
+      if (logOpen) setLogDrawer(false);
+      else pushLog('Back action received.');
+    }
   });
 
   svg.addEventListener('pointerup', e => {
@@ -254,4 +298,7 @@
       else if (dy < 0) triggerFrom(started);
     }
   });
+
+  attachDrawerGestures();
+  setLogDrawer(false);
 })();

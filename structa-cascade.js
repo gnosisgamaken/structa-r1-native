@@ -3,28 +3,45 @@
   const log = document.getElementById('log');
   const runBtn = document.getElementById('runBtn');
 
-  const N = {
-    core:      { id: 'core',      label: 'CORE',      icon: '⬢', cls: 'core',      x: 240, y: 104, r: 30, primary: true },
-    memory:    { id: 'memory',    label: 'MEMORY',    icon: '▣', cls: 'memory',    x: 158, y: 196, r: 24 },
-    contract:  { id: 'contract',  label: 'CONTRACT',  icon: '△', cls: 'contract',  x: 322, y: 196, r: 24 },
-    validator: { id: 'validator', label: 'VALIDATOR', icon: '✕', cls: 'validator', x: 158, y: 306, r: 24 },
-    output:    { id: 'output',    label: 'OUTPUT',    icon: '◆', cls: 'output',    x: 322, y: 306, r: 24 },
-    support:   { id: 'support',   label: 'SUPPORT',   icon: '●', cls: 'support',   x: 240, y: 404, r: 22 }
-  };
+  const nodes = [
+    {
+      id: 'core', label: 'CORE', cls: 'core', x: 40, y: 20, w: 132, h: 132,
+      fill: 'var(--core)', symbol: 'circle-ring', motif: 'circle'
+    },
+    {
+      id: 'memory', label: 'MEMORY', cls: 'memory', x: 164, y: 20, w: 132, h: 132,
+      fill: 'var(--memory)', symbol: 'square-within', motif: 'square'
+    },
+    {
+      id: 'contract', label: 'CONTRACT', cls: 'contract', x: 288, y: 20, w: 132, h: 132,
+      fill: 'var(--contract)', symbol: 'triangle-slice', motif: 'triangle'
+    },
+    {
+      id: 'validator', label: 'VALIDATOR', cls: 'validator', x: 40, y: 184, w: 132, h: 132,
+      fill: 'var(--validator)', symbol: 'x-form', motif: 'x'
+    },
+    {
+      id: 'output', label: 'OUTPUT', cls: 'output', x: 164, y: 184, w: 132, h: 132,
+      fill: 'var(--output)', symbol: 'diamond-ring', motif: 'diamond'
+    },
+    {
+      id: 'support', label: 'SUPPORT', cls: 'support', x: 288, y: 184, w: 132, h: 132,
+      fill: 'var(--support)', symbol: 'dot-grid', motif: 'dot'
+    }
+  ];
 
   const order = ['core', 'memory', 'contract', 'validator', 'output', 'support'];
   const edges = [
     ['core', 'memory'],
-    ['core', 'contract'],
-    ['memory', 'validator'],
+    ['memory', 'contract'],
+    ['core', 'validator'],
     ['contract', 'output'],
     ['validator', 'support'],
     ['output', 'support']
   ];
 
   const els = { nodes: {}, edges: [] };
-  let busy = false;
-  let cascadeTimer = null;
+  let running = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const pushLog = (text, strong = '') => {
@@ -43,130 +60,166 @@
     return el;
   };
 
-  const hexPoints = (x, y, r) => {
+  const tileShape = (x, y, w, h) => `${x},${y} ${x + w},${y} ${x + w},${y + h} ${x},${y + h}`;
+  const center = n => ({ cx: n.x + n.w / 2, cy: n.y + n.h / 2 });
+
+  const createBackdrop = () => {
+    for (let y = 12; y <= 344; y += 56) {
+      for (let x = 14; x <= 466; x += 56) {
+        const hex = mk('polygon', { points: hexPoints(x, y, 12), class: 'grid' });
+      }
+    }
+  };
+
+  function hexPoints(x, y, r) {
     const pts = [];
     for (let i = 0; i < 6; i++) {
       const a = (Math.PI / 3) * i + Math.PI / 6;
       pts.push(`${(x + r * Math.cos(a)).toFixed(1)},${(y + r * Math.sin(a)).toFixed(1)}`);
     }
     return pts.join(' ');
-  };
+  }
 
   const connect = (a, b) => {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
+    const p = center(a);
+    const q = center(b);
+    const dx = q.cx - p.cx;
+    const dy = q.cy - p.cy;
     const len = Math.hypot(dx, dy) || 1;
     const ux = dx / len;
     const uy = dy / len;
     return {
-      x1: a.x + ux * a.r,
-      y1: a.y + uy * a.r,
-      x2: b.x - ux * b.r,
-      y2: b.y - uy * b.r
+      x1: p.cx + ux * (a.w * 0.38),
+      y1: p.cy + uy * (a.h * 0.38),
+      x2: q.cx - ux * (b.w * 0.38),
+      y2: q.cy - uy * (b.h * 0.38)
     };
   };
 
-  const buildBackdrop = () => {
-    for (let y = 36; y <= 444; y += 86) {
-      for (let x = 40; x <= 440; x += 86) {
-        const shift = ((y / 86) | 0) % 2 ? 43 : 0;
-        mk('polygon', {
-          points: hexPoints(x + shift, y, 17),
-          class: 'grid-hex'
-        });
-      }
+  const addTile = n => {
+    const g = mk('g', { class: 'tile', 'data-node': n.id, transform: `translate(${n.x},${n.y})` });
+
+    mk('rect', {
+      x: 0, y: 0, width: n.w, height: n.h,
+      fill: `var(--${n.cls})`,
+      class: 'tile-rect'
+    }, g);
+
+    // geometric motif: solid, modular, poster-like
+    const c = center(n);
+    const cx = n.w / 2;
+    const cy = n.h / 2;
+    const palette = {
+      core: 'rgba(245,243,236,0.95)',
+      memory: 'rgba(36,30,20,0.9)',
+      contract: 'rgba(245,243,236,0.9)',
+      validator: 'rgba(36,30,20,0.88)',
+      output: 'rgba(245,243,236,0.9)',
+      support: 'rgba(36,30,20,0.9)'
+    };
+    const ink = palette[n.cls];
+
+    if (n.motif === 'circle') {
+      mk('circle', { cx, cy, r: 36, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      mk('circle', { cx, cy, r: 12, fill: ink }, g);
+      mk('path', { d: `M ${cx - 24} ${cy + 22} A 30 30 0 0 1 ${cx + 24} ${cy + 22}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
     }
+
+    if (n.motif === 'square') {
+      mk('rect', { x: 32, y: 32, width: 68, height: 68, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      mk('rect', { x: 52, y: 52, width: 28, height: 28, fill: ink }, g);
+      mk('path', { d: 'M34 94 H98', fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+    }
+
+    if (n.motif === 'triangle') {
+      mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 36} ${cy + 28} L ${cx - 36} ${cy + 28} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+      mk('path', { d: `M ${cx - 18} ${cy + 10} L ${cx + 18} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+      mk('circle', { cx, cy - 2, r: 9, fill: ink }, g);
+    }
+
+    if (n.motif === 'x') {
+      mk('path', { d: `M ${cx - 32} ${cy - 32} L ${cx + 32} ${cy + 32}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+      mk('path', { d: `M ${cx + 32} ${cy - 32} L ${cx - 32} ${cy + 32}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
+      mk('circle', { cx, cy, r: 10, fill: ink }, g);
+    }
+
+    if (n.motif === 'diamond') {
+      mk('path', { d: `M ${cx} ${cy - 40} L ${cx + 40} ${cy} L ${cx} ${cy + 40} L ${cx - 40} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
+      mk('path', { d: `M ${cx - 26} ${cy + 10} A 30 30 0 0 1 ${cx + 26} ${cy + 10}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+      mk('circle', { cx, cy - 2, r: 8, fill: ink }, g);
+    }
+
+    if (n.motif === 'dot') {
+      mk('circle', { cx, cy, r: 36, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
+      mk('circle', { cx, cy, r: 10, fill: ink }, g);
+      mk('circle', { cx: cx - 18, cy: cy - 18, r: 4, fill: ink }, g);
+      mk('circle', { cx: cx + 18, cy: cy + 18, r: 4, fill: ink }, g);
+    }
+
+    mk('text', { x: cx, y: n.h - 14, class: 'tile-label' }, g).textContent = n.label;
+    els.nodes[n.id] = g;
   };
 
-  const buildEdges = () => {
-    edges.forEach(([a, b], idx) => {
-      const p = connect(N[a], N[b]);
-      const line = mk('line', {
-        x1: p.x1,
-        y1: p.y1,
-        x2: p.x2,
-        y2: p.y2,
-        class: 'connector',
-        'data-edge': `${a}-${b}`,
-        style: `stroke-dasharray:${Math.max(8, Math.hypot(p.x2-p.x1, p.y2-p.y1) / 1.6)}; stroke-dashoffset:0;`
-      });
-      els.edges.push({ id: `${a}-${b}`, el: line, a, b });
+  const createEdges = () => {
+    edges.forEach(([a, b]) => {
+      const line = connect(nodes.find(n => n.id === a), nodes.find(n => n.id === b));
+      const l = mk('line', { ...line, class: 'connector', 'data-edge': `${a}-${b}` });
+      els.edges.push({ id: `${a}-${b}`, el: l, a, b });
     });
   };
 
-  const buildNodes = () => {
-    Object.values(N).forEach(node => {
-      const g = mk('g', { class: 'node', 'data-node': node.id, transform: `translate(${node.x},${node.y})` });
-      const shell = mk('polygon', { points: hexPoints(0, 0, node.r), class: `shell ${node.cls}` }, g);
-      const icon = mk('text', { x: 0, y: 4, class: 'icon', fill: 'currentColor' }, g);
-      icon.textContent = node.icon;
-      const label = mk('text', { x: 0, y: node.r + 26, class: 'label', fill: 'currentColor' }, g);
-      label.textContent = node.label;
-      g.style.color = getComputedStyle(document.documentElement).getPropertyValue(`--${node.cls}`) || '#fff';
-      els.nodes[node.id] = g;
-    });
-  };
-
-  const flashNode = (id) => {
+  const flashNode = id => {
     const el = els.nodes[id];
     if (!el) return;
     el.classList.add('active');
-    setTimeout(() => el.classList.remove('active'), 230);
+    setTimeout(() => el.classList.remove('active'), 240);
   };
 
   const flashEdge = (a, b) => {
     const edge = els.edges.find(e => (e.a === a && e.b === b) || (e.a === b && e.b === a));
     if (!edge) return;
     edge.el.classList.add('active');
-    edge.el.style.strokeDashoffset = '0';
-    setTimeout(() => edge.el.classList.remove('active'), 230);
+    setTimeout(() => edge.el.classList.remove('active'), 240);
   };
 
   const runCascade = () => {
-    if (busy) return;
-    busy = true;
-    pushLog('Card received. Starting compact impact chain...', 'TRIGGER');
+    if (running) return;
+    running = true;
+    pushLog('Card received. Starting modular cascade...', 'TRIGGER');
 
-    const wave = [
+    const seq = [
       ['core'],
-      ['memory', 'contract'],
-      ['validator', 'output'],
+      ['memory'],
+      ['contract'],
+      ['validator'],
+      ['output'],
       ['support']
     ];
 
-    wave.forEach((group, i) => {
+    seq.forEach((group, i) => {
       setTimeout(() => {
-        if (i > 0) {
-          const from = i === 1 ? 'core' : i === 2 ? 'memory' : 'validator';
-          const to = i === 1 ? 'memory' : i === 2 ? 'validator' : 'support';
-          flashEdge(from, to);
-        }
+        if (i > 0) flashEdge(seq[i - 1][0], group[0]);
         group.forEach(id => {
           flashNode(id);
           pushLog(`${id.toUpperCase()} activated.`);
         });
-      }, i * 220);
+      }, i * 180);
     });
-
-    setTimeout(() => {
-      flashEdge('core', 'contract');
-      flashEdge('contract', 'output');
-    }, 480);
 
     setTimeout(() => {
       pushLog('Validator passed. Output stabilized.');
       pushLog('Compact cascade complete.');
-      busy = false;
-    }, 1180);
+      running = false;
+    }, 1220);
   };
 
   runBtn.addEventListener('click', runCascade);
 
-  buildBackdrop();
-  buildEdges();
-  buildNodes();
+  createBackdrop();
+  createEdges();
+  nodes.forEach(addTile);
 
-  pushLog('R1-native layout loaded.');
-  pushLog('Compact screen mode active.');
-  pushLog('One-action interaction only.');
+  pushLog('Tile matrix loaded.');
+  pushLog('R1 screen profile active.');
+  pushLog('One-action flow only.');
 })();

@@ -5,21 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Structa v0.7 — R1 Native</title>
+  <title>Structa v0.8 — Tile Matrix</title>
   <style>
     :root {
       --bg: #050505;
-      --panel: #0c0c0c;
+      --panel: #0a0a0a;
       --line: rgba(255,255,255,0.08);
-      --text: #f3f1ea;
-      --muted: #8e8e8e;
-      --accent: #c8b08a;
-      --core: #d26b6b;
-      --memory: #e0b35a;
-      --contract: #5d87c7;
-      --validator: #ece8df;
-      --output: #c8b08a;
-      --support: #86b48c;
+      --text: #f2efe8;
+      --muted: #8d8d8d;
+      --core: #c85c66;
+      --memory: #d7a94f;
+      --contract: #4d79b8;
+      --validator: #e9e2d5;
+      --output: #c6a27a;
+      --support: #89b58a;
     }
 
     html, body {
@@ -34,45 +33,57 @@
 
     body {
       display: flex;
-      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       background:
-        radial-gradient(circle at 50% 28%, rgba(255,255,255,0.03), transparent 48%),
+        radial-gradient(circle at 50% 30%, rgba(255,255,255,0.03), transparent 46%),
         linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
         linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px),
         var(--bg);
       background-size: auto, 40px 40px, 40px 40px, auto;
     }
 
+    #app {
+      width: min(100vw, 100vh, 480px);
+      height: min(100vw, 100vh, 480px);
+      aspect-ratio: 1 / 1;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255,255,255,0.07);
+      background: rgba(5,5,5,0.96);
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.4) inset;
+      overflow: hidden;
+    }
+
     header {
       flex: 0 0 auto;
-      height: 46px;
+      height: 38px;
+      padding: 0 12px;
+      box-sizing: border-box;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 12px;
-      box-sizing: border-box;
       border-bottom: 1px solid var(--line);
-      background: rgba(5,5,5,0.95);
-      backdrop-filter: blur(8px);
+      background: rgba(5,5,5,0.96);
     }
 
     .title {
-      font-size: 11px;
-      letter-spacing: 0.18em;
+      font-size: 10px;
+      letter-spacing: 0.22em;
       text-transform: uppercase;
-      font-weight: 600;
+      font-weight: 700;
       white-space: nowrap;
     }
 
     .meta {
-      font-size: 10px;
+      font-size: 9px;
       color: var(--muted);
-      letter-spacing: 0.14em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
       white-space: nowrap;
     }
 
-    #stage {
+    main {
       position: relative;
       flex: 1 1 auto;
       min-height: 0;
@@ -80,97 +91,67 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      padding: 8px 0 4px;
-      box-sizing: border-box;
     }
 
     svg {
-      width: min(100vw, 480px);
-      height: min(100%, 540px);
-      max-height: 100%;
+      width: 100%;
+      height: 100%;
       display: block;
     }
 
-    .grid-hex {
+    .grid {
       fill: none;
-      stroke: rgba(255,255,255,0.045);
+      stroke: rgba(255,255,255,0.04);
       stroke-width: 1;
     }
 
     .connector {
-      stroke: rgba(240,240,240,0.22);
-      stroke-width: 2.8;
+      stroke: rgba(255,255,255,0.24);
+      stroke-width: 2.6;
       stroke-linecap: round;
+      transition: stroke 180ms ease, stroke-width 180ms ease, opacity 180ms ease;
     }
 
     .connector.active {
-      stroke: rgba(255,255,255,0.72);
-      stroke-width: 3.8;
+      stroke: rgba(255,255,255,0.78);
+      stroke-width: 3.6;
+      opacity: 1;
     }
 
-    .node {
+    .tile {
       transform-origin: center;
       transition: transform 180ms cubic-bezier(.2,.8,.2,1), opacity 180ms ease;
     }
 
-    .node.active {
-      transform: scale(1.08);
+    .tile.active {
+      transform: scale(1.045);
     }
 
-    .shell {
-      fill: rgba(255,255,255,0.015);
-      stroke-width: 3.2;
-      stroke-linejoin: round;
+    .tile-rect {
+      rx: 0;
+      ry: 0;
     }
 
-    .icon {
-      font-family: 'Inter', system-ui, sans-serif;
-      font-weight: 700;
-      font-size: 28px;
-      text-anchor: middle;
-      dominant-baseline: middle;
-      pointer-events: none;
-      user-select: none;
-    }
-
-    .label {
-      font-size: 9px;
+    .tile-label {
+      font-size: 8px;
       letter-spacing: 0.16em;
       text-transform: uppercase;
       text-anchor: middle;
-      fill: var(--muted);
+      fill: rgba(255,255,255,0.66);
       pointer-events: none;
       user-select: none;
     }
 
-    #log {
-      flex: 0 0 auto;
-      height: 112px;
-      background: rgba(7,7,7,0.98);
-      border-top: 1px solid var(--line);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-      line-height: 1.45;
-      padding: 9px 12px;
-      box-sizing: border-box;
-      overflow: hidden;
+    .icon {
+      pointer-events: none;
+      user-select: none;
     }
-
-    .entry {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      color: #bcbcbc;
-    }
-
-    .muted { color: var(--muted); }
-    .accent { color: var(--accent); }
 
     .action-bar {
       position: absolute;
-      left: 12px;
-      right: 12px;
-      bottom: 124px;
+      left: 0;
+      right: 0;
+      bottom: 84px;
       display: flex;
       justify-content: center;
       pointer-events: none;
@@ -179,49 +160,80 @@
     button {
       pointer-events: auto;
       appearance: none;
+      height: 34px;
+      min-width: 164px;
+      padding: 0 16px;
+      border-radius: 999px;
       border: 1px solid rgba(255,255,255,0.12);
       background: linear-gradient(to bottom, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
       color: var(--text);
-      height: 36px;
-      min-width: 176px;
-      border-radius: 999px;
-      padding: 0 18px;
-      font-size: 11px;
-      letter-spacing: 0.14em;
+      font-size: 10px;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
       box-shadow: 0 0 0 1px rgba(0,0,0,0.35) inset;
     }
 
-    button:active { transform: translateY(1px); }
+    button:active {
+      transform: translateY(1px);
+    }
+
+    #log {
+      flex: 0 0 auto;
+      height: 84px;
+      border-top: 1px solid var(--line);
+      background: rgba(8,8,8,0.98);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10.5px;
+      line-height: 1.45;
+      padding: 8px 10px;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+
+    .entry {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #bdbdbd;
+    }
+
+    .muted { color: var(--muted); }
+    .accent { color: #c6b08d; }
 
     @media (max-width: 480px) {
-      header { height: 42px; padding: 0 10px; }
-      .title { font-size: 10px; }
-      .meta { font-size: 9px; }
-      #log { height: 120px; font-size: 10.5px; }
-      button { min-width: 160px; height: 34px; }
-      .action-bar { bottom: 132px; }
-      .icon { font-size: 26px; }
+      #app {
+        width: 100vw;
+        height: 100vh;
+        border: none;
+      }
+      header { height: 36px; padding: 0 10px; }
+      .title { font-size: 9px; }
+      .meta { font-size: 8px; }
+      #log { height: 82px; font-size: 10px; }
+      .action-bar { bottom: 82px; }
+      button { height: 32px; min-width: 156px; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="title">Structa v0.7 — R1 Native</div>
-    <div class="meta">Atlas • Project Cognition</div>
-  </header>
+  <div id="app">
+    <header>
+      <div class="title">Structa v0.8 — Tile Matrix</div>
+      <div class="meta">Atlas • Project Cognition</div>
+    </header>
 
-  <main id="stage" aria-label="Structa node view">
-    <svg id="ui" viewBox="0 0 480 480" role="img" aria-label="Compact node lattice"></svg>
-    <div class="action-bar">
-      <button id="runBtn">Trigger Cascade</button>
-    </div>
-  </main>
+    <main>
+      <svg id="ui" viewBox="0 0 480 358" role="img" aria-label="Compact modular tile matrix"></svg>
+      <div class="action-bar">
+        <button id="runBtn">Trigger Cascade</button>
+      </div>
+    </main>
 
-  <section id="log" aria-live="polite">
-    <div class="entry"><span class="muted">[--:--]</span> R1-native mode loaded.</div>
-    <div class="entry"><span class="muted">[--:--]</span> Compact layout active.</div>
-  </section>
+    <section id="log" aria-live="polite">
+      <div class="entry"><span class="muted">[--:--]</span> Modular tile view loaded.</div>
+      <div class="entry"><span class="muted">[--:--]</span> R1-safe composition active.</div>
+    </section>
+  </div>
 
   <script src="structa-cascade.js"></script>
 </body>

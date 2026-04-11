@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Structa v0.4 — Cascade</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
+        
+        :root {
+            --bg: #0a0a0f;
+            --node: #a0b0ff;
+            --accent: #7b8cff;
+            --log: rgba(20, 25, 45, 0.85);
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: #ccd;
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            padding: 12px 20px;
+            background: rgba(10,10,15,0.9);
+            border-bottom: 1px solid #222;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        #canvas {
+            flex: 1;
+            position: relative;
+        }
+        
+        #log {
+            height: 148px;
+            background: var(--log);
+            border-top: 1px solid #334;
+            padding: 12px 20px;
+            font-size: 13px;
+            overflow-y: auto;
+            font-family: monospace;
+            line-height: 1.4;
+            color: #99a;
+        }
+        
+        .log-entry {
+            margin-bottom: 6px;
+            opacity: 0.9;
+        }
+        
+        .impact { color: #7bffd1; }
+        .node { color: #a0b0ff; }
+        
+        button {
+            background: #1a1f38;
+            color: #ccd;
+            border: 1px solid #445;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        button:hover { background: #7b8cff; color: white; border-color: #7b8cff; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>Structa <span style="color:#7b8cff">v0.4</span> — Cascade</div>
+        <div style="font-size:13px;color:#666">Atlas • Professional Services Cognition</div>
+        <div>
+            <button onclick="runTestCascade()">Run Test Cascade</button>
+            <button onclick="exportBrief()">Export Brief</button>
+        </div>
+    </header>
+    <div id="canvas">
+        <canvas id="mainCanvas" width="800" height="500" style="width:100%;height:100%;display:block;"></canvas>
+    </div>
+    <div id="log">
+        <div class="log-entry">Structa v0.4 initialized. Ready for impact testing.</div>
+    </div>
+
+    <script src="structa-cascade.js"></script>
+</body>
+</html>

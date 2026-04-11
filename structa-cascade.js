@@ -26,6 +26,15 @@
     ]
   };
 
+  const tileCopy = {
+    core: { note: 'Command loop', hint: 'route · inspect' },
+    memory: { note: 'State + assets', hint: 'journal · recall' },
+    output: { note: 'Response surface', hint: 'render · export' },
+    support: { note: 'Voice + camera', hint: 'capture · submit' },
+    contract: { note: 'Rules + gates', hint: 'strict envelope' },
+    validator: { note: 'Sanity check', hint: 'reject drift' }
+  };
+
   const focusOrder = ['core', 'memory', 'output', 'support'];
   const allOrder = ['core', 'memory', 'output', 'support', 'contract', 'validator'];
   const els = { tiles: {}, labels: {}, hidden: {}, touchStart: null, drawerTouch: null, drawerSwipeBlock: false };
@@ -128,24 +137,37 @@
   }
 
   const drawTile = (t, isHidden = false) => {
-    const g = mk('g', { class: `tile ${isHidden ? 'hidden' : 'primary'}`, 'data-node': t.id, transform: `translate(${t.x},${t.y})`, tabindex: '0' });
+    const copy = tileCopy[t.id] || { note: t.label, hint: '' };
+    const labelFill = (t.id === 'core' || t.id === 'output' || t.id === 'contract')
+      ? 'rgba(248,244,235,0.96)'
+      : 'rgba(18,18,18,0.90)';
+    const g = mk('g', {
+      class: `tile ${isHidden ? 'hidden' : 'primary'} tile-${t.id}`,
+      'data-node': t.id,
+      transform: `translate(${t.x},${t.y})`,
+      tabindex: '0',
+      role: 'button',
+      'aria-pressed': 'false',
+      'aria-label': `${t.label} node. ${copy.note}. ${copy.hint}.`
+    });
     const c = center(t);
     const ink = (t.id === 'validator' || t.id === 'support') ? 'rgba(24,24,24,0.9)' : 'rgba(245,243,236,0.96)';
 
-    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, fill: t.color, class: 'tile-rect' }, g);
-    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
+    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, rx: 18, ry: 18, fill: t.color, class: 'tile-rect' }, g);
+    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, rx: 17, ry: 17, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
 
-    // deliberately sparse composition: big form, one secondary accent, tiny label
+    // deliberately sparse composition: big form, one secondary accent, small label system
     const motif = mk('g', { class: 'motif' }, g);
-    if (t.id === 'core') shapeCore(motif, c.cx, c.cy, ink);
-    if (t.id === 'memory') shapeMemory(motif, c.cx, c.cy, ink);
-    if (t.id === 'output') shapeOutput(motif, c.cx, c.cy, ink);
-    if (t.id === 'support') shapeSupport(motif, c.cx, c.cy, ink);
-    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
-    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
+    if (t.id === 'core') shapeCore(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'memory') shapeMemory(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'output') shapeOutput(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'support') shapeSupport(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy + 8, ink);
 
-    // no labels on the home face; the panel should read as an object, not an app.
-    els.labels[t.id] = null;
+    text(16, 22, t.label, { class: 'tile-title', fill: labelFill }, g);
+    text(16, t.h - 28, copy.note.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.92' }, g);
+    text(16, t.h - 13, copy.hint.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.54' }, g);
 
     g.addEventListener('pointerdown', e => {
       e.preventDefault();
@@ -189,19 +211,32 @@
       const node = els.hidden[t.id];
       if (node) node.style.opacity = revealLayer ? '1' : '0';
       if (node) node.style.pointerEvents = revealLayer ? 'auto' : 'none';
+      if (node) node.setAttribute('aria-hidden', revealLayer ? 'false' : 'true');
     });
   }
 
   function addHiddenTile(t) {
-    const g = mk('g', { class: 'tile hidden', 'data-node': t.id, transform: `translate(${t.x},${t.y})`, opacity: '0', tabindex: '0' });
+    const copy = tileCopy[t.id] || { note: t.label, hint: '' };
+    const labelFill = t.id === 'validator' ? 'rgba(18,18,18,0.90)' : 'rgba(248,244,235,0.96)';
+    const g = mk('g', {
+      class: `tile hidden tile-${t.id}`,
+      'data-node': t.id,
+      transform: `translate(${t.x},${t.y})`,
+      opacity: '0',
+      tabindex: '0',
+      role: 'button',
+      'aria-pressed': 'false',
+      'aria-label': `${t.label} node. ${copy.note}. ${copy.hint}.`
+    });
     const c = center(t);
     const ink = t.id === 'validator' ? 'rgba(24,24,24,0.9)' : 'rgba(245,243,236,0.96)';
-    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, fill: t.color, class: 'tile-rect' }, g);
-    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
+    mk('rect', { x: 0, y: 0, width: t.w, height: t.h, rx: 14, ry: 14, fill: t.color, class: 'tile-rect' }, g);
+    mk('rect', { x: 0.5, y: 0.5, width: t.w - 1, height: t.h - 1, rx: 13, ry: 13, fill: 'none', stroke: 'rgba(255,255,255,0.08)', 'stroke-width': 1 }, g);
     const motif = mk('g', {}, g);
-    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
-    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
-    text(c.cx, t.h - 14, t.label, { class: 'tile-title' }, g);
+    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy + 4, ink);
+    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy + 4, ink);
+    text(10, 18, t.label, { class: 'tile-title', fill: labelFill }, g);
+    text(10, t.h - 12, copy.note.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.88' }, g);
     g.style.pointerEvents = 'none';
     g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') triggerFrom(t.id); });
     els.hidden[t.id] = g;
@@ -258,7 +293,16 @@
 
   function selectTile(id) {
     active = focusOrder.indexOf(id) >= 0 ? focusOrder.indexOf(id) : active;
-    Object.entries(els.tiles).forEach(([key, el]) => el.classList.toggle('selected', key === id));
+    Object.entries(els.tiles).forEach(([key, el]) => {
+      const selected = key === id;
+      el.classList.toggle('selected', selected);
+      el.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
+    Object.entries(els.hidden).forEach(([key, el]) => {
+      const selected = key === id;
+      el.classList.toggle('selected', selected);
+      el.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    });
     native?.setActiveNode?.(id);
   }
 
@@ -277,6 +321,7 @@
       if (!node) return;
       node.style.opacity = show ? '1' : '0';
       node.style.pointerEvents = show ? 'auto' : 'none';
+      node.setAttribute('aria-hidden', show ? 'false' : 'true');
     });
   }
 

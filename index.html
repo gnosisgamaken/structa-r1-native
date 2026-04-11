@@ -71,6 +71,19 @@
       transform-origin: center;
       transition: transform 180ms cubic-bezier(.18,.67,.3,1.18), opacity 180ms ease, filter 180ms ease;
       cursor: pointer;
+      will-change: transform, filter;
+    }
+
+    .tile:hover {
+      transform: translateY(-2px);
+    }
+
+    .tile:active {
+      transform: translateY(0) scale(0.99);
+    }
+
+    .tile:focus-visible {
+      outline: none;
     }
 
     .tile.selected {
@@ -95,11 +108,28 @@
     }
 
     .tile-title {
-      display: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 9px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-weight: 700;
     }
 
     .tile-note {
-      display: none;
+      font-family: Inter, system-ui, sans-serif;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .tile:focus-visible .tile-rect {
+      stroke: rgba(255,255,255,0.26);
+      stroke-width: 1.4;
+    }
+
+    .tile.selected .tile-rect {
+      stroke: rgba(255,255,255,0.24);
+      stroke-width: 1.25;
     }
 
     .frame {
@@ -184,6 +214,7 @@
       will-change: transform;
       pointer-events: auto;
       backdrop-filter: blur(12px);
+      box-shadow: 0 -12px 30px rgba(0,0,0,0.20);
     }
 
     #log-drawer.open {
@@ -192,10 +223,10 @@
 
     #log-handle {
       width: 100%;
-      min-height: 24px;
+      min-height: 28px;
       border: 0;
       margin: 0;
-      padding: 0 10px;
+      padding: 0 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -206,8 +237,8 @@
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 8px;
-      letter-spacing: 0.12em;
+      font-size: 9px;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       touch-action: none;
       user-select: none;
@@ -224,13 +255,13 @@
 
     #capture-launcher {
       border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(255,255,255,0.04);
+      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
       color: #f6f0e6;
       border-radius: 999px;
-      padding: 2px 8px;
+      padding: 4px 10px;
       font: inherit;
-      font-size: 8px;
-      letter-spacing: 0.12em;
+      font-size: 9px;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
     }
 
@@ -255,13 +286,13 @@
     }
 
     #capture-sheet {
-      width: min(100%, 456px);
+      width: min(100%, 480px);
       max-height: 86vh;
-      border-radius: 18px 18px 10px 10px;
+      border-radius: 20px 20px 12px 12px;
       border: 1px solid rgba(255,255,255,0.09);
       background: rgba(9,9,9,0.98);
       box-shadow: 0 24px 60px rgba(0,0,0,0.45);
-      padding: 12px;
+      padding: 14px;
       box-sizing: border-box;
       color: var(--text);
       font-family: Inter, system-ui, sans-serif;
@@ -285,7 +316,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
 
     .capture-kicker {
@@ -297,7 +328,7 @@
 
     .capture-title {
       margin-top: 2px;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 600;
     }
 
@@ -314,21 +345,48 @@
       font-size: 11px;
       min-height: 32px;
       touch-action: manipulation;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+    }
+
+    #capture-close:hover,
+    .capture-tabs button:hover,
+    .capture-row button:hover,
+    .capture-foot button:hover,
+    #capture-launcher:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,0.07);
+    }
+
+    #capture-close:active,
+    .capture-tabs button:active,
+    .capture-row button:active,
+    .capture-foot button:active,
+    #capture-launcher:active {
+      transform: translateY(0) scale(0.99);
+    }
+
+    #capture-close:focus-visible,
+    .capture-tabs button:focus-visible,
+    .capture-row button:focus-visible,
+    .capture-foot button:focus-visible,
+    #capture-launcher:focus-visible {
+      outline: 1px solid rgba(255,255,255,0.24);
+      outline-offset: 2px;
     }
 
     .capture-tabs {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
 
     .action-rail {
       display: flex;
-      gap: 6px;
+      gap: 8px;
       overflow-x: auto;
-      padding-bottom: 8px;
-      margin-bottom: 8px;
+      padding-bottom: 10px;
+      margin-bottom: 10px;
       scrollbar-width: none;
       scroll-snap-type: x proximity;
     }
@@ -339,9 +397,9 @@
 
     .action-rail button {
       flex: 0 0 auto;
-      padding: 6px 8px;
+      padding: 7px 10px;
       font-size: 10px;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.10em;
       text-transform: uppercase;
       white-space: nowrap;
       scroll-snap-align: start;
@@ -352,6 +410,12 @@
     .capture-tabs button.active,
     .capture-panel.active {
       border-color: rgba(255,255,255,0.22);
+    }
+
+    .action-rail button.active,
+    .capture-tabs button.active {
+      background: rgba(255,255,255,0.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
     }
 
     .capture-panel {
@@ -366,7 +430,7 @@
 
     .capture-row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
     }
 

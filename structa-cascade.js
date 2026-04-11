@@ -194,12 +194,20 @@
   function attachDrawerGestures() {
     if (!logHandle) return;
 
-    logHandle.addEventListener('click', e => {
+    const toggleIfAllowed = e => {
       if (els.drawerSwipeBlock) {
         e.preventDefault();
         return;
       }
       toggleLogDrawer();
+    };
+
+    logHandle.addEventListener('click', toggleIfAllowed);
+    logHandle.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleIfAllowed(e);
+      }
     });
     logHandle.addEventListener('pointerdown', e => {
       els.drawerSwipeBlock = false;

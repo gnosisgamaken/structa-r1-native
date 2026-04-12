@@ -16,14 +16,14 @@
 
   const layers = {
     primary: [
-      { id: 'core', label: 'Core', x: 8,  y: 12, w: 160, h: 46, color: 'var(--core)' },
-      { id: 'memory', label: 'Memory', x: 8,  y: 64, w: 160, h: 46, color: 'var(--memory)' },
-      { id: 'output', label: 'Output', x: 8,  y: 116, w: 160, h: 46, color: 'var(--output)' },
-      { id: 'support', label: 'Support', x: 8,  y: 168, w: 160, h: 46, color: 'var(--support)' }
+      { id: 'core', label: 'Core', x: 8,  y: 20, w: 160, h: 44, color: 'var(--core)' },
+      { id: 'memory', label: 'Memory', x: 8,  y: 72, w: 160, h: 44, color: 'var(--memory)' },
+      { id: 'output', label: 'Output', x: 8,  y: 124, w: 160, h: 44, color: 'var(--output)' },
+      { id: 'support', label: 'Support', x: 8,  y: 176, w: 160, h: 44, color: 'var(--support)' }
     ],
     hidden: [
-      { id: 'contract', label: 'Contract', x: 176, y: 20, w: 56, h: 42, color: 'var(--contract)' },
-      { id: 'validator', label: 'Validator', x: 176, y: 76, w: 56, h: 42, color: 'var(--validator)' }
+      { id: 'contract', label: 'Contract', x: 176, y: 24, w: 56, h: 42, color: 'var(--contract)' },
+      { id: 'validator', label: 'Validator', x: 176, y: 80, w: 56, h: 42, color: 'var(--validator)' }
     ]
   };
 

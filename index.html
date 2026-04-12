@@ -279,15 +279,13 @@
     }
 
     #log-handle .log-kicker {
-      font-size: 8px;
-      letter-spacing: 0.14em;
-      color: rgba(255,255,255,0.34);
+      display: none;
     }
 
     #log-handle .log-title {
       font-size: 9px;
-      letter-spacing: 0.14em;
-      color: rgba(246,240,230,0.90);
+      letter-spacing: 0.08em;
+      color: rgba(246,240,230,0.88);
     }
 
     #log-handle .log-meta {
@@ -315,9 +313,9 @@
     }
 
     #log-handle .log-chip.live {
-      color: rgba(255,255,255,0.66);
-      border-color: rgba(255,255,255,0.08);
-      background: rgba(255,255,255,0.03);
+      color: rgba(255,255,255,0.62);
+      border-color: rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.025);
     }
 
     #log-handle .handle-actions {
@@ -613,17 +611,15 @@
     </main>
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
-      <div id="log-handle" role="button" tabindex="0" aria-label="Toggle audit log">
+      <div id="log-handle" role="button" tabindex="0" aria-label="Toggle log">
         <span class="grip" aria-hidden="true"></span>
         <span class="log-copy">
           <span class="log-text">
-            <span class="log-kicker">Audit</span>
             <span class="log-title">Log</span>
           </span>
         </span>
         <span class="log-meta">
           <span class="log-chip live">Live</span>
-          <span class="state log-chip">Swipe ↑</span>
           <span class="log-chip" id="log-count">3</span>
           <span class="handle-actions">
             <button id="capture-launcher" type="button" aria-label="Open capture tray">Capture</button>

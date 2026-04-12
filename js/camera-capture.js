@@ -9,6 +9,7 @@
   let stream = null;
   let facingMode = 'environment';
   let lastBundle = null;
+  let captureArmed = false;
 
   function setStatus(text) {
     if (status) status.textContent = text;
@@ -44,7 +45,9 @@
 
   async function openCamera(mode = facingMode) {
     openTray();
-    facingMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+    const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+    if (stream && nextMode === facingMode) return { ok: true, facingMode };
+    facingMode = nextMode;
 
     const safeBrowser = !navigator.webdriver && window.isSecureContext !== false;
     if (!safeBrowser || !navigator.mediaDevices?.getUserMedia) {
@@ -61,7 +64,7 @@
         preview.srcObject = stream;
         await preview.play().catch(() => {});
       }
-      setStatus(facingMode === 'user' ? 'Selfie ready — tap preview to flip' : 'Camera ready — tap preview to flip');
+      setStatus(facingMode === 'user' ? 'Selfie ready' : 'Camera ready');
       return { ok: true };
     } catch (error) {
       setStatus('Camera blocked');
@@ -131,16 +134,34 @@
   }
 
   function flipFacing() {
-    return openCamera(facingMode === 'user' ? 'environment' : 'user');
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    return openCamera(nextMode);
   }
 
-  preview?.addEventListener('click', flipFacing);
+  preview?.addEventListener('click', event => {
+    event.preventDefault();
+  });
   tray?.addEventListener('wheel', event => {
     if (!stream) return;
     event.preventDefault();
     const wheelUp = event.deltaY < 0;
     return openCamera(wheelUp ? 'user' : 'environment');
   }, { passive: false });
+  const cameraPanel = tray?.querySelector('.capture-panel[data-panel="camera"]');
+  cameraPanel?.addEventListener('pointerdown', event => {
+    if (!stream || !cameraPanel.classList.contains('active')) return;
+    event.preventDefault();
+    captureArmed = true;
+  });
+  cameraPanel?.addEventListener('pointerup', async event => {
+    if (!captureArmed) return;
+    event.preventDefault();
+    captureArmed = false;
+    await captureFrame().catch(() => {});
+  });
+  cameraPanel?.addEventListener('pointercancel', () => {
+    captureArmed = false;
+  });
   window.StructaCamera = Object.freeze({
     open: openCamera,
     capture: captureFrame,

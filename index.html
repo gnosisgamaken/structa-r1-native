@@ -37,11 +37,9 @@
       display: grid;
       place-items: center;
       background:
-        radial-gradient(circle at 50% 0%, rgba(0,255,87,0.12), transparent 14%),
-        radial-gradient(circle at 50% 20%, rgba(255,79,105,0.10), transparent 18%),
-        radial-gradient(circle at 50% 50%, rgba(79,149,255,0.06), transparent 26%),
-        radial-gradient(circle at 50% 80%, rgba(113,255,138,0.06), transparent 22%),
-        linear-gradient(to bottom, rgba(255,255,255,0.02), transparent 22%),
+        radial-gradient(circle at 50% 0%, rgba(0,255,87,0.05), transparent 16%),
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.03), transparent 24%),
+        linear-gradient(to bottom, rgba(255,255,255,0.015), transparent 18%),
         var(--bg);
       background-size: auto, auto, auto, auto, auto;
     }
@@ -53,7 +51,7 @@
       flex-direction: column;
       overflow: hidden;
       position: relative;
-      background: rgba(5,5,5,0.98);
+      background: transparent;
     }
 
     main {
@@ -123,7 +121,7 @@
 
     .tile-title {
       font-family: Inter, system-ui, sans-serif;
-      font-size: 16px;
+      font-size: 18px;
       letter-spacing: 0.03em;
       text-transform: none;
       font-weight: 700;
@@ -227,8 +225,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(84px, 30%);
-      transform: translateY(calc(100% - 20px));
+      height: min(66px, 24%);
+      transform: translateY(calc(100% - 14px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -243,7 +241,7 @@
 
     #log-handle {
       width: 100%;
-      min-height: 20px;
+      min-height: 14px;
       border: 0;
       margin: 0;
       padding: 0 8px;
@@ -257,9 +255,9 @@
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 9px;
-      letter-spacing: 0.11em;
-      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: none;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
@@ -323,9 +321,9 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: 10px;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      text-transform: none;
     }
 
     #log-handle .log-meta {
@@ -421,6 +419,7 @@
       color: rgba(255,255,255,0.38);
       font-size: 10px;
       margin-top: 4px;
+      display: none;
     }
 
     .capture-head {
@@ -446,7 +445,9 @@
 
     .capture-row button,
     .capture-foot button,
-    #capture-launcher {
+    #capture-launcher,
+    .capture-surface-note,
+    .capture-foot {
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
       color: #f6f0e6;
@@ -538,10 +539,11 @@
 
     #camera-preview {
       width: 100%;
-      aspect-ratio: 1 / 1.05;
-      border-radius: 14px;
-      background: #050505;
-      border: 1px solid rgba(255,255,255,0.10);
+      height: min(100%, 172px);
+      display: block;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.04);
+      aspect-ratio: 1 / 1.03;
       object-fit: cover;
     }
 
@@ -616,14 +618,10 @@
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <div id="log-handle" role="button" tabindex="0" aria-label="Toggle log">
         <span class="capture-preview" id="capture-preview" aria-live="polite">
-          <span id="capture-preview-copy">No capture yet</span>
+          <span id="capture-preview-copy"></span>
         </span>
       </div>
-      <div id="log">
-        <div class="entry"><span class="muted">[--:--]</span> Ready.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Stack active.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Tap again to open.</div>
-      </div>
+      <div id="log"></div>
     </section>
 
     <section id="capture-tray" aria-hidden="true">
@@ -632,24 +630,17 @@
           <div>
             <div class="capture-kicker">CAPTURE</div>
             <div class="capture-title" id="capture-title">Voice</div>
-            <div class="capture-hint" id="capture-hint">PTT first. Camera is preview-driven. Back closes.</div>
           </div>
         </div>
         <div class="capture-panel active" data-panel="voice">
-          <div class="capture-surface-note">Use the device PTT for voice. Back returns to the previous screen.</div>
-          <div id="voice-transcript" aria-live="polite">Awaiting PTT.</div>
-          <div class="capture-foot">
-            <span id="voice-status">Idle</span>
-          </div>
+          <div id="voice-transcript" aria-live="polite" class="sr-only"></div>
+          <div id="voice-status" class="sr-only"></div>
         </div>
 
         <div class="capture-panel" data-panel="camera">
           <video id="camera-preview" autoplay playsinline muted></video>
           <canvas id="camera-canvas" hidden></canvas>
-          <div class="capture-surface-note">PTT takes the shot. Tap preview to flip selfie mode. Back returns.</div>
-          <div class="capture-foot">
-            <span id="camera-status">Camera idle</span>
-          </div>
+          <div id="camera-status" class="sr-only"></div>
         </div>
       </div>
     </section>

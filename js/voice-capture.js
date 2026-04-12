@@ -9,13 +9,14 @@
   const captureHint = document.getElementById('capture-hint');
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const voicePanel = document.querySelector('#capture-tray .capture-panel[data-panel="voice"]');
+  const cameraPanel = document.querySelector('#capture-tray .capture-panel[data-panel="camera"]');
   let recognition = null;
   let listening = false;
   let audioRecorder = null;
   let audioStream = null;
   let audioChunks = [];
   let pendingAudioAsset = null;
-  let ignoreClickUntil = 0;
 
   function setStatus(text) {
     if (status) status.textContent = text;
@@ -69,8 +70,7 @@
     if (bundle?.ok) {
       setStatus('Saved');
       if (captureTitle) captureTitle.textContent = 'Voice';
-      if (captureHint) captureHint.textContent = 'Audio clip saved. Back closes.';
-      if (transcript) transcript.textContent = 'Audio note saved.';
+      if (transcript) transcript.textContent = '';
     }
   }
 
@@ -87,7 +87,6 @@
     stopListening(false);
     window.StructaCamera?.teardown?.();
     if (captureTitle) captureTitle.textContent = 'Voice';
-    if (captureHint) captureHint.textContent = 'Device PTT records voice. Back closes.';
   }
 
   function setPanel(panel) {
@@ -96,11 +95,6 @@
     });
     openTray();
     if (captureTitle) captureTitle.textContent = panel === 'camera' ? 'Camera' : 'Voice';
-    if (captureHint) {
-      captureHint.textContent = panel === 'camera'
-        ? 'Wheel flips selfie. Back closes.'
-        : 'Device PTT records voice. Back closes.';
-    }
     if (panel === 'camera') {
       window.StructaCamera?.open?.(window.StructaCamera?.facingMode || 'environment');
     } else {
@@ -119,7 +113,6 @@
     listening = false;
     if (btnStart) btnStart.textContent = 'PTT';
     setStatus('Idle');
-    ignoreClickUntil = Date.now() + 500;
     if (emit) {
       const text = transcript?.textContent?.trim() || '';
       if (text && native?.stopPTT) native.stopPTT(text);
@@ -148,7 +141,7 @@
     setPanel('voice');
     if (btnStart) btnStart.textContent = 'Stop';
     setStatus('Listening...');
-    if (transcript) transcript.textContent = 'Listening…';
+    if (transcript) transcript.textContent = '';
     native?.startPTT?.();
 
     if (!SR) {
@@ -181,7 +174,7 @@
         audioRecorder.start();
         listening = true;
         setStatus('Recording audio...');
-        if (transcript) transcript.textContent = 'Recording audio…';
+        if (transcript) transcript.textContent = '';
         native?.startPTT?.();
         return;
       } catch (_) {
@@ -202,7 +195,7 @@
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const part = event.results[i][0]?.transcript || '';
           if (event.results[i].isFinal) finalText += part;
-          else if (!transcript.textContent || transcript.textContent === 'Tap PTT to capture speech.') transcript.textContent = part;
+          else if (!transcript.textContent) transcript.textContent = part;
         }
         if (finalText) transcript.textContent = (transcript.textContent + ' ' + finalText).trim();
       };
@@ -260,23 +253,27 @@
     setStatus('Withdrawal queued');
   }
 
-  btnStart?.addEventListener('click', () => {
-    if (Date.now() < ignoreClickUntil) return;
-    if (listening) stopListening(true);
-    else startListening();
-  });
-  btnStart?.addEventListener('pointerdown', event => {
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
+  voicePanel?.addEventListener('pointerdown', event => {
+    if (!voicePanel.classList.contains('active')) return;
     event.preventDefault();
     if (!listening) startListening();
   });
-  btnStart?.addEventListener('pointerup', event => {
+  voicePanel?.addEventListener('pointerup', event => {
     if (!listening) return;
     event.preventDefault();
     stopListening(true);
   });
-  btnStart?.addEventListener('pointercancel', () => {
+  voicePanel?.addEventListener('pointercancel', () => {
     if (listening) stopListening(true);
+  });
+  cameraPanel?.addEventListener('pointerdown', event => {
+    if (!cameraPanel.classList.contains('active')) return;
+    event.preventDefault();
+  });
+  cameraPanel?.addEventListener('pointerup', async event => {
+    if (!cameraPanel.classList.contains('active')) return;
+    event.preventDefault();
+    await window.StructaCamera?.capture?.();
   });
   tray?.addEventListener('click', event => {
     if (event.target === tray) closeTray();

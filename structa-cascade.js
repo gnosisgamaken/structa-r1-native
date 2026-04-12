@@ -63,9 +63,6 @@
   let touch = null;
   let logSwipe = null;
   let lastCapture = native?.getMemory?.().captures?.slice(-1)[0] || null;
-  let wheelLockAt = 0;
-  let tiltLockAt = 0;
-  let motionArmed = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const syncLogCount = () => {
@@ -80,7 +77,7 @@
       if (shell) shell.hidden = true;
       captureThumb.hidden = true;
       captureThumb.removeAttribute('src');
-      capturePreviewCopy.textContent = 'No capture yet';
+      capturePreviewCopy.textContent = '';
       return;
     }
     const img = capture.image_asset?.data || capture.image_asset?.url || '';
@@ -141,39 +138,13 @@
   const TOP_SAFE_PX = 23;
 
   const addTopBand = () => {
-    mk('rect', {
-      x: 8,
-      y: TOP_SAFE_PX,
-      width: 224,
-      height: 18,
-      rx: 9,
-      fill: 'rgba(255,255,255,0.035)',
-      stroke: 'rgba(255,255,255,0.05)',
-      'stroke-width': 1
-    });
-    text(14, TOP_SAFE_PX + 13, 'STRUCTA', {
+    text(14, TOP_SAFE_PX + 11, 'STRUCTA', {
       class: 'tile-title',
       fill: 'var(--support)',
       'letter-spacing': '0.16em'
     });
-    const card = cards[selectedIndex];
-    mk('rect', {
-      x: 166,
-      y: TOP_SAFE_PX + 2,
-      width: 58,
-      height: 14,
-      rx: 6,
-      fill: 'rgba(255,255,255,0.07)',
-      stroke: 'rgba(255,255,255,0.07)',
-      'stroke-width': 1
-    });
-    text(195, TOP_SAFE_PX + 12, card.title.toUpperCase(), {
-      class: 'tile-note',
-      fill: 'rgba(246,240,230,0.88)',
-      'text-anchor': 'middle',
-      'letter-spacing': '0.06em'
-    });
   };
+
 
   const drawCore = (g, cx, cy, ink) => {
     mk('circle', { cx, cy, r: 18, fill: 'none', stroke: ink, 'stroke-width': 7, 'stroke-linecap': 'round' }, g);
@@ -277,9 +248,9 @@
 
 
   const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 46, y: 72, scale: 1, opacity: 1 };
-    if (slot === 'prev') return { x: -6, y: 2, scale: 0.64, opacity: 0.18 };
-    return { x: 112, y: 138, scale: 0.64, opacity: 0.18 };
+    if (slot === 'selected') return { x: 42, y: 84, scale: 1.04, opacity: 1 };
+    if (slot === 'prev') return { x: -20, y: 28, scale: 0.46, opacity: 0.02 };
+    return { x: 126, y: 110, scale: 0.46, opacity: 0.02 };
   };
 
   const drawCard = (card, slot, index) => {
@@ -321,40 +292,18 @@
       stroke: 'rgba(255,255,255,0.08)',
       'stroke-width': 1
     }, group);
-    mk('path', {
-      d: 'M 12 12 H 138',
-      fill: 'none',
-      stroke: 'rgba(255,255,255,0.18)',
-      'stroke-width': 2,
-      'stroke-linecap': 'round'
-    }, group);
-
-    text(75, 24, card.title, {
-      class: 'tile-title',
-      fill: ink,
-      'text-anchor': 'middle',
-      'letter-spacing': '0.03em'
-    }, group);
+    if (selected) {
+      text(75, 24, card.title, {
+        class: 'tile-title',
+        fill: ink,
+        'text-anchor': 'middle',
+        'letter-spacing': '0.03em',
+        'font-size': '18px'
+      }, group);
+    }
 
     const motif = mk('g', { transform: 'translate(75,82)' }, group);
     glyphMap[card.glyph](motif, 0, 0, ink);
-
-    mk('rect', {
-      x: 34,
-      y: 118,
-      width: 82,
-      height: 22,
-      rx: 6,
-      fill: 'rgba(255,255,255,0.10)',
-      stroke: 'rgba(255,255,255,0.14)',
-      'stroke-width': 1
-    }, group);
-    text(75, 132, card.pill.toUpperCase(), {
-      class: 'tile-note',
-      fill: ink,
-      'text-anchor': 'middle',
-      'letter-spacing': '0.02em'
-    }, group);
 
     group.style.pointerEvents = 'none';
     group.addEventListener('keydown', e => {
@@ -488,53 +437,6 @@
     }
   };
 
-  const selectByWheel = delta => {
-    const now = Date.now();
-    if (now - wheelLockAt < 220) return;
-    wheelLockAt = now;
-    if (Math.abs(delta) < 8) return;
-    selectNext(delta > 0 ? 1 : -1);
-  };
-
-  const onOrientation = event => {
-    const gamma = Number(event.gamma || 0);
-    const beta = Number(event.beta || 0);
-    const now = Date.now();
-    if (now - tiltLockAt < 420) return;
-    if (Math.abs(gamma) > 18) {
-      tiltLockAt = now;
-      selectNext(gamma > 0 ? 1 : -1);
-      return;
-    }
-    if (Math.abs(beta) > 28) {
-      tiltLockAt = now;
-    }
-  };
-
-  const armMotion = async () => {
-    if (motionArmed) return;
-    motionArmed = true;
-    try {
-      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
-        const granted = await window.DeviceOrientationEvent.requestPermission().catch(() => 'denied');
-        if (granted !== 'granted') return;
-      }
-    } catch (_) {
-      return;
-    }
-    window.addEventListener('deviceorientation', onOrientation, { passive: true });
-    pushLog('Tilt control ready.', 'MOTION');
-  };
-
-  window.addEventListener('wheel', e => {
-    if (logOpen) return;
-    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    e.preventDefault();
-    selectByWheel(e.deltaY);
-  }, { passive: false });
-
-  window.addEventListener('pointerdown', armMotion, { once: true, passive: true });
-  window.addEventListener('touchstart', armMotion, { once: true, passive: true });
   window.addEventListener('structa-native-event', event => {
     const detail = event.detail || {};
     if (detail.event_type === 'capture_bundle_stored') {

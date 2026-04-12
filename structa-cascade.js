@@ -573,13 +573,14 @@
   }
 
   function cardLayout(index) {
-    const distance = index - selectedIndex;
-    const normalized = ((distance % cards.length) + cards.length) % cards.length;
-    if (distance === 0) return { x: 40, y: 24, scale: 1.10, opacity: 1 };
-    if (normalized === 1 || distance === 1) return { x: 170, y: 38, scale: 0.68, opacity: 0.52 };
-    if (normalized === cards.length - 1 || distance === -1) return { x: -42, y: 38, scale: 0.68, opacity: 0.52 };
-    if (normalized === 2 || distance === 2) return { x: 212, y: 56, scale: 0.50, opacity: 0.12 };
-    return { x: -76, y: 56, scale: 0.50, opacity: 0.12 };
+    if (index === selectedIndex) return { x: 116, y: 70, scale: 1.10, opacity: 1 };
+    const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
+    const stack = [
+      { x: 10, y: 104, scale: 0.62, opacity: 0.54 },
+      { x: 2, y: 92, scale: 0.54, opacity: 0.32 },
+      { x: -4, y: 82, scale: 0.46, opacity: 0.16 }
+    ];
+    return stack[Math.min(depth, stack.length - 1)];
   }
 
   function mk(name, attrs = {}, parent = svg) {
@@ -622,10 +623,10 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(16, 18, 'structa', {
+    text(8, 32, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '20',
+      'font-size': '28',
       'letter-spacing': '0.00em'
     });
   }
@@ -648,25 +649,41 @@
       height: 150,
       rx: 20,
       ry: 20,
-      fill: selected ? card.color : 'rgba(18,18,18,0.96)',
-      stroke: selected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.10)',
-      'stroke-width': selected ? 1.0 : 1.1
-    }, group);
-
-    drawCardIcon(card, selected, group);
-
-    text(18, 78, card.title, {
-      fill: selected ? 'rgba(8,8,8,0.98)' : 'rgba(244,239,228,0.96)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': selected ? '21' : '17'
+      fill: selected ? card.color : 'rgba(20,20,20,0.98)',
+      stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.08)',
+      'stroke-width': 1
     }, group);
 
     if (selected) {
-      text(18, 102, lower(card.roleShort || card.role), {
+      drawCardIcon(card, true, group);
+      text(18, 78, card.title, {
+        fill: 'rgba(8,8,8,0.98)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '22'
+      }, group);
+      text(18, 103, lower(card.roleShort || card.role), {
         fill: 'rgba(8,8,8,0.74)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       }, group);
+    } else {
+      if (card.iconPath) {
+        image(card.iconPath, {
+          x: 52,
+          y: 52,
+          width: 34,
+          height: 34,
+          preserveAspectRatio: 'xMidYMid meet',
+          opacity: 0.90,
+          style: 'filter: brightness(0) invert(0.96);'
+        }, group);
+      } else {
+        text(58, 80, card.iconFallback || '•', {
+          fill: 'rgba(244,239,228,0.92)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '28'
+        }, group);
+      }
     }
 
     const activate = event => {

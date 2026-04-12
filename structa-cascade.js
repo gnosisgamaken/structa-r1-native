@@ -20,7 +20,10 @@
   if (selectedIndex < 0) selectedIndex = 3;
   let logOpen = false;
   let activeSurface = 'home';
-  let insightIndex = 0;
+  let knowLaneIndex = 0;
+  let knowItemIndex = 0;
+  let knowChipIndex = 0;
+  let knowDetail = false;
   let queuedIndex = null;
   let queuedDirection = 0;
 
@@ -156,7 +159,10 @@
     }
     if (card.surface === 'insight') {
       activeSurface = 'insight';
-      insightIndex = 0;
+      knowLaneIndex = 0;
+      knowItemIndex = 0;
+      knowChipIndex = 0;
+      knowDetail = false;
       render();
       return;
     }
@@ -177,8 +183,20 @@
       return;
     }
     if (activeSurface === 'insight') {
-      const insights = buildInsights();
-      insightIndex = (insightIndex + (direction > 0 ? 1 : -1) + insights.length) % insights.length;
+      const model = buildKnowModel();
+      if (!model.lanes.length) return;
+      if (knowDetail) {
+        const items = getKnowVisibleItems(model);
+        if (!items.length) return;
+        knowItemIndex = (knowItemIndex + (direction > 0 ? 1 : -1) + items.length) % items.length;
+      } else {
+        knowLaneIndex = (knowLaneIndex + (direction > 0 ? 1 : -1) + model.lanes.length) % model.lanes.length;
+        knowItemIndex = 0;
+        const lane = model.lanes[knowLaneIndex];
+        const activeChip = model.chips[knowChipIndex]?.id;
+        const hasChipItems = lane?.items?.some(item => item.chips.includes(activeChip));
+        if (!hasChipItems) knowChipIndex = lane?.availableChipIndexes?.[0] ?? 0;
+      }
       render();
       return;
     }
@@ -213,6 +231,18 @@
     if (activeSurface === 'voice') {
       return;
     }
+    if (activeSurface === 'insight') {
+      const model = buildKnowModel();
+      if (!model.lanes.length) return;
+      if (knowDetail) {
+        knowDetail = false;
+      } else {
+        knowDetail = true;
+        knowItemIndex = 0;
+      }
+      render();
+      return;
+    }
     if (logOpen) {
       setLogDrawer(false);
       return;
@@ -232,6 +262,17 @@
     }
     if (activeSurface === 'voice') {
       window.StructaVoice?.startListening?.();
+      return;
+    }
+    if (activeSurface === 'insight') {
+      const model = buildKnowModel();
+      if (!model.chips.length) return;
+      const lane = model.lanes[knowLaneIndex] || model.lanes[0];
+      const available = lane?.availableChipIndexes?.length ? lane.availableChipIndexes : [0];
+      const currentPos = Math.max(0, available.indexOf(knowChipIndex));
+      knowChipIndex = available[(currentPos + 1) % available.length];
+      knowItemIndex = 0;
+      render();
       return;
     }
     const card = currentCard();
@@ -301,19 +342,232 @@
     };
   }
 
-  function buildInsights() {
+  function textHasAny(text = '', terms = []) {
+    const value = lower(text);
+    return terms.some(term => value.includes(term));
+  }
+
+  function formatTimeLabel(raw) {
+    if (!raw) return 'recent';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return 'recent';
+    return lower(date.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+  }
+
+  function buildKnowModel() {
+    const memory = getMemory();
     const project = getProjectMemory();
+    const ui = getUIState();
+    const chips = [
+      { id: 'latest', label: 'latest' },
+      { id: 'next', label: 'next' },
+      { id: 'blocked', label: 'blocked' },
+      { id: 'asks', label: 'asks' },
+      { id: 'assets', label: 'assets' }
+    ];
+
+    const classify = item => {
+      const text = lower(`${item.title} ${item.body} ${item.next}`);
+      const bucket = new Set(item.chips || []);
+      if (item.source === 'question') bucket.add('asks');
+      if (item.source === 'asset' || item.source === 'capture-image' || item.source === 'capture-vision') bucket.add('assets');
+      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act', 'follow', 'move'])) bucket.add('next');
+      if (text.includes('?') || textHasAny(text, ['blocked', 'waiting', 'stuck', 'missing', 'need', 'pending', 'unknown'])) bucket.add('blocked');
+      item.chips = Array.from(bucket);
+      return item;
+    };
+
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [] }) => classify({
+      lane,
+      title: lower(title || lane),
+      body: lower(body || 'no detail yet'),
+      next: lower(next || 'capture the next useful update'),
+      created_at: created_at || new Date().toISOString(),
+      source: source || lane,
+      chips: chipHints.slice()
+    });
+
+    const signals = [];
+    const decisionsLane = [];
+    const loops = [];
+
+    const insights = project?.insights || [];
     const captures = project?.captures || [];
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const openQuestions = project?.open_questions || [];
-    const ui = getUIState();
-    return [
-      { title: 'signal', why: 'latest useful change', next: backlog[0]?.title || 'capture the next concrete task with tell', body: ui.last_capture_summary || `${captures.length} captures are linked to this project` },
-      { title: 'gap', why: 'what is still unresolved', next: openQuestions[0] ? 'answer the open question' : 'record the missing context with tell', body: openQuestions[0] || 'no open question has been recorded yet' },
-      { title: 'decision', why: 'what is already clear', next: decisions[0]?.title ? 'act on the locked decision' : 'make one decision explicit', body: decisions[0]?.title || 'no decision has been locked yet' },
-      { title: 'next', why: 'best immediate move', next: backlog[0]?.title || 'use show or tell to move the project forward', body: backlog[0]?.title || 'capture the next concrete task with tell' }
-    ];
+    const assets = memory?.assets || [];
+    const logs = native?.getRecentLogEntries?.(8, { visible_only: true }) || [];
+
+    if (ui.last_insight_summary || ui.last_capture_summary) {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: 'latest signal',
+        body: ui.last_insight_summary || ui.last_capture_summary,
+        next: backlog[0]?.title || 'open now or tell to keep momentum',
+        created_at: new Date().toISOString(),
+        source: 'ui',
+        chips: ['latest', 'next']
+      }));
+    }
+
+    insights.slice(0, 4).forEach((insight, index) => {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: insight.title || `signal ${index + 1}`,
+        body: insight.body || 'captured insight',
+        next: backlog[0]?.title || 'capture the next concrete task with tell',
+        created_at: insight.created_at,
+        source: 'insight',
+        chips: index < 2 ? ['latest'] : []
+      }));
+    });
+
+    captures.slice(-4).reverse().forEach((capture, index) => {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: capture.type === 'image' ? 'visual capture' : 'recent capture',
+        body: capture.summary || 'capture stored',
+        next: backlog[0]?.title || 'review the capture and decide the next move',
+        created_at: capture.created_at,
+        source: capture.type === 'image' ? 'capture-image' : 'capture',
+        chips: index < 2 ? ['latest'] : []
+      }));
+    });
+
+    logs.slice(-3).reverse().forEach(entry => {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: 'recent event',
+        body: entry.message || 'recent activity',
+        next: 'open the matching surface if this changed the plan',
+        created_at: entry.created_at,
+        source: 'log',
+        chips: ['latest']
+      }));
+    });
+
+    decisions.slice(0, 5).forEach((decision, index) => {
+      const decisionTitle = typeof decision === 'string' ? decision : (decision.title || decision.summary || `decision ${index + 1}`);
+      const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || decision.summary || 'decision recorded');
+      const decisionNext = typeof decision === 'string' ? backlog[0]?.title || 'act on the decision' : (decision.next || backlog[0]?.title || 'act on the decision');
+      decisionsLane.push(makeItem({
+        lane: 'decisions',
+        title: decisionTitle,
+        body: decisionBody,
+        next: decisionNext,
+        created_at: decision.created_at,
+        source: 'decision',
+        chips: index === 0 ? ['latest', 'next'] : []
+      }));
+    });
+
+    if (!decisionsLane.length) {
+      decisionsLane.push(makeItem({
+        lane: 'decisions',
+        title: 'no locked decision',
+        body: ui.last_event_summary || 'the project still needs one explicit choice',
+        next: backlog[0]?.title || 'use tell to lock the next decision',
+        created_at: new Date().toISOString(),
+        source: 'decision-gap',
+        chips: ['next', 'blocked']
+      }));
+    }
+
+    backlog.slice(0, 5).forEach((item, index) => {
+      loops.push(makeItem({
+        lane: 'open loops',
+        title: item.title || `open loop ${index + 1}`,
+        body: item.body || item.state || 'still open',
+        next: item.title || 'move this loop forward with tell',
+        created_at: item.created_at,
+        source: 'backlog',
+        chips: ['next', item.state === 'blocked' ? 'blocked' : '']
+      }));
+    });
+
+    openQuestions.slice(0, 5).forEach((question, index) => {
+      loops.push(makeItem({
+        lane: 'open loops',
+        title: `question ${index + 1}`,
+        body: question,
+        next: 'answer this with tell or capture evidence with show',
+        created_at: new Date().toISOString(),
+        source: 'question',
+        chips: ['asks', 'blocked']
+      }));
+    });
+
+    assets.slice(-4).reverse().forEach((asset, index) => {
+      loops.push(makeItem({
+        lane: 'open loops',
+        title: asset.title || asset.name || `asset ${index + 1}`,
+        body: asset.body || asset.summary || asset.kind || 'saved asset',
+        next: 'open the related work and decide if this asset matters now',
+        created_at: asset.created_at,
+        source: 'asset',
+        chips: ['assets', index === 0 ? 'latest' : '']
+      }));
+    });
+
+    const lanes = [
+      {
+        id: 'signals',
+        label: 'signals',
+        summary: 'what changed and why it matters',
+        emptyTitle: 'no signals yet',
+        emptyBody: 'capture something with show or tell to create signal',
+        emptyNext: 'use tell to add one concrete update',
+        items: signals
+      },
+      {
+        id: 'decisions',
+        label: 'decisions',
+        summary: 'what is decided and ready to act on',
+        emptyTitle: 'no decisions yet',
+        emptyBody: 'nothing has been locked in this project yet',
+        emptyNext: 'use tell to make one decision explicit',
+        items: decisionsLane
+      },
+      {
+        id: 'open loops',
+        label: 'open loops',
+        summary: 'what is unresolved or waiting',
+        emptyTitle: 'no open loops',
+        emptyBody: 'this project has no open loops right now',
+        emptyNext: 'capture the next question or task when it appears',
+        items: loops
+      }
+    ].map(lane => {
+      const laneItems = lane.items.length ? lane.items : [makeItem({
+        lane: lane.id,
+        title: lane.emptyTitle,
+        body: lane.emptyBody,
+        next: lane.emptyNext,
+        created_at: new Date().toISOString(),
+        source: 'empty',
+        chips: ['latest']
+      })];
+      laneItems
+        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+        .forEach((item, index) => {
+          if (index < 2 && !item.chips.includes('latest')) item.chips.push('latest');
+        });
+      const availableChipIndexes = chips
+        .map((chip, index) => laneItems.some(item => item.chips.includes(chip.id)) ? index : -1)
+        .filter(index => index >= 0);
+      return { ...lane, items: laneItems, availableChipIndexes: availableChipIndexes.length ? availableChipIndexes : [0] };
+    });
+
+    return { chips, lanes };
+  }
+
+  function getKnowVisibleItems(model = buildKnowModel()) {
+    const lane = model.lanes[knowLaneIndex] || model.lanes[0];
+    if (!lane) return [];
+    const chipId = model.chips[knowChipIndex]?.id || model.chips[0]?.id;
+    const filtered = lane.items.filter(item => item.chips.includes(chipId));
+    return filtered.length ? filtered : lane.items;
   }
 
   function cardLayout(index) {
@@ -459,22 +713,80 @@
     text(14, 158, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
+  function drawPill(group, x, y, width, height, label, active, tone = 'dark') {
+    const activeFill = tone === 'dark' ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.18)';
+    const idleFill = tone === 'dark' ? 'rgba(8,8,8,0.10)' : 'rgba(255,255,255,0.12)';
+    const activeText = tone === 'dark' ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.98)';
+    const idleText = tone === 'dark' ? 'rgba(8,8,8,0.76)' : 'rgba(8,8,8,0.62)';
+    mk('rect', {
+      x, y, width, height, rx: height / 2, ry: height / 2,
+      fill: active ? activeFill : idleFill,
+      stroke: active ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
+      'stroke-width': 1
+    }, group);
+    text(x + width / 2, y + height / 2 + 3, lower(label), {
+      fill: active ? activeText : idleText,
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'middle'
+    }, group);
+  }
+
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
-    const insights = buildInsights();
-    const item = insights[insightIndex % insights.length];
+    const model = buildKnowModel();
+    const lane = model.lanes[knowLaneIndex] || model.lanes[0];
+    if (!lane) return;
+    const availableChipIndexes = lane.availableChipIndexes?.length ? lane.availableChipIndexes : [0];
+    if (!availableChipIndexes.includes(knowChipIndex)) knowChipIndex = availableChipIndexes[0];
+    const chip = model.chips[knowChipIndex] || model.chips[0];
+    const items = getKnowVisibleItems(model);
+    if (knowItemIndex >= items.length) knowItemIndex = 0;
+    const item = items[knowItemIndex] || lane.items[0];
     const group = mk('g', { transform: 'translate(8, 34)' });
     mk('rect', {
       x: 0, y: 0, width: 224, height: 170, rx: 18, ry: 18,
       fill: '#f8c15d', stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 1.1
     }, group);
+
     text(14, 24, 'know', { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
-    text(14, 44, lower(item.title), { fill: 'rgba(8,8,8,0.72)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
-    drawSectionLabel(group, 14, 63, 'why it matters');
-    wrapText(group, lower(item.body), 14, 80, 194, 11, 'rgba(8,8,8,0.90)', '11');
-    drawSectionLabel(group, 14, 130, 'next step');
-    wrapText(group, lower(item.next), 14, 147, 194, 11, 'rgba(8,8,8,0.96)', '11');
-    text(14, 160, `item ${insightIndex + 1} of ${insights.length}`, { fill: 'rgba(8,8,8,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+
+    drawPill(group, 14, 34, 60, 20, 'signals', lane.id === 'signals', 'light');
+    drawPill(group, 79, 34, 64, 20, 'decide', lane.id === 'decisions', 'light');
+    drawPill(group, 148, 34, 62, 20, 'loops', lane.id === 'open loops', 'light');
+
+    text(14, 67, 'filter', {
+      fill: 'rgba(8,8,8,0.56)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
+    }, group);
+    drawPill(group, 46, 57, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(206, 69, `${items.length} results`, {
+      fill: 'rgba(8,8,8,0.56)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'end'
+    }, group);
+
+    if (!knowDetail) {
+      text(14, 96, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
+      wrapText(group, lower(lane.summary), 14, 114, 194, 12, 'rgba(8,8,8,0.72)', '12');
+      drawSectionLabel(group, 14, 140, 'best match now');
+      wrapText(group, lower(item.title), 14, 156, 194, 12, 'rgba(8,8,8,0.96)', '12');
+      return;
+    }
+
+    text(14, 94, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '15' }, group);
+    text(206, 94, formatTimeLabel(item.created_at), {
+      fill: 'rgba(8,8,8,0.56)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'end'
+    }, group);
+    drawSectionLabel(group, 14, 111, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(group, lower(item.body), 14, 127, 194, 11, 'rgba(8,8,8,0.90)', '11');
+    drawSectionLabel(group, 14, 149, 'next move');
+    wrapText(group, lower(item.next), 14, 163, 194, 10, 'rgba(8,8,8,0.96)', '10');
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {

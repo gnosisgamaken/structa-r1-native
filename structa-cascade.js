@@ -596,9 +596,9 @@
     if (index === selectedIndex) return { x: 120, y: 36, scale: 1.22, opacity: 1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 18, y: 74, scale: 0.64, opacity: 0.86 },
-      { x: 6, y: 74, scale: 0.56, opacity: 0.58 },
-      { x: -6, y: 74, scale: 0.48, opacity: 0.30 }
+      { x: 18, y: 74, scale: 0.64, opacity: 1 },
+      { x: 6, y: 74, scale: 0.56, opacity: 0.92 },
+      { x: -6, y: 74, scale: 0.48, opacity: 0.82 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -643,10 +643,19 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(4, 18, 'structa', {
+    image('assets/icons/png/7.png', {
+      x: 4,
+      y: 8,
+      width: 16,
+      height: 16,
+      preserveAspectRatio: 'xMidYMid meet',
+      opacity: 0.96,
+      style: 'filter: brightness(0) invert(0.96);'
+    });
+    text(24, 22, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '32',
+      'font-size': '30',
       'letter-spacing': '0.00em'
     });
   }

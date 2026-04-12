@@ -43,18 +43,17 @@
     if (stream && nextMode === facingMode) return { ok: true, facingMode };
     facingMode = nextMode;
     if (!navigator.mediaDevices?.getUserMedia) {
-      native?.openCamera?.(facingMode);
       setStatus('camera unavailable');
       return { ok: false };
     }
     stopStream();
     try {
-      native?.openCamera?.(facingMode);
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
       if (preview) {
         preview.srcObject = stream;
         await preview.play().catch(() => {});
       }
+      native?.setCameraFacing?.(facingMode);
       setStatus('ready');
       return { ok: true, facingMode };
     } catch (error) {
@@ -128,6 +127,11 @@
     flip();
   }, { passive: false });
 
+  overlay?.addEventListener('pointerup', event => {
+    if (!overlay.classList.contains('open')) return;
+    event.preventDefault();
+    close();
+  });
 
   window.StructaCamera = Object.freeze({
     open,

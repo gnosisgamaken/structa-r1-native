@@ -190,14 +190,13 @@
     hideOverlay();
   }
 
-  overlay?.addEventListener('pointerdown', event => {
-    event.preventDefault();
-    startListening().catch(() => {});
-  });
-
   overlay?.addEventListener('pointerup', event => {
     event.preventDefault();
-    if (listening) stopListening(true).catch(() => {});
+    if (listening) {
+      stopListening(true).catch(() => {});
+      return;
+    }
+    close();
   });
 
   overlay?.addEventListener('pointercancel', () => {

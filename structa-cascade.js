@@ -57,7 +57,6 @@
   }
 
   function latestLogText() {
-    if (queuedIndex !== null) return `queued ${cards[queuedIndex].title}`;
     const row = log.lastElementChild;
     return row ? lower(row.textContent || '') : 'no logs yet';
   }
@@ -88,7 +87,9 @@
   }
 
   function refreshLogFromMemory() {
-    const entries = (native?.getRecentLogEntries?.(5, { visible_only: true }) || []).slice(-5);
+    const limit = logOpen ? 33 : 5;
+    const previousScroll = log.scrollTop;
+    const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     log.innerHTML = '';
     if (!entries.length) {
       logPreview.textContent = 'no logs yet';
@@ -107,6 +108,7 @@
       log.appendChild(row);
     });
     logPreview.textContent = latestLogText();
+    if (logOpen) log.scrollTop = previousScroll;
   }
 
   function setLogDrawer(open) {
@@ -182,6 +184,10 @@
       pushLog('camera angle changed', 'show');
       return;
     }
+    if (activeSurface === 'voice') {
+      if (!window.StructaVoice?.listening) backHome();
+      return;
+    }
     if (activeSurface === 'insight') {
       const model = buildKnowModel();
       if (!model.lanes.length) return;
@@ -201,6 +207,7 @@
       return;
     }
     if (activeSurface === 'project') {
+      backHome();
       return;
     }
     if (logOpen) {
@@ -208,17 +215,7 @@
       log.scrollTop += delta;
       return;
     }
-    const target = (selectedIndex + (direction > 0 ? 1 : -1) + cards.length) % cards.length;
-    if (queuedIndex === target && queuedDirection === direction) {
-      queuedIndex = null;
-      queuedDirection = 0;
-      selectIndex(target);
-      return;
-    }
-    queuedIndex = target;
-    queuedDirection = direction;
-    native?.updateUIState?.({ selected_card_id: cards[target].id, last_surface: 'queue-preview' });
-    render();
+    selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
   }
 
   function handleSideClick() {
@@ -229,6 +226,11 @@
       return;
     }
     if (activeSurface === 'voice') {
+      if (!window.StructaVoice?.listening) backHome();
+      return;
+    }
+    if (activeSurface === 'project') {
+      backHome();
       return;
     }
     if (activeSurface === 'insight') {
@@ -247,11 +249,7 @@
       setLogDrawer(false);
       return;
     }
-    const card = currentCard();
-    if (card.id === 'tell') {
-      return;
-    }
-    openCard(card);
+    openCard(currentCard());
   }
 
   function handleLongPressStart() {
@@ -301,15 +299,19 @@
   }
 
   function backHome() {
+    const leavingSurface = activeSurface;
     queuedIndex = null;
     queuedDirection = 0;
-    if (activeSurface === 'camera') {
+    if (logOpen) {
+      setLogDrawer(false);
+      if (leavingSurface === 'home') return;
+    }
+    if (leavingSurface === 'camera') {
       window.StructaCamera?.close?.();
     }
-    if (activeSurface === 'voice') {
+    if (leavingSurface === 'voice') {
       window.StructaVoice?.close?.();
     }
-    setLogDrawer(false);
     activeSurface = 'home';
     native?.returnHome?.();
     render();

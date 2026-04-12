@@ -127,6 +127,23 @@
       font-weight: 700;
     }
 
+    .topbar-back,
+    .topbar-title {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 700;
+      text-rendering: geometricPrecision;
+    }
+
+    .topbar-back {
+      font-size: 12px;
+      letter-spacing: 0;
+    }
+
+    .topbar-title {
+      font-size: 16px;
+      letter-spacing: 0.10em;
+    }
+
     .tile-note {
       font-family: Inter, system-ui, sans-serif;
       font-size: 12px;
@@ -227,16 +244,23 @@
       bottom: 0;
       height: min(78px, 28%);
       transform: translateY(calc(100% - 18px));
-      transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
+      transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease, background 220ms ease;
       z-index: 10;
       will-change: transform;
       pointer-events: auto;
       backdrop-filter: blur(12px);
       box-shadow: 0 -12px 30px rgba(0,0,0,0.20);
+      display: flex;
+      flex-direction: column;
     }
 
     #log-drawer.open {
       transform: translateY(0);
+      inset: 0;
+      height: 100%;
+      border-radius: 0;
+      background: rgba(4,4,4,0.94);
+      box-shadow: none;
     }
 
     #log-handle {
@@ -254,7 +278,7 @@
       background: linear-gradient(180deg, rgba(12,12,12,0.98), rgba(8,8,8,0.985));
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 11px;
       letter-spacing: 0.04em;
       text-transform: none;
@@ -263,6 +287,62 @@
       -webkit-user-select: none;
       outline: none;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+      flex: 0 0 auto;
+    }
+
+    #log-drawer.open #log-handle {
+      background: rgba(12,12,12,0.98);
+      border-bottom-color: rgba(255,255,255,0.03);
+    }
+
+    #log-drawer.open #log {
+      flex: 1 1 auto;
+      height: auto;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #log-handle .log-preview {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      color: rgba(246,240,230,0.88);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #log-handle .log-chevron,
+    #log-handle .log-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 5px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.035);
+      color: rgba(246,240,230,0.78);
+      font-size: 9px;
+      line-height: 1;
+      letter-spacing: 0.08em;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #log-handle .log-count[hidden],
+    #log-handle .log-chevron[hidden] {
+      display: none !important;
+    }
+
+    #log-handle .log-count {
+      min-width: 18px;
+    }
+
+    #log-handle .log-chevron {
+      transform: translateY(-1px);
     }
 
     #log-handle .log-copy {
@@ -571,7 +651,7 @@
     #log {
       height: calc(100% - 34px);
       background: rgba(8,8,8,0.98);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 9px;
       line-height: 1.35;
       padding: 7px 12px 10px;
@@ -618,11 +698,11 @@
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <div id="log-handle" role="button" tabindex="0" aria-label="Toggle log">
         <span class="log-copy">
-          <span class="log-title">LOG</span>
-          <span class="log-chip live">LIVE</span>
+          <span class="log-preview" id="log-preview">No logs yet</span>
         </span>
         <span class="log-meta">
-          <span class="log-chip" id="log-count">0</span>
+          <span class="log-chevron" id="log-chevron">⌃</span>
+          <span class="log-count" id="log-count" hidden>0</span>
         </span>
       </div>
       <div id="log"></div>

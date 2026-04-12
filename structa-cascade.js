@@ -3,6 +3,8 @@
   const log = document.getElementById('log');
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
+  const logPreview = document.getElementById('log-preview');
+  const logChevron = document.getElementById('log-chevron');
   const logCount = document.getElementById('log-count');
   const capturePreview = document.getElementById('capture-preview');
   const captureThumb = document.getElementById('capture-thumb');
@@ -63,10 +65,20 @@
   let touch = null;
   let logSwipe = null;
   let lastCapture = native?.getMemory?.().captures?.slice(-1)[0] || null;
+  let lastLogPreview = 'No logs yet';
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const syncLogCount = () => {
     if (logCount) logCount.textContent = `${log.children.length}`;
+  };
+
+  const syncLogDrawerChrome = () => {
+    if (logPreview) logPreview.textContent = logOpen ? 'AUDIT' : lastLogPreview;
+    if (logChevron) logChevron.hidden = logOpen;
+    if (logCount) {
+      logCount.hidden = !logOpen;
+      logCount.textContent = `${log.children.length}`;
+    }
   };
 
   const syncCapturePreview = () => {
@@ -114,7 +126,9 @@
     log.appendChild(row);
     while (log.children.length > 5) log.removeChild(log.firstChild);
     log.scrollTop = 9999;
+    lastLogPreview = strong ? `${strong} ${text}` : text;
     syncLogCount();
+    syncLogDrawerChrome();
     native?.emit?.('ui_log', { text, strong, project_code: projectCode });
   };
 
@@ -138,10 +152,32 @@
   const TOP_SAFE_PX = 23;
 
   const addTopBand = () => {
-    text(14, TOP_SAFE_PX + 11, 'STRUCTA', {
-      class: 'tile-title',
+    const band = mk('g', {
+      id: 'top-band',
+      role: 'button',
+      tabindex: '0',
+      'aria-label': 'Back to home',
+      cursor: 'pointer'
+    });
+    text(10, TOP_SAFE_PX + 10, '←', {
+      class: 'topbar-back',
+      fill: 'rgba(248,244,235,0.70)',
+      'letter-spacing': '0'
+    }, band);
+    text(28, TOP_SAFE_PX + 11, 'STRUCTA', {
+      class: 'topbar-title',
       fill: 'var(--support)',
-      'letter-spacing': '0.16em'
+      'letter-spacing': '0.10em'
+    }, band);
+    band.addEventListener('pointerup', e => {
+      e.preventDefault();
+      goBackHome();
+    });
+    band.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        goBackHome();
+      }
     });
   };
 
@@ -194,6 +230,8 @@
     logOpen = open;
     logDrawer.classList.toggle('open', open);
     logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
+    syncLogDrawerChrome();
+    if (open) log.scrollTop = log.scrollHeight;
   };
 
   const setActiveVerb = (verb, source = 'mode') => {
@@ -246,11 +284,27 @@
     }
   };
 
+  const goBackHome = () => {
+    if (logOpen) {
+      setLogDrawer(false);
+      return;
+    }
+    if (window.StructaVoice?.closeTray && document.getElementById('capture-tray')?.classList.contains('open')) {
+      window.StructaVoice.closeTray();
+      return;
+    }
+    if (window.StructaCamera?.stop && document.getElementById('capture-tray')?.classList.contains('open')) {
+      window.StructaCamera.stop();
+      return;
+    }
+    if (window.history.length > 1) window.history.back();
+  };
+
 
   const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 42, y: 58, scale: 1.04, opacity: 1 };
-    if (slot === 'prev') return { x: -20, y: 18, scale: 0.46, opacity: 0.02 };
-    return { x: 126, y: 96, scale: 0.46, opacity: 0.02 };
+    if (slot === 'selected') return { x: 42, y: 52, scale: 1.04, opacity: 1 };
+    if (slot === 'prev') return { x: -20, y: 14, scale: 0.46, opacity: 0.02 };
+    return { x: 126, y: 90, scale: 0.46, opacity: 0.02 };
   };
 
   const drawCard = (card, slot, index) => {
@@ -463,6 +517,11 @@
   const isVoicePanelActive = () => document.querySelector('#capture-tray.open .capture-panel[data-panel="voice"]')?.classList.contains('active');
 
   const handleGlobalWheel = event => {
+    if (logOpen) {
+      event.preventDefault();
+      log.scrollTop += event.deltaY;
+      return;
+    }
     if (isCameraPanelActive()) return;
     event.preventDefault();
     selectNext(event.deltaY < 0 ? -1 : 1);

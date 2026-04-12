@@ -15,7 +15,9 @@
     { id: 'now', title: 'now', icon: '▣', role: 'project structure', color: 'var(--now)', surface: 'project' }
   ];
 
-  let selectedIndex = 3;
+  const initialState = native?.getUIState?.() || {};
+  let selectedIndex = Math.max(0, cards.findIndex(card => card.id === (initialState.selected_card_id || 'now')));
+  if (selectedIndex < 0) selectedIndex = 3;
   let logOpen = false;
   let activeSurface = 'home';
   let insightIndex = 0;
@@ -38,6 +40,10 @@
 
   function getProjectMemory() {
     return native?.getProjectMemory?.() || getMemory().projectMemory || null;
+  }
+
+  function getUIState() {
+    return native?.getUIState?.() || getMemory().uiState || {};
   }
 
   function lastCapture() {
@@ -129,6 +135,7 @@
 
   function openCard(card) {
     native?.setActiveNode?.(card.id);
+    native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
     pushLog(`${card.title} ready`, 'focus');
     if (card.surface === 'camera') {
       activeSurface = 'camera';
@@ -248,20 +255,26 @@
   function selectIndex(next) {
     selectedIndex = (next + cards.length) % cards.length;
     native?.setActiveNode?.(currentCard().id);
+    native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: activeSurface });
     render();
   }
 
   function buildNowSummary() {
     const memory = getMemory();
     const project = getProjectMemory();
+    const ui = getUIState();
     const captures = memory.captures || [];
     const insights = project?.insights || [];
-    const backlog = project?.backlog || [];
-    return [
-      project?.name || 'untitled project',
-      `${captures.length} captures`,
-      `${insights.length} insights`
-    ];
+    const openQuestions = project?.open_questions || [];
+    return {
+      title: project?.name || 'untitled project',
+      changed: ui.last_event_summary || 'ready to resume',
+      capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || 'no capture yet'),
+      insight: ui.last_insight_summary || (insights[0]?.body || 'no insight yet'),
+      openQuestions: openQuestions.length,
+      captures: captures.length,
+      insights: insights.length
+    };
   }
 
   function buildInsights() {
@@ -270,12 +283,13 @@
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const openQuestions = project?.open_questions || [];
-    const suggestions = [];
-    suggestions.push({ title: 'state', body: `${captures.length} captures are linked to this project` });
-    suggestions.push({ title: 'focus', body: backlog[0]?.title || 'capture the next concrete task with tell' });
-    suggestions.push({ title: 'gap', body: openQuestions[0] || 'no open question has been recorded yet' });
-    suggestions.push({ title: 'decision', body: decisions[0]?.title || 'no decision has been locked yet' });
-    return suggestions;
+    const ui = getUIState();
+    return [
+      { title: 'next', body: backlog[0]?.title || 'capture the next concrete task with tell' },
+      { title: 'signal', body: ui.last_capture_summary || `${captures.length} captures are linked to this project` },
+      { title: 'gap', body: openQuestions[0] || 'no open question has been recorded yet' },
+      { title: 'decision', body: decisions[0]?.title || 'no decision has been locked yet' }
+    ];
   }
 
   function cardLayout(index) {
@@ -371,29 +385,30 @@
 
   function drawNowPanel() {
     if (activeSurface !== 'project') return;
-    const lines = buildNowSummary();
-    const group = mk('g', { transform: 'translate(16, 188)' });
-    lines.slice(0, 4).forEach((line, i) => {
-      text(0, i * 11, lower(line), {
-        fill: i === 0 ? 'rgba(244,239,228,0.90)' : 'rgba(244,239,228,0.56)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': i === 0 ? '11' : '9'
-      }, group);
-    });
+    const data = buildNowSummary();
+    const group = mk('g', { transform: 'translate(14, 44)' });
+    mk('rect', { x: 0, y: 0, width: 212, height: 152, rx: 14, ry: 14, fill: 'rgba(255,138,101,0.12)', stroke: 'rgba(255,138,101,0.26)', 'stroke-width': 1.2 }, group);
+    text(14, 24, 'now', { fill: 'rgba(255,138,101,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
+    text(14, 46, lower(data.title), { fill: 'rgba(244,239,228,0.94)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
+    text(14, 66, `changed · ${lower(data.changed)}`, { fill: 'rgba(244,239,228,0.64)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+    wrapText(group, `last capture ${lower(data.capture)}`, 14, 88, 182, 10, 'rgba(244,239,228,0.82)');
+    wrapText(group, `latest insight ${lower(data.insight)}`, 14, 116, 182, 10, 'rgba(244,239,228,0.68)');
+    text(14, 142, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(244,239,228,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
     const insights = buildInsights();
     const item = insights[insightIndex % insights.length];
-    const group = mk('g', { transform: 'translate(16, 54)' });
+    const group = mk('g', { transform: 'translate(16, 44)' });
     mk('rect', {
-      x: 0, y: 0, width: 208, height: 126, rx: 14, ry: 14,
+      x: 0, y: 0, width: 208, height: 152, rx: 14, ry: 14,
       fill: 'rgba(248,193,93,0.14)', stroke: 'rgba(248,193,93,0.34)', 'stroke-width': 1.2
     }, group);
-    text(14, 26, 'know', { fill: 'rgba(248,193,93,0.94)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
-    text(14, 48, lower(item.title), { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
-    wrapText(group, lower(item.body), 14, 68, 180, 10, 'rgba(244,239,228,0.72)');
+    text(14, 24, 'know', { fill: 'rgba(248,193,93,0.94)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
+    text(14, 46, lower(item.title), { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
+    wrapText(group, lower(item.body), 14, 70, 182, 10, 'rgba(244,239,228,0.76)');
+    text(14, 138, `item ${insightIndex + 1} of ${insights.length}`, { fill: 'rgba(244,239,228,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill) {
@@ -466,6 +481,7 @@
   });
 
   native?.setActiveNode?.(currentCard().id);
+  native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: 'home', resumed_at: new Date().toISOString() });
   refreshLogFromMemory();
   if (native?.getCapabilities?.().probeMode) {
     pushLog('probe mode active', 'probe');

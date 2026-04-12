@@ -8,6 +8,7 @@
   let stream = null;
   let facingMode = 'environment';
   let lastBundle = null;
+  let flipLocked = false;
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -62,8 +63,14 @@
     }
   }
 
-  function flip() {
-    return open(facingMode === 'user' ? 'environment' : 'user');
+  async function flip() {
+    if (flipLocked) return { ok: false, locked: true, facingMode };
+    flipLocked = true;
+    try {
+      return await open(facingMode === 'user' ? 'environment' : 'user');
+    } finally {
+      setTimeout(() => { flipLocked = false; }, 180);
+    }
   }
 
   async function capture() {

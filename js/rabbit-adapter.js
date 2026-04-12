@@ -71,6 +71,14 @@
     exports: [],
     logs: [],
     probeEvents: [],
+    uiState: {
+      selected_card_id: 'now',
+      last_surface: 'home',
+      resumed_at: null,
+      last_capture_summary: '',
+      last_insight_summary: '',
+      last_event_summary: ''
+    },
     projectMemory: {
       project_id: contracts.baseProjectCode,
       device_scope_key: deviceScopeKey,
@@ -178,6 +186,17 @@
     return memory.projectMemory;
   }
 
+  function updateUIState(patch = {}) {
+    memory.uiState = { ...(memory.uiState || {}), ...patch };
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return { ...memory.uiState };
+  }
+
+  function getUIState() {
+    return { ...(memory.uiState || {}) };
+  }
+
   function appendLogEntry(raw = {}) {
     const entry = {
       id: contracts.makeEntryId('log'),
@@ -188,6 +207,7 @@
       created_at: raw.created_at || new Date().toISOString()
     };
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
+    memory.uiState.last_event_summary = entry.message;
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return entry;
@@ -233,6 +253,10 @@
         project.insights.unshift({ title: 'capture insight', body: lower(bundle.summary), created_at: new Date().toISOString() });
         project.insights = project.insights.slice(0, 16);
       }
+    });
+    updateUIState({
+      last_capture_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored'),
+      last_insight_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored')
     });
   }
 
@@ -280,6 +304,7 @@
         project.backlog.push({ title: payload.title, created_at: payload.created_at, state: 'open' });
       }
     });
+    updateUIState({ last_event_summary: lower(payload.title), last_insight_summary: lower(payload.body.slice(0, 80)) });
     return sendStructuredMessage({
       project_code: payload.project_code,
       entry_id: payload.entry_id,
@@ -448,6 +473,7 @@
       exports: [...memory.exports],
       logs: [...memory.logs],
       probeEvents: [...memory.probeEvents],
+      uiState: { ...(memory.uiState || {}) },
       runtimeEvents: [...runtimeEvents],
       deviceId,
       deviceScopeKey,
@@ -461,6 +487,7 @@
 
   function returnHome() {
     router?.updateContext?.({ surface: 'home', active_node: 'now' });
+    updateUIState({ last_surface: 'home', resumed_at: new Date().toISOString() });
     emit('return_home', { surface: 'home' });
   }
 
@@ -486,6 +513,8 @@
     exportLatestLogs,
     getProjectMemory,
     getMemory,
+    getUIState,
+    updateUIState,
     getProbeEvents: () => [...memory.probeEvents],
     appendProbeEvent,
     returnHome,

@@ -2,11 +2,13 @@
   const contracts = window.StructaContracts;
   const validation = window.StructaValidation;
   const router = window.StructaActionRouter;
+  const probe = window.StructaRuntimeProbe;
 
   const runtimeEvents = [];
   const MAX_RUNTIME_EVENTS = 200;
   const MAX_MEMORY_ITEMS = 200;
   const MAX_LOG_ITEMS = 240;
+  const MAX_PROBE_EVENTS = 240;
   const EXPORT_BATCH_SIZE = 33;
 
   function pushLimited(list, item, limit = MAX_MEMORY_ITEMS) {
@@ -49,6 +51,14 @@
     }
   }
 
+  const probeMode = window.location.hash.includes('probe') || (() => {
+    try {
+      return window.localStorage?.getItem('structa-probe') === '1';
+    } catch (_) {
+      return false;
+    }
+  })();
+
   const deviceId = detectDeviceId();
   const deviceScopeKey = hashText(deviceId);
   const cacheKey = `structa-native-cache-v2:${deviceScopeKey}`;
@@ -60,6 +70,7 @@
     captures: [],
     exports: [],
     logs: [],
+    probeEvents: [],
     projectMemory: {
       project_id: contracts.baseProjectCode,
       device_scope_key: deviceScopeKey,
@@ -88,6 +99,43 @@
     return record;
   }
 
+  function appendProbeEvent(raw = {}) {
+    const entry = {
+      id: raw.id || contracts.makeEntryId('probe'),
+      source: lower(raw.source || 'probe'),
+      name: raw.name || 'event',
+      payload: raw.payload ?? null,
+      created_at: raw.created_at || new Date().toISOString()
+    };
+    pushLimited(memory.probeEvents, entry, MAX_PROBE_EVENTS);
+    pushLimited(memory.logs, {
+      id: contracts.makeEntryId('log'),
+      kind: 'probe',
+      message: `${entry.source} ${lower(entry.name)}`,
+      linked_capture_id: null,
+      linked_response_id: null,
+      created_at: entry.created_at
+    }, MAX_LOG_ITEMS);
+    persist();
+    try {
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    } catch (_) {}
+    return entry;
+  }
+
+  let probeListenerAttached = false;
+
+  function startProbeIfNeeded() {
+    if (!probeMode || !probe?.start) return;
+    probe.start();
+    probe.getEvents?.().forEach(event => appendProbeEvent(event));
+    if (probeListenerAttached) return;
+    probeListenerAttached = true;
+    window.addEventListener('structa-probe-event', event => {
+      appendProbeEvent(event.detail || {});
+    });
+  }
+
   function persist() {
     const blob = {
       deviceId,
@@ -110,6 +158,7 @@
   }
 
   hydrate();
+  startProbeIfNeeded();
 
   function postPayload(payload) {
     if (typeof window.PluginMessageHandler !== 'undefined' && typeof window.PluginMessageHandler.postMessage === 'function') {
@@ -385,9 +434,11 @@
       captures: [...memory.captures],
       exports: [...memory.exports],
       logs: [...memory.logs],
+      probeEvents: [...memory.probeEvents],
       runtimeEvents: [...runtimeEvents],
       deviceId,
-      deviceScopeKey
+      deviceScopeKey,
+      probeMode
     };
   }
 
@@ -403,7 +454,7 @@
   persist();
 
   window.StructaNative = Object.freeze({
-    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true }),
+    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true, probeMode, hasProbe: !!probe }),
     getContext: () => router?.getContext?.() || null,
     routeAction: raw => router?.routeAction?.(raw) || { ok: false },
     setActiveVerb: (verb, target) => router?.setActiveVerb?.(verb, target),
@@ -422,9 +473,12 @@
     exportLatestLogs,
     getProjectMemory,
     getMemory,
+    getProbeEvents: () => [...memory.probeEvents],
+    appendProbeEvent,
     returnHome,
     emit,
     deviceId,
-    deviceScopeKey
+    deviceScopeKey,
+    probeMode
   });
 })();

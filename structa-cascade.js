@@ -404,6 +404,7 @@
   window.addEventListener('structa-voice-open', () => { activeSurface = 'voice'; render(); });
   window.addEventListener('structa-voice-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
   window.addEventListener('structa-memory-updated', () => { refreshLogFromMemory(); render(); });
+  window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
   window.addEventListener('backbutton', handleNativeBack);
   window.addEventListener('popstate', handleNativeBack);
   document.addEventListener('keydown', event => {
@@ -415,6 +416,9 @@
 
   native?.setActiveNode?.(currentCard().id);
   refreshLogFromMemory();
+  if (native?.getCapabilities?.().probeMode) {
+    pushLog('probe mode active', 'probe');
+  }
   render();
 
   window.StructaPanel = Object.freeze({

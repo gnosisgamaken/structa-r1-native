@@ -82,6 +82,7 @@
       return;
     }
     const img = capture.image_asset?.data || capture.image_asset?.url || '';
+    const audio = capture.audio_asset?.data || capture.audio_asset?.url || '';
     if (img) {
       captureThumb.hidden = false;
       captureThumb.src = img;
@@ -89,7 +90,7 @@
       captureThumb.hidden = true;
       captureThumb.removeAttribute('src');
     }
-    capturePreviewCopy.textContent = capture.summary || capture.prompt_text || 'Saved capture';
+    capturePreviewCopy.textContent = capture.summary || capture.prompt_text || (audio ? 'Saved voice capture' : 'Saved capture');
   };
 
   const pushLog = (text, strong = '') => {
@@ -134,10 +135,12 @@
     while (svg.firstChild) svg.removeChild(svg.firstChild);
   };
 
+  const TOP_SAFE_PX = 23;
+
   const addTopBand = () => {
     mk('rect', {
       x: 8,
-      y: 8,
+      y: TOP_SAFE_PX,
       width: 224,
       height: 18,
       rx: 9,
@@ -145,7 +148,7 @@
       stroke: 'rgba(255,255,255,0.05)',
       'stroke-width': 1
     });
-    text(14, 21, 'STRUCTA', {
+    text(14, TOP_SAFE_PX + 13, 'STRUCTA', {
       class: 'tile-title',
       fill: 'var(--support)',
       'letter-spacing': '0.16em'
@@ -153,7 +156,7 @@
     const card = cards[selectedIndex];
     mk('rect', {
       x: 166,
-      y: 10,
+      y: TOP_SAFE_PX + 2,
       width: 58,
       height: 14,
       rx: 6,
@@ -161,7 +164,7 @@
       stroke: 'rgba(255,255,255,0.07)',
       'stroke-width': 1
     });
-    text(195, 20, card.title.toUpperCase(), {
+    text(195, TOP_SAFE_PX + 12, card.title.toUpperCase(), {
       class: 'tile-note',
       fill: 'rgba(246,240,230,0.88)',
       'text-anchor': 'middle',

@@ -29,7 +29,7 @@
     if (!isNonEmptyString(payload.project_code)) errors.push('project_code is required');
     if (!isNonEmptyString(payload.entry_id)) errors.push('entry_id is required');
     if (!isNonEmptyString(payload.input_type)) errors.push('input_type is required');
-    if (!payload.image_asset) errors.push('image_asset is required');
+    if (!payload.image_asset && !payload.audio_asset) errors.push('image_asset or audio_asset is required');
 
     return errors.length ? result(false, payload, errors) : result(true, payload, []);
   }

@@ -12,6 +12,7 @@
       input_type: raw.input_type || 'image',
       captured_at: raw.captured_at || new Date().toISOString(),
       image_asset: asset,
+      audio_asset: raw.audio_asset || null,
       prompt_text: raw.prompt_text || 'camera capture',
       ai_response: raw.ai_response || '',
       summary: raw.summary || '',

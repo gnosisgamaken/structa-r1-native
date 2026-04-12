@@ -78,6 +78,7 @@
       input_type: input.input_type || 'image',
       captured_at: input.captured_at || now,
       image_asset: input.image_asset || null,
+      audio_asset: input.audio_asset || null,
       prompt_text: input.prompt_text || '',
       ai_response: input.ai_response || '',
       summary: input.summary || '',

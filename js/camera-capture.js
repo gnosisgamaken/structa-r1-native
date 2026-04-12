@@ -4,15 +4,11 @@
   const preview = document.getElementById('camera-preview');
   const canvas = document.getElementById('camera-canvas');
   const status = document.getElementById('camera-status');
-  const btnOpen = document.getElementById('camera-open');
-  const btnFlip = document.getElementById('camera-flip');
-  const btnSelfie = document.getElementById('camera-selfie');
   const btnCapture = document.getElementById('camera-capture');
-  const btnClose = document.getElementById('camera-close-session');
-  const captureLauncher = document.getElementById('capture-launcher');
 
   let stream = null;
   let facingMode = 'environment';
+  let lastBundle = null;
 
   function setStatus(text) {
     if (status) status.textContent = text;
@@ -26,6 +22,10 @@
   function closeTray() {
     tray?.classList.remove('open');
     tray?.setAttribute('aria-hidden', 'true');
+  }
+
+  function pause() {
+    stopStream();
   }
 
   function teardown() {
@@ -45,9 +45,9 @@
   async function openCamera(mode = facingMode) {
     openTray();
     facingMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
-    window.StructaVoice?.setPanel?.('camera');
 
-    if (!navigator.mediaDevices?.getUserMedia) {
+    const safeBrowser = !navigator.webdriver && window.isSecureContext !== false;
+    if (!safeBrowser || !navigator.mediaDevices?.getUserMedia) {
       setStatus('Camera unavailable');
       native?.openCamera?.(facingMode);
       return { ok: false };
@@ -61,7 +61,7 @@
         preview.srcObject = stream;
         await preview.play().catch(() => {});
       }
-      setStatus(facingMode === 'user' ? 'Selfie ready' : 'Camera ready');
+      setStatus(facingMode === 'user' ? 'Selfie ready — tap preview to flip' : 'Camera ready — tap preview to flip');
       return { ok: true };
     } catch (error) {
       setStatus('Camera blocked');
@@ -107,6 +107,7 @@
       meta: { facingMode, width: w, height: h }
     };
 
+    lastBundle = bundle;
     native?.storeCaptureBundle?.(bundle);
     native?.sendStructuredMessage?.({
       verb: 'capture',
@@ -120,7 +121,8 @@
       payload: bundle
     });
 
-    setStatus('Captured');
+    setStatus('Saved');
+    window.StructaPanel?.showCapture?.(bundle);
     return bundle;
   }
 
@@ -132,16 +134,8 @@
     return openCamera(facingMode === 'user' ? 'environment' : 'user');
   }
 
-  captureLauncher?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openTray();
-    window.StructaVoice?.setPanel?.('camera');
-  });
-  btnOpen?.addEventListener('click', () => openCamera(facingMode));
-  btnFlip?.addEventListener('click', flipFacing);
-  btnSelfie?.addEventListener('click', setSelfieMode);
+  preview?.addEventListener('click', flipFacing);
   btnCapture?.addEventListener('click', captureFrame);
-  btnClose?.addEventListener('click', teardown);
 
   window.StructaCamera = Object.freeze({
     open: openCamera,
@@ -149,8 +143,10 @@
     selfie: setSelfieMode,
     flip: flipFacing,
     stop: teardown,
+    pause,
     teardown,
     setStatus,
-    get facingMode() { return facingMode; }
+    get facingMode() { return facingMode; },
+    get lastBundle() { return lastBundle; }
   });
 })();

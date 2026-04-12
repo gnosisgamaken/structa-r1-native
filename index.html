@@ -77,6 +77,7 @@
       transition: transform 180ms cubic-bezier(.18,.67,.3,1.18), opacity 180ms ease, filter 180ms ease;
       cursor: pointer;
       will-change: transform, filter;
+      touch-action: none;
     }
 
     .tile:hover {
@@ -92,11 +93,11 @@
     }
 
     .tile.selected {
-      transform: scale(1.02);
+      transform: scale(1.012);
     }
 
     .tile.active {
-      transform: scale(1.045);
+      transform: scale(1.028);
     }
 
     .tile.hidden {
@@ -123,16 +124,16 @@
     .tile-title {
       font-family: Inter, system-ui, sans-serif;
       font-size: 16px;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.03em;
       text-transform: none;
-      font-weight: 650;
+      font-weight: 700;
     }
 
     .tile-note {
       font-family: Inter, system-ui, sans-serif;
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0.02em;
     }
 
     .tile:focus-visible .tile-rect {
@@ -226,8 +227,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(104px, 34%);
-      transform: translateY(calc(100% - 24px));
+      height: min(112px, 36%);
+      transform: translateY(calc(100% - 32px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -242,22 +243,22 @@
 
     #log-handle {
       width: 100%;
-      min-height: 24px;
+      min-height: 32px;
       border: 0;
       margin: 0;
-      padding: 0 12px;
+      padding: 0 10px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
       box-sizing: border-box;
       color: #d9d1c2;
       background: linear-gradient(180deg, rgba(12,12,12,0.98), rgba(8,8,8,0.985));
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 8px;
-      letter-spacing: 0.14em;
+      font-size: 9px;
+      letter-spacing: 0.11em;
       text-transform: uppercase;
       touch-action: none;
       user-select: none;
@@ -269,7 +270,7 @@
     #log-handle .log-copy {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       min-width: 0;
       flex: 1 1 auto;
     }
@@ -277,7 +278,7 @@
     #log-handle .log-text {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 1px;
       min-width: 0;
     }
 
@@ -286,9 +287,51 @@
     }
 
     #log-handle .log-title {
-      font-size: 11px;
-      letter-spacing: 0.08em;
+      font-size: 12px;
+      letter-spacing: 0.09em;
       color: rgba(246,240,230,0.88);
+    }
+
+    #log-handle .capture-preview {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: 146px;
+      flex: 1 1 auto;
+      padding: 3px 10px 3px 3px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: rgba(246,240,230,0.82);
+      overflow: hidden;
+    }
+
+    #capture-thumb-shell {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+      border-radius: 7px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #capture-thumb {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #capture-preview-copy {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 10px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
     }
 
     #log-handle .log-meta {
@@ -309,7 +352,7 @@
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(255,255,255,0.035);
       color: rgba(246,240,230,0.82);
-      font-size: 10px;
+      font-size: 9px;
       letter-spacing: 0.12em;
       white-space: nowrap;
       flex: 0 0 auto;
@@ -333,10 +376,10 @@
       background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
       color: #f6f0e6;
       border-radius: 999px;
-      padding: 5px 11px;
+      padding: 7px 13px;
       font: inherit;
-      font-size: 11px;
-      letter-spacing: 0.14em;
+      font-size: 12px;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
     }
 
@@ -367,7 +410,7 @@
       border: 1px solid rgba(255,255,255,0.09);
       background: rgba(9,9,9,0.98);
       box-shadow: 0 24px 60px rgba(0,0,0,0.45);
-      padding: 14px;
+      padding: 12px;
       box-sizing: border-box;
       color: var(--text);
       font-family: Inter, system-ui, sans-serif;
@@ -407,24 +450,21 @@
       font-weight: 600;
     }
 
-    #capture-close,
-    .capture-tabs button,
     .capture-row button,
-    .capture-foot button {
+    .capture-foot button,
+    #capture-launcher {
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
       color: #f6f0e6;
       border-radius: 999px;
-      padding: 8px 10px;
+      padding: 10px 12px;
       font: inherit;
-      font-size: 11px;
-      min-height: 34px;
+      font-size: 12px;
+      min-height: 40px;
       touch-action: manipulation;
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
     }
 
-    #capture-close:hover,
-    .capture-tabs button:hover,
     .capture-row button:hover,
     .capture-foot button:hover,
     #capture-launcher:hover {
@@ -432,16 +472,12 @@
       background: rgba(255,255,255,0.07);
     }
 
-    #capture-close:active,
-    .capture-tabs button:active,
     .capture-row button:active,
     .capture-foot button:active,
     #capture-launcher:active {
       transform: translateY(0) scale(0.99);
     }
 
-    #capture-close:focus-visible,
-    .capture-tabs button:focus-visible,
     .capture-row button:focus-visible,
     .capture-foot button:focus-visible,
     #capture-launcher:focus-visible {
@@ -449,48 +485,8 @@
       outline-offset: 2px;
     }
 
-    .capture-tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-
-    .action-rail {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 10px;
-      margin-bottom: 10px;
-      scrollbar-width: none;
-      scroll-snap-type: x proximity;
-    }
-
-    .action-rail::-webkit-scrollbar {
-      display: none;
-    }
-
-    .action-rail button {
-      flex: 0 0 auto;
-      padding: 7px 10px;
-      font-size: 10px;
-      letter-spacing: 0.02em;
-      text-transform: none;
-      white-space: nowrap;
-      scroll-snap-align: start;
-      min-height: 30px;
-    }
-
-    .action-rail button.active,
-    .capture-tabs button.active,
     .capture-panel.active {
       border-color: rgba(255,255,255,0.22);
-    }
-
-    .action-rail button.active,
-    .capture-tabs button.active {
-      background: rgba(255,255,255,0.08);
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
     }
 
     .capture-panel {
@@ -509,25 +505,46 @@
       flex-wrap: wrap;
     }
 
+    #voice-start,
+    #camera-capture {
+      width: 100%;
+      min-height: 48px;
+      font-size: 13px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.04));
+      border-color: rgba(255,255,255,0.14);
+    }
+
+    #camera-preview {
+      cursor: pointer;
+    }
+
+    #camera-preview:active {
+      opacity: 0.96;
+    }
+
     #voice-transcript {
       width: 100%;
-      min-height: 92px;
-      resize: none;
-      border-radius: 14px;
+      min-height: 96px;
+      border-radius: 16px;
       border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.03);
+      background: rgba(255,255,255,0.04);
       color: var(--text);
       box-sizing: border-box;
-      padding: 10px;
+      padding: 12px 14px;
       font: inherit;
-      font-size: 12px;
-      line-height: 1.4;
+      font-size: 13px;
+      line-height: 1.45;
       outline: none;
+      white-space: pre-wrap;
+      overflow: hidden;
+      display: block;
     }
 
     #camera-preview {
       width: 100%;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: 1 / 1.05;
       border-radius: 14px;
       background: #050505;
       border: 1px solid rgba(255,255,255,0.10);
@@ -537,7 +554,7 @@
     .capture-foot {
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-start;
       gap: 10px;
       color: rgba(255,255,255,0.52);
       font-size: 11px;
@@ -582,20 +599,17 @@
 
     @media (max-width: 480px) {
       #welcome-tip { top: 8px; left: 8px; right: 8px; }
-      #log-drawer { height: min(104px, 36vh); }
-      #log { font-size: 8.5px; }
+      #log-drawer { height: min(112px, 36vh); }
+      #log { font-size: 8.8px; }
       #capture-tray { padding: 8px; }
       #capture-sheet { width: 100%; padding: 10px; border-radius: 16px 16px 8px 8px; }
       .capture-title { font-size: 13px; }
       .capture-row { gap: 6px; }
-      .action-rail { gap: 5px; padding-bottom: 6px; }
-      .action-rail button,
-      #capture-close,
-      .capture-tabs button,
       .capture-row button,
-      .capture-foot button { padding: 7px 9px; font-size: 10px; }
-      #voice-transcript { min-height: 80px; font-size: 11px; }
-      #camera-preview { aspect-ratio: 1 / 1.08; }
+      .capture-foot button,
+      #capture-launcher { padding: 9px 10px; font-size: 11px; min-height: 36px; }
+      #voice-transcript { min-height: 84px; font-size: 12px; }
+      #camera-preview { aspect-ratio: 1 / 1.03; }
     }
   </style>
 </head>
@@ -615,16 +629,19 @@
         </span>
         <span class="log-meta">
           <span class="log-chip live">Live</span>
-          <span class="log-chip" id="log-count">3</span>
+          <span class="capture-preview" id="capture-preview" aria-live="polite">
+            <span id="capture-thumb-shell"><img id="capture-thumb" alt="Latest capture preview" hidden /></span>
+            <span id="capture-preview-copy">No capture</span>
+          </span>
           <span class="handle-actions">
-            <button id="capture-launcher" type="button" aria-label="Open capture tray">Capture</button>
+            <button id="capture-launcher" type="button" aria-label="Open voice capture">PTT</button>
           </span>
         </span>
       </div>
       <div id="log">
-        <div class="entry"><span class="muted">[--:--]</span> Panel loaded.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Square stack active.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Tap selected card again to open it.</div>
+        <div class="entry"><span class="muted">[--:--]</span> Ready.</div>
+        <div class="entry"><span class="muted">[--:--]</span> Stack active.</div>
+        <div class="entry"><span class="muted">[--:--]</span> Tap again to open.</div>
       </div>
     </section>
 
@@ -633,41 +650,17 @@
         <div class="capture-head">
           <div>
             <div class="capture-kicker">CAPTURE</div>
-            <div class="capture-title">Voice, camera, selfie</div>
-            <div class="capture-hint">One intent. Silent by default. Approval gates mutations.</div>
+            <div class="capture-title" id="capture-title">Voice</div>
+            <div class="capture-hint" id="capture-hint">PTT first. Camera is preview-driven. Back closes.</div>
           </div>
-          <button id="capture-close" type="button">Close</button>
         </div>
-
-        <div class="capture-tabs">
-          <button id="tab-voice" type="button" class="active">Voice</button>
-          <button id="tab-camera" type="button">Camera</button>
-        </div>
-
-        <div class="action-rail" id="action-rail" aria-label="Action router">
-          <button type="button" data-action-verb="build">Build</button>
-          <button type="button" data-action-verb="patch">Patch</button>
-          <button type="button" data-action-verb="delete">Delete</button>
-          <button type="button" data-action-verb="solve">Solve</button>
-          <button type="button" data-action-verb="consolidate">Consolidate</button>
-          <button type="button" data-action-verb="decide">Decide</button>
-          <button type="button" data-action-verb="research">Research</button>
-          <button type="button" data-action-verb="withdraw">Withdraw</button>
-        </div>
-
         <div class="capture-panel active" data-panel="voice">
           <div class="capture-row">
             <button id="voice-start" type="button">PTT</button>
-            <button id="voice-stop" type="button">Stop</button>
           </div>
-          <textarea id="voice-transcript" placeholder="Speak or type a transcript here for browser fallback"></textarea>
-          <div class="capture-row">
-            <button id="voice-journal" type="button">Journal</button>
-            <button id="voice-withdraw" type="button">Withdraw</button>
-          </div>
+          <div id="voice-transcript" aria-live="polite">Tap PTT to capture speech.</div>
           <div class="capture-foot">
             <span id="voice-status">Idle</span>
-            <button id="voice-submit" type="button">Submit</button>
           </div>
         </div>
 
@@ -675,13 +668,7 @@
           <video id="camera-preview" autoplay playsinline muted></video>
           <canvas id="camera-canvas" hidden></canvas>
           <div class="capture-row">
-            <button id="camera-open" type="button">Open</button>
-            <button id="camera-flip" type="button">Flip</button>
-            <button id="camera-selfie" type="button">Selfie</button>
-          </div>
-          <div class="capture-row">
             <button id="camera-capture" type="button">Capture</button>
-            <button id="camera-close-session" type="button">Close cam</button>
           </div>
           <div class="capture-foot">
             <span id="camera-status">Camera idle</span>

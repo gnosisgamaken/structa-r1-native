@@ -4,8 +4,9 @@
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
   const logCount = document.getElementById('log-count');
-  const actionRail = document.getElementById('action-rail');
-  const actionVerbButtons = actionRail ? Array.from(actionRail.querySelectorAll('[data-action-verb]')) : [];
+  const capturePreview = document.getElementById('capture-preview');
+  const captureThumb = document.getElementById('capture-thumb');
+  const capturePreviewCopy = document.getElementById('capture-preview-copy');
   const captureLauncher = document.getElementById('capture-launcher');
 
   const native = window.StructaNative;
@@ -61,10 +62,34 @@
   let activeVerb = router?.getContext?.().active_verb || 'inspect';
   let touch = null;
   let logSwipe = null;
+  let lastCapture = native?.getMemory?.().captures?.slice(-1)[0] || null;
+  let wheelLockAt = 0;
+  let tiltLockAt = 0;
+  let motionArmed = false;
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const syncLogCount = () => {
     if (logCount) logCount.textContent = `${log.children.length}`;
+  };
+
+  const syncCapturePreview = () => {
+    const capture = lastCapture || native?.getMemory?.().captures?.slice(-1)[0] || null;
+    if (!capturePreview || !capturePreviewCopy || !captureThumb) return;
+    if (!capture) {
+      captureThumb.hidden = true;
+      captureThumb.removeAttribute('src');
+      capturePreviewCopy.textContent = 'No capture yet';
+      return;
+    }
+    const img = capture.image_asset?.data || capture.image_asset?.url || '';
+    if (img) {
+      captureThumb.hidden = false;
+      captureThumb.src = img;
+    } else {
+      captureThumb.hidden = true;
+      captureThumb.removeAttribute('src');
+    }
+    capturePreviewCopy.textContent = capture.summary || capture.prompt_text || 'Saved capture';
   };
 
   const pushLog = (text, strong = '') => {
@@ -127,20 +152,20 @@
     });
     const card = cards[selectedIndex];
     mk('rect', {
-      x: 164,
+      x: 166,
       y: 10,
-      width: 60,
+      width: 58,
       height: 14,
-      rx: 7,
-      fill: 'rgba(255,255,255,0.06)',
-      stroke: 'rgba(255,255,255,0.06)',
+      rx: 6,
+      fill: 'rgba(255,255,255,0.07)',
+      stroke: 'rgba(255,255,255,0.07)',
       'stroke-width': 1
     });
-    text(194, 20, card.pill.toUpperCase(), {
+    text(195, 20, card.title.toUpperCase(), {
       class: 'tile-note',
       fill: 'rgba(246,240,230,0.88)',
       'text-anchor': 'middle',
-      'letter-spacing': '0.10em'
+      'letter-spacing': '0.06em'
     });
   };
 
@@ -185,6 +210,7 @@
     native?.emit?.('card_focus', { project_code: projectCode, node_id: card.id, verb: card.verb });
     pushLog(`Selected ${card.title}.`, note);
     render();
+    syncCapturePreview();
   };
 
   const setLogDrawer = open => {
@@ -193,18 +219,9 @@
     logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
 
-  const syncActionRail = () => {
-    actionVerbButtons.forEach(btn => {
-      const isActive = btn.dataset.actionVerb === activeVerb;
-      btn.classList.toggle('active', isActive);
-      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
-  };
-
   const setActiveVerb = (verb, source = 'mode') => {
     activeVerb = router?.canonicalizeVerb?.(verb) || verb || 'inspect';
     native?.setActiveVerb?.(activeVerb, source);
-    syncActionRail();
     pushLog(`Mode ${activeVerb.toUpperCase()}.`, 'MODE');
   };
 
@@ -215,7 +232,6 @@
   };
 
   const openCameraSurface = mode => {
-    window.StructaCamera?.open?.(mode || 'environment');
     window.StructaVoice?.setPanel?.('camera');
     pushLog('Camera capture opened.', 'CAPTURE');
   };
@@ -255,9 +271,9 @@
 
 
   const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 47, y: 34, scale: 1, opacity: 1 };
-    if (slot === 'prev') return { x: 52, y: -18, scale: 0.86, opacity: 0.42 };
-    return { x: 52, y: 86, scale: 0.86, opacity: 0.42 };
+    if (slot === 'selected') return { x: 46, y: 34, scale: 1, opacity: 1 };
+    if (slot === 'prev') return { x: -12, y: -34, scale: 0.72, opacity: 0.32 };
+    return { x: 100, y: 132, scale: 0.72, opacity: 0.32 };
   };
 
   const drawCard = (card, slot, index) => {
@@ -275,87 +291,66 @@
     group.style.opacity = `${layout.opacity}`;
     group.style.transformOrigin = 'center';
     group.style.transition = 'transform 140ms ease, opacity 140ms ease, filter 140ms ease';
-    if (selected) group.style.filter = `drop-shadow(0 10px 18px rgba(0,0,0,0.18))`;
+    if (selected) group.style.filter = `drop-shadow(0 12px 20px rgba(0,0,0,0.18))`;
 
     mk('rect', {
       x: 0,
       y: 0,
-      width: 138,
-      height: 138,
-      rx: 24,
-      ry: 24,
+      width: 150,
+      height: 150,
+      rx: 14,
+      ry: 14,
       fill: card.color,
-      stroke: 'rgba(255,255,255,0.10)',
+      stroke: 'rgba(255,255,255,0.12)',
       'stroke-width': 1
     }, group);
     mk('rect', {
       x: 1,
       y: 1,
-      width: 136,
-      height: 136,
-      rx: 23,
-      ry: 23,
+      width: 148,
+      height: 148,
+      rx: 12,
+      ry: 12,
       fill: 'none',
       stroke: 'rgba(255,255,255,0.08)',
       'stroke-width': 1
     }, group);
-
-    text(12, 20, card.title, {
-      class: 'tile-title',
-      fill: ink,
-      'letter-spacing': '0.08em'
+    mk('path', {
+      d: 'M 12 12 H 138',
+      fill: 'none',
+      stroke: 'rgba(255,255,255,0.18)',
+      'stroke-width': 2,
+      'stroke-linecap': 'round'
     }, group);
 
-    const motif = mk('g', { transform: 'translate(69,76)' }, group);
+    text(75, 24, card.title, {
+      class: 'tile-title',
+      fill: ink,
+      'text-anchor': 'middle',
+      'letter-spacing': '0.03em'
+    }, group);
+
+    const motif = mk('g', { transform: 'translate(75,82)' }, group);
     glyphMap[card.glyph](motif, 0, 0, ink);
 
     mk('rect', {
-      x: 12,
-      y: 108,
-      width: 70,
-      height: 20,
-      rx: 10,
-      fill: 'rgba(255,255,255,0.12)',
-      stroke: 'rgba(255,255,255,0.12)',
+      x: 34,
+      y: 118,
+      width: 82,
+      height: 22,
+      rx: 7,
+      fill: 'rgba(255,255,255,0.10)',
+      stroke: 'rgba(255,255,255,0.14)',
       'stroke-width': 1
     }, group);
-    text(47, 122, card.pill.toUpperCase(), {
+    text(75, 132, card.pill.toUpperCase(), {
       class: 'tile-note',
       fill: ink,
       'text-anchor': 'middle',
-      'letter-spacing': '0.12em'
+      'letter-spacing': '0.02em'
     }, group);
 
-    let pointerStart = null;
-    group.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      pointerStart = { x: e.clientX, y: e.clientY, index, wasSelected: selectedIndex === index };
-    });
-    group.addEventListener('pointerup', e => {
-      const start = pointerStart;
-      pointerStart = null;
-      if (!start) return;
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
-      const adx = Math.abs(dx);
-      const ady = Math.abs(dy);
-      if (Math.max(adx, ady) > 16) {
-        if (ady > adx) {
-          selectIndex(start.index + (dy > 0 ? 1 : -1), 'SWIPE');
-        } else {
-          selectIndex(start.index + (dx > 0 ? 1 : -1), 'SWIPE');
-        }
-        return;
-      }
-      if (start.wasSelected) {
-        routeCurrentCard();
-      } else {
-        selectIndex(start.index, 'FOCUS');
-      }
-    });
-    group.addEventListener('pointercancel', () => {
-      pointerStart = null;
-    });
+    group.style.pointerEvents = 'none';
     group.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -377,6 +372,56 @@
     drawCard(cards[next], 'next', next);
     drawCard(cards[selectedIndex], 'selected', selectedIndex);
   };
+
+  const svgPointFromEvent = event => {
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox.baseVal;
+    const scaleX = viewBox.width / rect.width;
+    const scaleY = viewBox.height / rect.height;
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY
+    };
+  };
+
+  const pickVisibleCard = point => {
+    const total = cards.length;
+    const prev = (selectedIndex - 1 + total) % total;
+    const next = (selectedIndex + 1) % total;
+    const visible = [
+      { index: prev, slot: 'prev' },
+      { index: next, slot: 'next' },
+      { index: selectedIndex, slot: 'selected' }
+    ];
+
+    const hits = visible
+      .map(item => ({
+        ...item,
+        layout: cardLayoutFor(item.slot),
+      }))
+      .filter(item => {
+        const w = 150 * item.layout.scale;
+        const h = 150 * item.layout.scale;
+        return point.x >= item.layout.x && point.x <= item.layout.x + w && point.y >= item.layout.y && point.y <= item.layout.y + h;
+      })
+      .map(item => {
+        const centerX = item.layout.x + 75 * item.layout.scale;
+        const centerY = item.layout.y + 75 * item.layout.scale;
+        const distance = Math.hypot(point.x - centerX, point.y - centerY);
+        return { ...item, distance };
+      })
+      .sort((a, b) => a.distance - b.distance);
+
+    return hits[0] || null;
+  };
+
+  svg.addEventListener('pointerup', e => {
+    const point = svgPointFromEvent(e);
+    const hit = pickVisibleCard(point);
+    if (!hit) return;
+    if (hit.index === selectedIndex) routeCurrentCard();
+    else selectIndex(hit.index, 'FOCUS');
+  });
 
   const openCoreTrace = () => {
     setLogDrawer(true);
@@ -429,8 +474,73 @@
     routeSelectedCard();
   };
 
+  const showCapture = bundle => {
+    if (bundle) {
+      lastCapture = bundle;
+      syncCapturePreview();
+      pushLog('Capture stored.', 'MEMORY');
+    }
+  };
+
+  const selectByWheel = delta => {
+    const now = Date.now();
+    if (now - wheelLockAt < 220) return;
+    wheelLockAt = now;
+    if (Math.abs(delta) < 8) return;
+    selectNext(delta > 0 ? 1 : -1);
+  };
+
+  const onOrientation = event => {
+    const gamma = Number(event.gamma || 0);
+    const beta = Number(event.beta || 0);
+    const now = Date.now();
+    if (now - tiltLockAt < 420) return;
+    if (Math.abs(gamma) > 18) {
+      tiltLockAt = now;
+      selectNext(gamma > 0 ? 1 : -1);
+      return;
+    }
+    if (Math.abs(beta) > 28) {
+      tiltLockAt = now;
+      if (beta > 0) setLogDrawer(true);
+      else setLogDrawer(false);
+    }
+  };
+
+  const armMotion = async () => {
+    if (motionArmed) return;
+    motionArmed = true;
+    try {
+      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+        const granted = await window.DeviceOrientationEvent.requestPermission().catch(() => 'denied');
+        if (granted !== 'granted') return;
+      }
+    } catch (_) {
+      return;
+    }
+    window.addEventListener('deviceorientation', onOrientation, { passive: true });
+    pushLog('Tilt control ready.', 'MOTION');
+  };
+
+  window.addEventListener('wheel', e => {
+    if (logOpen) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    selectByWheel(e.deltaY);
+  }, { passive: false });
+
+  window.addEventListener('pointerdown', armMotion, { once: true, passive: true });
+  window.addEventListener('touchstart', armMotion, { once: true, passive: true });
+  window.addEventListener('structa-native-event', event => {
+    const detail = event.detail || {};
+    if (detail.event_type === 'capture_bundle_stored') {
+      showCapture(detail.payload);
+    }
+  });
+
   // Home / setup
   render();
+  syncCapturePreview();
   native?.emit?.('panel_boot', {
     project_code: projectCode,
     capabilities: native?.getCapabilities?.() || {},
@@ -438,13 +548,6 @@
   });
   syncLogCount();
   setLogDrawer(false);
-  syncActionRail();
-
-  actionVerbButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      setActiveVerb(btn.dataset.actionVerb || 'inspect', 'action');
-    });
-  });
 
   captureLauncher?.addEventListener('click', () => {
     openVoiceSurface('voice');
@@ -529,6 +632,7 @@
     setActiveVerb,
     setLogDrawer,
     openVoiceSurface,
-    openCameraSurface
+    openCameraSurface,
+    showCapture
   });
 })();

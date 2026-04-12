@@ -3,14 +3,10 @@
   const transcript = document.getElementById('voice-transcript');
   const status = document.getElementById('voice-status');
   const btnStart = document.getElementById('voice-start');
-  const btnStop = document.getElementById('voice-stop');
-  const btnJournal = document.getElementById('voice-journal');
-  const btnWithdraw = document.getElementById('voice-withdraw');
-  const btnSubmit = document.getElementById('voice-submit');
   const tray = document.getElementById('capture-tray');
-  const tabVoice = document.getElementById('tab-voice');
-  const tabCamera = document.getElementById('tab-camera');
-  const closeBtn = document.getElementById('capture-close');
+  const captureLauncher = document.getElementById('capture-launcher');
+  const captureTitle = document.getElementById('capture-title');
+  const captureHint = document.getElementById('capture-hint');
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition = null;
@@ -23,22 +19,35 @@
   function openTray() {
     tray?.classList.add('open');
     tray?.setAttribute('aria-hidden', 'false');
+    if (captureLauncher) captureLauncher.hidden = true;
   }
 
   function closeTray() {
     tray?.classList.remove('open');
     tray?.setAttribute('aria-hidden', 'true');
+    if (captureLauncher) captureLauncher.hidden = false;
     stopListening(false);
     window.StructaCamera?.teardown?.();
+    if (captureTitle) captureTitle.textContent = 'Voice';
+    if (captureHint) captureHint.textContent = 'PTT first. Camera is preview-driven. Back closes.';
   }
 
   function setPanel(panel) {
     document.querySelectorAll('#capture-tray .capture-panel').forEach(el => {
       el.classList.toggle('active', el.dataset.panel === panel);
     });
-    tabVoice?.classList.toggle('active', panel === 'voice');
-    tabCamera?.classList.toggle('active', panel === 'camera');
     openTray();
+    if (captureTitle) captureTitle.textContent = panel === 'camera' ? 'Camera' : 'Voice';
+    if (captureHint) {
+      captureHint.textContent = panel === 'camera'
+        ? 'Tap preview to flip. Back closes.'
+        : 'PTT first. Camera is preview-driven. Back closes.';
+    }
+    if (panel === 'camera') {
+      window.StructaCamera?.open?.(window.StructaCamera?.facingMode || 'environment');
+    } else {
+      window.StructaCamera?.pause?.();
+    }
   }
 
   function stopListening(emit = true) {
@@ -46,21 +55,35 @@
       try { recognition.stop(); } catch (_) {}
     }
     listening = false;
+    if (btnStart) btnStart.textContent = 'PTT';
     setStatus('Idle');
     if (emit) {
-      const text = transcript?.value?.trim() || '';
+      const text = transcript?.textContent?.trim() || '';
       if (text && native?.stopPTT) native.stopPTT(text);
+      if (text && native?.writeJournalEntry) {
+        native.writeJournalEntry({
+          title: deriveTitle(text),
+          body: text,
+          source_type: 'voice',
+          meta: { entry_mode: 'auto' }
+        });
+        setStatus('Saved');
+      }
     }
   }
 
   function startListening() {
     openTray();
     setPanel('voice');
+    if (btnStart) btnStart.textContent = 'Stop';
     setStatus('Listening...');
+    if (transcript) transcript.textContent = 'Listening…';
     native?.startPTT?.();
 
     if (!SR) {
       listening = false;
+      if (btnStart) btnStart.textContent = 'PTT';
+      setStatus('Mic unavailable');
       return;
     }
 
@@ -74,13 +97,17 @@
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const part = event.results[i][0]?.transcript || '';
           if (event.results[i].isFinal) finalText += part;
-          else if (!transcript.value) transcript.value = part;
+          else if (!transcript.textContent || transcript.textContent === 'Tap PTT to capture speech.') transcript.textContent = part;
         }
-        if (finalText) transcript.value = (transcript.value + ' ' + finalText).trim();
+        if (finalText) transcript.textContent = (transcript.textContent + ' ' + finalText).trim();
       };
-      recognition.onerror = () => setStatus('Mic error');
+      recognition.onerror = () => {
+        if (btnStart) btnStart.textContent = 'PTT';
+        setStatus('Mic error');
+      };
       recognition.onend = () => {
         listening = false;
+        if (btnStart) btnStart.textContent = 'PTT';
         setStatus('Ready');
       };
     }
@@ -98,18 +125,8 @@
     return head || 'Voice note';
   }
 
-  function submitTranscript() {
-    const text = transcript?.value?.trim() || '';
-    if (!text) {
-      setStatus('Need transcript');
-      return;
-    }
-    native?.stopPTT?.(text);
-    setStatus('Submitted');
-  }
-
   function saveJournal() {
-    const text = transcript?.value?.trim() || '';
+    const text = transcript?.textContent?.trim() || '';
     if (!text) {
       setStatus('Need transcript');
       return;
@@ -124,7 +141,7 @@
   }
 
   function withdrawEmail() {
-    const text = transcript?.value?.trim() || '';
+    const text = transcript?.textContent?.trim() || '';
     if (!text) {
       setStatus('Need transcript');
       return;
@@ -138,14 +155,13 @@
     setStatus('Withdrawal queued');
   }
 
-  btnStart?.addEventListener('click', startListening);
-  btnStop?.addEventListener('click', () => stopListening(true));
-  btnJournal?.addEventListener('click', saveJournal);
-  btnWithdraw?.addEventListener('click', withdrawEmail);
-  btnSubmit?.addEventListener('click', submitTranscript);
-  tabVoice?.addEventListener('click', () => setPanel('voice'));
-  tabCamera?.addEventListener('click', () => setPanel('camera'));
-  closeBtn?.addEventListener('click', closeTray);
+  btnStart?.addEventListener('click', () => {
+    if (listening) stopListening(true);
+    else startListening();
+  });
+  tray?.addEventListener('click', event => {
+    if (event.target === tray) closeTray();
+  });
 
   window.StructaVoice = Object.freeze({
     open: startListening,
@@ -153,10 +169,10 @@
     setPanel,
     openTray,
     closeTray,
-    submitTranscript,
     saveJournal,
     withdrawEmail,
     setStatus,
+    setTranscript: text => { if (transcript) transcript.textContent = String(text || 'Tap PTT to capture speech.'); },
     get listening() { return listening; }
   });
 })();

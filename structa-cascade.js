@@ -16,14 +16,14 @@
 
   const layers = {
     primary: [
-      { id: 'core', label: 'CORE', x: 10,  y: 10,  w: 230, h: 148, color: 'var(--core)' },
-      { id: 'memory', label: 'MEMORY', x: 240, y: 10,  w: 230, h: 148, color: 'var(--memory)' },
-      { id: 'output', label: 'OUTPUT', x: 10,  y: 164, w: 230, h: 148, color: 'var(--output)' },
-      { id: 'support', label: 'SUPPORT', x: 240, y: 164, w: 230, h: 148, color: 'var(--support)' }
+      { id: 'core', label: 'Core', x: 8,  y: 12, w: 160, h: 46, color: 'var(--core)' },
+      { id: 'memory', label: 'Memory', x: 8,  y: 64, w: 160, h: 46, color: 'var(--memory)' },
+      { id: 'output', label: 'Output', x: 8,  y: 116, w: 160, h: 46, color: 'var(--output)' },
+      { id: 'support', label: 'Support', x: 8,  y: 168, w: 160, h: 46, color: 'var(--support)' }
     ],
     hidden: [
-      { id: 'contract', label: 'CONTRACT', x: 362, y: 58, w: 94, h: 84, color: 'var(--contract)' },
-      { id: 'validator', label: 'VALIDATOR', x: 362, y: 182, w: 94, h: 84, color: 'var(--validator)' }
+      { id: 'contract', label: 'Contract', x: 176, y: 20, w: 56, h: 42, color: 'var(--contract)' },
+      { id: 'validator', label: 'Validator', x: 176, y: 76, w: 56, h: 42, color: 'var(--validator)' }
     ]
   };
 
@@ -47,7 +47,7 @@
 
   const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const syncLogCount = () => {
-    if (logCount) logCount.textContent = `${log.children.length} ITEMS`;
+    if (logCount) logCount.textContent = `${log.children.length}`;
   };
 
   const pushLog = (text, strong = '') => {
@@ -80,7 +80,7 @@
     logDrawer.classList.toggle('open', open);
     logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
     const state = logHandle?.querySelector('.state');
-    if (state) state.textContent = open ? `SWIPE ↓ · ${activeVerb.toUpperCase()}` : `SWIPE ↑ · ${activeVerb.toUpperCase()}`;
+    if (state) state.textContent = open ? `Swipe ↓ · ${activeVerb}` : `Swipe ↑ · ${activeVerb}`;
   };
 
   const toggleLogDrawer = () => setLogDrawer(!logOpen);
@@ -101,45 +101,45 @@
   const center = t => ({ cx: t.x + t.w / 2, cy: t.y + t.h / 2 });
 
   function addBackdrop() {
-    mk('rect', { x: 6, y: 6, width: 468, height: 310, fill: 'none', stroke: 'rgba(255,255,255,0.06)', 'stroke-width': 1 });
-    mk('rect', { x: 14, y: 14, width: 452, height: 294, fill: 'none', stroke: 'rgba(255,255,255,0.028)', 'stroke-width': 1 });
+    mk('rect', { x: 6, y: 9, width: 228, height: 194, rx: 14, fill: 'none', stroke: 'rgba(255,255,255,0.035)', 'stroke-width': 1 });
+    mk('rect', { x: 10, y: 13, width: 220, height: 186, rx: 12, fill: 'none', stroke: 'rgba(255,255,255,0.014)', 'stroke-width': 1 });
   }
 
   function shapeCore(g, cx, cy, ink) {
-    mk('circle', { cx, cy, r: 31, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx, cy, r: 11, fill: ink }, g);
-    mk('path', { d: `M ${cx - 20} ${cy + 17} A 24 24 0 0 1 ${cx + 20} ${cy + 17}`, fill: 'none', stroke: ink, 'stroke-width': 10, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx, cy, r: 14, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx, cy, r: 5, fill: ink }, g);
+    mk('path', { d: `M ${cx - 10} ${cy + 9} A 11 11 0 0 1 ${cx + 10} ${cy + 9}`, fill: 'none', stroke: ink, 'stroke-width': 5, 'stroke-linecap': 'round' }, g);
   }
 
   function shapeMemory(g, cx, cy, ink) {
-    mk('rect', { x: cx - 31, y: cy - 31, width: 62, height: 62, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
-    mk('rect', { x: cx - 13, y: cy - 13, width: 26, height: 26, fill: ink }, g);
-    mk('path', { d: `M ${cx - 32} ${cy + 24} H ${cx + 32}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
+    mk('rect', { x: cx - 15, y: cy - 15, width: 30, height: 30, fill: 'none', stroke: ink, 'stroke-width': 6 }, g);
+    mk('rect', { x: cx - 6, y: cy - 6, width: 12, height: 12, fill: ink }, g);
+    mk('path', { d: `M ${cx - 16} ${cy + 12} H ${cx + 16}`, fill: 'none', stroke: ink, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
   }
 
   function shapeOutput(g, cx, cy, ink) {
-    mk('path', { d: `M ${cx} ${cy - 31} L ${cx + 31} ${cy} L ${cx} ${cy + 31} L ${cx - 31} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
-    mk('path', { d: `M ${cx - 22} ${cy + 8} A 26 26 0 0 1 ${cx + 22} ${cy + 8}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx: cx, cy: cy - 2, r: 7, fill: ink }, g);
+    mk('path', { d: `M ${cx} ${cy - 14} L ${cx + 14} ${cy} L ${cx} ${cy + 14} L ${cx - 14} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linejoin': 'round' }, g);
+    mk('path', { d: `M ${cx - 10} ${cy + 4} A 12 12 0 0 1 ${cx + 10} ${cy + 4}`, fill: 'none', stroke: ink, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx: cx, cy: cy - 1, r: 3, fill: ink }, g);
   }
 
   function shapeSupport(g, cx, cy, ink) {
-    mk('circle', { cx, cy, r: 31, fill: 'none', stroke: ink, 'stroke-width': 12 }, g);
-    mk('circle', { cx, cy, r: 10, fill: ink }, g);
-    mk('circle', { cx: cx - 15, cy: cy - 14, r: 4, fill: ink }, g);
-    mk('circle', { cx: cx + 15, cy: cy + 14, r: 4, fill: ink }, g);
+    mk('circle', { cx, cy, r: 14, fill: 'none', stroke: ink, 'stroke-width': 6 }, g);
+    mk('circle', { cx, cy, r: 5, fill: ink }, g);
+    mk('circle', { cx: cx - 7, cy: cy - 6, r: 2.5, fill: ink }, g);
+    mk('circle', { cx: cx + 7, cy: cy + 6, r: 2.5, fill: ink }, g);
   }
 
   function shapeContract(g, cx, cy, ink) {
-    mk('path', { d: `M ${cx} ${cy - 28} L ${cx + 29} ${cy + 22} L ${cx - 29} ${cy + 22} Z`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linejoin': 'round' }, g);
-    mk('path', { d: `M ${cx - 15} ${cy + 5} H ${cx + 15}`, fill: 'none', stroke: ink, 'stroke-width': 9, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx: cx, cy: cy - 2, r: 7, fill: ink }, g);
+    mk('path', { d: `M ${cx} ${cy - 13} L ${cx + 13} ${cy + 10} L ${cx - 13} ${cy + 10} Z`, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linejoin': 'round' }, g);
+    mk('path', { d: `M ${cx - 7} ${cy + 3} H ${cx + 7}`, fill: 'none', stroke: ink, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx: cx, cy: cy - 1, r: 3, fill: ink }, g);
   }
 
   function shapeValidator(g, cx, cy, ink) {
-    mk('path', { d: `M ${cx - 29} ${cy - 29} L ${cx + 29} ${cy + 29}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
-    mk('path', { d: `M ${cx + 29} ${cy - 29} L ${cx - 29} ${cy + 29}`, fill: 'none', stroke: ink, 'stroke-width': 12, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx, cy, r: 9, fill: ink }, g);
+    mk('path', { d: `M ${cx - 13} ${cy - 13} L ${cx + 13} ${cy + 13}`, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linecap': 'round' }, g);
+    mk('path', { d: `M ${cx + 13} ${cy - 13} L ${cx - 13} ${cy + 13}`, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linecap': 'round' }, g);
+    mk('circle', { cx, cy, r: 4, fill: ink }, g);
   }
 
   const drawTile = (t, isHidden = false) => {
@@ -164,16 +164,15 @@
 
     // deliberately sparse composition: big form, one secondary accent, small label system
     const motif = mk('g', { class: 'motif' }, g);
-    if (t.id === 'core') shapeCore(motif, c.cx, c.cy + 8, ink);
-    if (t.id === 'memory') shapeMemory(motif, c.cx, c.cy + 8, ink);
-    if (t.id === 'output') shapeOutput(motif, c.cx, c.cy + 8, ink);
-    if (t.id === 'support') shapeSupport(motif, c.cx, c.cy + 8, ink);
-    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy + 8, ink);
-    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy + 8, ink);
+    if (t.id === 'core') shapeCore(motif, c.cx, c.cy + 1, ink);
+    if (t.id === 'memory') shapeMemory(motif, c.cx, c.cy + 1, ink);
+    if (t.id === 'output') shapeOutput(motif, c.cx, c.cy + 1, ink);
+    if (t.id === 'support') shapeSupport(motif, c.cx, c.cy + 1, ink);
+    if (t.id === 'contract') shapeContract(motif, c.cx, c.cy, ink);
+    if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy, ink);
 
-    text(16, 22, t.label, { class: 'tile-title', fill: labelFill }, g);
-    text(16, t.h - 28, copy.note.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.92' }, g);
-    text(16, t.h - 13, copy.hint.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.54' }, g);
+    text(10, 16, t.label, { class: 'tile-title', fill: labelFill }, g);
+    text(10, t.h - 16, copy.note, { class: 'tile-note', fill: labelFill, opacity: '0.86' }, g);
 
     g.addEventListener('pointerdown', e => {
       e.preventDefault();
@@ -215,9 +214,10 @@
     revealLayer = !revealLayer;
     layers.hidden.forEach(t => {
       const node = els.hidden[t.id];
-      if (node) node.style.opacity = revealLayer ? '1' : '0';
-      if (node) node.style.pointerEvents = revealLayer ? 'auto' : 'none';
-      if (node) node.setAttribute('aria-hidden', revealLayer ? 'false' : 'true');
+      if (!node) return;
+      node.classList.toggle('reveal', revealLayer);
+      node.style.display = revealLayer ? 'inline' : 'none';
+      node.setAttribute('aria-hidden', revealLayer ? 'false' : 'true');
     });
   }
 
@@ -228,7 +228,6 @@
       class: `tile hidden tile-${t.id}`,
       'data-node': t.id,
       transform: `translate(${t.x},${t.y})`,
-      opacity: '0',
       tabindex: '0',
       role: 'button',
       'aria-pressed': 'false',
@@ -241,9 +240,8 @@
     const motif = mk('g', {}, g);
     if (t.id === 'contract') shapeContract(motif, c.cx, c.cy + 4, ink);
     if (t.id === 'validator') shapeValidator(motif, c.cx, c.cy + 4, ink);
-    text(10, 18, t.label, { class: 'tile-title', fill: labelFill }, g);
-    text(10, t.h - 12, copy.note.toUpperCase(), { class: 'tile-note', fill: labelFill, opacity: '0.88' }, g);
-    g.style.pointerEvents = 'none';
+    text(8, 14, t.label, { class: 'tile-title', fill: labelFill }, g);
+    text(8, t.h - 12, copy.note, { class: 'tile-note', fill: labelFill, opacity: '0.82' }, g);
     g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') triggerFrom(t.id); });
     els.hidden[t.id] = g;
   }
@@ -320,13 +318,12 @@
   }
 
   function showHiddenFor(activeId) {
-    const show = activeId === 'core' || activeId === 'memory';
-    revealLayer = show;
+    const show = revealLayer && (activeId === 'core' || activeId === 'memory');
     layers.hidden.forEach(t => {
       const node = els.hidden[t.id];
       if (!node) return;
-      node.style.opacity = show ? '1' : '0';
-      node.style.pointerEvents = show ? 'auto' : 'none';
+      node.classList.toggle('reveal', show);
+      node.style.display = show ? 'inline' : 'none';
       node.setAttribute('aria-hidden', show ? 'false' : 'true');
     });
   }
@@ -371,6 +368,11 @@
       payload: { node_id: id, active_verb: routeVerb }
     });
     pushLog(`${routeVerb.toUpperCase()} → ${id.toUpperCase()}`, 'ROUTE');
+    if (id === 'support') {
+      window.StructaVoice?.openTray?.();
+      window.StructaVoice?.setPanel?.('voice');
+      pushLog('Capture tray opened.', 'CAPTURE');
+    }
     runSequence(id);
   }
 
@@ -400,7 +402,15 @@
 
   const onboardingKey = 'structa-onboarding-dismissed-v1';
   const shouldShowWelcome = !window.localStorage || !window.localStorage.getItem(onboardingKey);
-  if (welcomeTip && shouldShowWelcome) welcomeTip.classList.add('show');
+  if (welcomeTip && shouldShowWelcome) {
+    welcomeTip.classList.add('show');
+    setTimeout(() => {
+      welcomeTip?.classList.remove('show');
+      try {
+        window.localStorage?.setItem(onboardingKey, '1');
+      } catch (_) {}
+    }, 4800);
+  }
   welcomeDismiss?.addEventListener('click', () => {
     welcomeTip?.classList.remove('show');
     try {

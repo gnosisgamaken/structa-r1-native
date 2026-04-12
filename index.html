@@ -94,6 +94,14 @@
       transform: scale(1.045);
     }
 
+    .tile.hidden {
+      display: none;
+    }
+
+    .tile.hidden.reveal {
+      display: inline;
+    }
+
     .tile-core.selected { filter: drop-shadow(0 0 12px rgba(255,70,102,0.50)); }
     .tile-memory.selected { filter: drop-shadow(0 0 12px rgba(255,201,58,0.48)); }
     .tile-output.selected { filter: drop-shadow(0 0 12px rgba(255,155,84,0.48)); }
@@ -102,24 +110,24 @@
     .tile-validator.selected { filter: drop-shadow(0 0 12px rgba(255,248,236,0.42)); }
 
     .tile-rect {
-      stroke: rgba(255,255,255,0.09);
+      stroke: rgba(255,255,255,0.06);
       stroke-width: 1;
       shape-rendering: geometricPrecision;
     }
 
     .tile-title {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 9px;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      font-weight: 700;
+      font-family: Inter, system-ui, sans-serif;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: none;
+      font-weight: 650;
     }
 
     .tile-note {
       font-family: Inter, system-ui, sans-serif;
-      font-size: 10px;
+      font-size: 9px;
       font-weight: 600;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.01em;
     }
 
     .tile:focus-visible .tile-rect {
@@ -134,7 +142,7 @@
 
     .frame {
       fill: none;
-      stroke: rgba(255,255,255,0.05);
+      stroke: rgba(255,255,255,0.025);
       stroke-width: 1;
     }
 
@@ -162,6 +170,12 @@
       padding: 12px 14px;
       box-sizing: border-box;
       pointer-events: auto;
+    }
+
+    @media (max-height: 340px), (max-width: 300px) {
+      #welcome-tip {
+        display: none !important;
+      }
     }
 
     .welcome-kicker {
@@ -207,8 +221,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(118px, 40vh);
-      transform: translateY(calc(100% - 34px));
+      height: min(104px, 34vh);
+      transform: translateY(calc(100% - 24px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -223,21 +237,21 @@
 
     #log-handle {
       width: 100%;
-      min-height: 34px;
+      min-height: 24px;
       border: 0;
       margin: 0;
-      padding: 0 14px;
+      padding: 0 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       box-sizing: border-box;
       color: #d9d1c2;
       background: linear-gradient(180deg, rgba(12,12,12,0.98), rgba(8,8,8,0.985));
       border-top: 1px solid var(--line);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 9px;
+      font-size: 8px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       touch-action: none;
@@ -264,14 +278,14 @@
 
     #log-handle .log-kicker {
       font-size: 8px;
-      letter-spacing: 0.18em;
-      color: rgba(255,255,255,0.42);
+      letter-spacing: 0.14em;
+      color: rgba(255,255,255,0.34);
     }
 
     #log-handle .log-title {
-      font-size: 10px;
-      letter-spacing: 0.20em;
-      color: rgba(246,240,230,0.96);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      color: rgba(246,240,230,0.90);
     }
 
     #log-handle .log-meta {
@@ -286,14 +300,14 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 22px;
-      padding: 0 9px;
+      height: 20px;
+      padding: 0 8px;
       border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.05);
-      color: rgba(246,240,230,0.88);
-      font-size: 8px;
-      letter-spacing: 0.16em;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.035);
+      color: rgba(246,240,230,0.82);
+      font-size: 7px;
+      letter-spacing: 0.12em;
       white-space: nowrap;
       flex: 0 0 auto;
     }
@@ -457,8 +471,8 @@
       flex: 0 0 auto;
       padding: 7px 10px;
       font-size: 10px;
-      letter-spacing: 0.10em;
-      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      text-transform: none;
       white-space: nowrap;
       scroll-snap-align: start;
       min-height: 30px;
@@ -535,7 +549,7 @@
     }
 
     #log-handle .state {
-      color: rgba(255,255,255,0.46);
+      color: rgba(255,255,255,0.40);
     }
 
     #log {
@@ -593,7 +607,7 @@
       </div>
     </div>
     <main>
-      <svg id="scene" viewBox="0 0 480 322" role="img" aria-label="Native panel composition"></svg>
+      <svg id="scene" viewBox="0 0 240 282" role="img" aria-label="Native panel composition"></svg>
     </main>
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
@@ -601,16 +615,16 @@
         <span class="grip" aria-hidden="true"></span>
         <span class="log-copy">
           <span class="log-text">
-            <span class="log-kicker">AUDIT</span>
-            <span class="log-title">LOG DRAWER</span>
+            <span class="log-kicker">Audit</span>
+            <span class="log-title">Log</span>
           </span>
         </span>
         <span class="log-meta">
-          <span class="log-chip live">LIVE</span>
-          <span class="state log-chip">SWIPE ↑</span>
-          <span class="log-chip" id="log-count">3 ITEMS</span>
+          <span class="log-chip live">Live</span>
+          <span class="state log-chip">Swipe ↑</span>
+          <span class="log-chip" id="log-count">3</span>
           <span class="handle-actions">
-            <button id="capture-launcher" type="button" aria-label="Open capture tray">CAPTURE</button>
+            <button id="capture-launcher" type="button" aria-label="Open capture tray">Capture</button>
           </span>
         </span>
       </div>

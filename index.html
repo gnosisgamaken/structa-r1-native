@@ -225,8 +225,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(66px, 24%);
-      transform: translateY(calc(100% - 14px));
+      height: min(78px, 28%);
+      transform: translateY(calc(100% - 18px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -241,7 +241,7 @@
 
     #log-handle {
       width: 100%;
-      min-height: 14px;
+      min-height: 18px;
       border: 0;
       margin: 0;
       padding: 0 8px;
@@ -595,7 +595,7 @@
 
     @media (max-width: 480px) {
       #welcome-tip { top: 8px; left: 8px; right: 8px; }
-      #log-drawer { height: min(112px, 36vh); }
+      #log-drawer { height: min(124px, 44vh); }
       #log { font-size: 8.8px; }
       #capture-tray { padding: 8px; }
       #capture-sheet { width: 100%; padding: 10px; border-radius: 16px 16px 8px 8px; }
@@ -617,8 +617,12 @@
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <div id="log-handle" role="button" tabindex="0" aria-label="Toggle log">
-        <span class="capture-preview" id="capture-preview" aria-live="polite">
-          <span id="capture-preview-copy"></span>
+        <span class="log-copy">
+          <span class="log-title">LOG</span>
+          <span class="log-chip live">LIVE</span>
+        </span>
+        <span class="log-meta">
+          <span class="log-chip" id="log-count">0</span>
         </span>
       </div>
       <div id="log"></div>

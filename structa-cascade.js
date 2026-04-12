@@ -248,9 +248,9 @@
 
 
   const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 42, y: 84, scale: 1.04, opacity: 1 };
-    if (slot === 'prev') return { x: -20, y: 28, scale: 0.46, opacity: 0.02 };
-    return { x: 126, y: 110, scale: 0.46, opacity: 0.02 };
+    if (slot === 'selected') return { x: 42, y: 58, scale: 1.04, opacity: 1 };
+    if (slot === 'prev') return { x: -20, y: 18, scale: 0.46, opacity: 0.02 };
+    return { x: 126, y: 96, scale: 0.46, opacity: 0.02 };
   };
 
   const drawCard = (card, slot, index) => {
@@ -458,6 +458,47 @@
   captureLauncher?.addEventListener('click', () => {
     openVoiceSurface('voice');
   });
+
+  const isCameraPanelActive = () => document.querySelector('#capture-tray.open .capture-panel[data-panel="camera"]')?.classList.contains('active');
+  const isVoicePanelActive = () => document.querySelector('#capture-tray.open .capture-panel[data-panel="voice"]')?.classList.contains('active');
+
+  const handleGlobalWheel = event => {
+    if (isCameraPanelActive()) return;
+    event.preventDefault();
+    selectNext(event.deltaY < 0 ? -1 : 1);
+  };
+
+  const handleScrollHardware = delta => {
+    if (isCameraPanelActive()) return;
+    selectNext(delta);
+  };
+
+  window.addEventListener('scrollUp', event => {
+    event.preventDefault?.();
+    handleScrollHardware(-1);
+  });
+
+  window.addEventListener('scrollDown', event => {
+    event.preventDefault?.();
+    handleScrollHardware(1);
+  });
+
+  window.addEventListener('sideClick', event => {
+    event.preventDefault?.();
+    openVoiceSurface('voice');
+  });
+
+  window.addEventListener('longPressStart', event => {
+    event.preventDefault?.();
+    openVoiceSurface('voice');
+  });
+
+  window.addEventListener('longPressEnd', event => {
+    event.preventDefault?.();
+    if (isVoicePanelActive() || window.StructaVoice?.listening) window.StructaVoice?.stop?.();
+  });
+
+  window.addEventListener('wheel', handleGlobalWheel, { passive: false });
 
   document.addEventListener('keydown', e => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {

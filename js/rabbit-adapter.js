@@ -54,12 +54,22 @@
   }
 
   function saveFallback() {
-    if (!window.localStorage) return;
+    const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, captures: memory.captures, exports: memory.exports, runtimeEvents };
     try {
-      const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, captures: memory.captures, exports: memory.exports, runtimeEvents };
-      window.localStorage.setItem('structa-native-cache-v1', JSON.stringify(blob));
+      if (window.localStorage) {
+        window.localStorage.setItem('structa-native-cache-v1', JSON.stringify(blob));
+      }
     } catch (_) {
       // ignore quota or serialization issues in browser fallback
+    }
+    try {
+      const creationStorage = window.creationStorage?.plain;
+      if (creationStorage?.setItem) {
+        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(blob))));
+        Promise.resolve(creationStorage.setItem('structa-native-cache-v1', encoded)).catch(() => {});
+      }
+    } catch (_) {
+      // ignore unavailable creation storage in non-Rabbit runtimes
     }
   }
 

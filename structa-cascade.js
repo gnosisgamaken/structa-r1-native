@@ -573,15 +573,13 @@
   }
 
   function cardLayout(index) {
-    const displayIndex = queuedIndex !== null ? queuedIndex : selectedIndex;
-    const distance = index - displayIndex;
+    const distance = index - selectedIndex;
     const normalized = ((distance % cards.length) + cards.length) % cards.length;
-    const previewing = queuedIndex !== null;
-    if (distance === 0) return { x: 45, y: previewing ? 34 : 28, scale: previewing ? 0.97 : 1.06, opacity: 1 };
-    if (normalized === 1 || distance === 1) return { x: previewing ? 156 : 166, y: 42, scale: previewing ? 0.76 : 0.66, opacity: previewing ? 0.70 : 0.46 };
-    if (normalized === cards.length - 1 || distance === -1) return { x: previewing ? -26 : -36, y: 42, scale: previewing ? 0.76 : 0.66, opacity: previewing ? 0.70 : 0.46 };
-    if (normalized === 2 || distance === 2) return { x: 204, y: 56, scale: 0.52, opacity: 0.17 };
-    return { x: -66, y: 56, scale: 0.52, opacity: 0.17 };
+    if (distance === 0) return { x: 40, y: 24, scale: 1.10, opacity: 1 };
+    if (normalized === 1 || distance === 1) return { x: 170, y: 38, scale: 0.68, opacity: 0.52 };
+    if (normalized === cards.length - 1 || distance === -1) return { x: -42, y: 38, scale: 0.68, opacity: 0.52 };
+    if (normalized === 2 || distance === 2) return { x: 212, y: 56, scale: 0.50, opacity: 0.12 };
+    return { x: -76, y: 56, scale: 0.50, opacity: 0.12 };
   }
 
   function mk(name, attrs = {}, parent = svg) {
@@ -624,11 +622,11 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(12, 24, 'structa', {
-      fill: 'rgba(244,239,228,0.96)',
+    text(16, 18, 'structa', {
+      fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '17',
-      'letter-spacing': '0.01em'
+      'font-size': '20',
+      'letter-spacing': '0.00em'
     });
   }
 
@@ -646,33 +644,28 @@
     const rect = mk('rect', {
       x: 0,
       y: 0,
-      width: 144,
-      height: 144,
-      rx: 18,
-      ry: 18,
+      width: 150,
+      height: 150,
+      rx: 20,
+      ry: 20,
       fill: selected ? card.color : 'rgba(18,18,18,0.96)',
-      stroke: selected ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.10)',
-      'stroke-width': selected ? 1.2 : 1.1
+      stroke: selected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.10)',
+      'stroke-width': selected ? 1.0 : 1.1
     }, group);
 
     drawCardIcon(card, selected, group);
 
-    text(18, 72, card.title, {
-      fill: selected ? 'rgba(8,8,8,0.96)' : 'rgba(244,239,228,0.96)',
+    text(18, 78, card.title, {
+      fill: selected ? 'rgba(8,8,8,0.98)' : 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': selected ? '19' : '17'
+      'font-size': selected ? '21' : '17'
     }, group);
 
     if (selected) {
-      text(18, 95, lower(card.roleShort || card.role), {
-        fill: 'rgba(8,8,8,0.70)',
+      text(18, 102, lower(card.roleShort || card.role), {
+        fill: 'rgba(8,8,8,0.74)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      }, group);
-      text(18, 124, 'press to open', {
-        fill: 'rgba(8,8,8,0.48)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
+        'font-size': '12'
       }, group);
     }
 

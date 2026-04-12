@@ -133,6 +133,13 @@
     close();
   });
 
+  const cleanupOnHide = () => {
+    if (document.hidden || overlay?.classList.contains('open')) close();
+  };
+
+  window.addEventListener('pagehide', cleanupOnHide);
+  document.addEventListener('visibilitychange', cleanupOnHide);
+
   window.StructaCamera = Object.freeze({
     open,
     capture,

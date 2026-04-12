@@ -7,7 +7,6 @@
 
   let stream = null;
   let facingMode = 'environment';
-  let captureArmed = false;
   let lastBundle = null;
 
   function setStatus(text) {
@@ -122,21 +121,6 @@
     flip();
   }, { passive: false });
 
-  overlay?.addEventListener('pointerdown', event => {
-    event.preventDefault();
-    captureArmed = true;
-  });
-
-  overlay?.addEventListener('pointerup', event => {
-    if (!captureArmed) return;
-    event.preventDefault();
-    captureArmed = false;
-    capture().catch(() => {});
-  });
-
-  overlay?.addEventListener('pointercancel', () => {
-    captureArmed = false;
-  });
 
   window.StructaCamera = Object.freeze({
     open,

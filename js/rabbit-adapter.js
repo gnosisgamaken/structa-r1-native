@@ -375,9 +375,9 @@
   function openCamera(mode = 'environment') {
     appendLogEntry({ kind: 'camera', message: `${mode} camera open` });
     return sendStructuredMessage(contracts.createEnvelope({
-      verb: 'capture',
+      verb: 'inspect',
       target: 'camera',
-      input_type: 'camera',
+      input_type: 'camera-open',
       source_type: 'camera',
       intent: `open camera ${mode}`,
       goal: `open ${mode} camera`,
@@ -390,7 +390,7 @@
   function setCameraFacing(facing = 'environment') {
     appendLogEntry({ kind: 'camera', message: `${facing} facing` });
     return sendStructuredMessage(contracts.createEnvelope({
-      verb: 'capture',
+      verb: 'inspect',
       target: 'camera',
       input_type: 'camera-facing',
       source_type: 'camera',

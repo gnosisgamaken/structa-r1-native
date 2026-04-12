@@ -9,10 +9,10 @@
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   const cards = [
-    { id: 'show', title: 'show', icon: '◉', role: 'capture image', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', icon: '⌇', role: 'capture commands', color: 'var(--tell)', surface: 'voice' },
-    { id: 'know', title: 'know', icon: '◈', role: 'generate insights', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', icon: '▣', role: 'project structure', color: 'var(--now)', surface: 'project' }
+    { id: 'show', title: 'show', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture image', roleShort: 'capture image', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/4.png', iconFallback: '⌇', role: 'capture commands', roleShort: 'speak update', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', iconPath: 'assets/icons/png/5.png', iconFallback: '◈', role: 'generate insights', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'catch up fast', color: 'var(--now)', surface: 'project' }
   ];
 
   const initialState = native?.getUIState?.() || {};
@@ -321,11 +321,11 @@
     const distance = index - displayIndex;
     const normalized = ((distance % cards.length) + cards.length) % cards.length;
     const previewing = queuedIndex !== null;
-    if (distance === 0) return { x: 54, y: previewing ? 48 : 42, scale: previewing ? 0.94 : 1, opacity: 1 };
-    if (normalized === 1 || distance === 1) return { x: previewing ? 148 : 158, y: 56, scale: previewing ? 0.72 : 0.62, opacity: previewing ? 0.54 : 0.34 };
-    if (normalized === cards.length - 1 || distance === -1) return { x: previewing ? -12 : -22, y: 56, scale: previewing ? 0.72 : 0.62, opacity: previewing ? 0.54 : 0.34 };
-    if (normalized === 2 || distance === 2) return { x: 194, y: 70, scale: 0.46, opacity: 0.12 };
-    return { x: -52, y: 70, scale: 0.46, opacity: 0.12 };
+    if (distance === 0) return { x: 45, y: previewing ? 34 : 28, scale: previewing ? 0.97 : 1.06, opacity: 1 };
+    if (normalized === 1 || distance === 1) return { x: previewing ? 156 : 166, y: 42, scale: previewing ? 0.76 : 0.66, opacity: previewing ? 0.70 : 0.46 };
+    if (normalized === cards.length - 1 || distance === -1) return { x: previewing ? -26 : -36, y: 42, scale: previewing ? 0.76 : 0.66, opacity: previewing ? 0.70 : 0.46 };
+    if (normalized === 2 || distance === 2) return { x: 204, y: 56, scale: 0.52, opacity: 0.17 };
+    return { x: -66, y: 56, scale: 0.52, opacity: 0.17 };
   }
 
   function mk(name, attrs = {}, parent = svg) {
@@ -341,13 +341,38 @@
     return el;
   }
 
+  function image(href, attrs = {}, parent = svg) {
+    return mk('image', { href, ...attrs }, parent);
+  }
+
+  function drawCardIcon(card, selected, parent) {
+    if (!selected) return;
+    if (card.iconPath) {
+      image(card.iconPath, {
+        x: 18,
+        y: 16,
+        width: 30,
+        height: 30,
+        preserveAspectRatio: 'xMidYMid meet',
+        opacity: 0.92,
+        style: 'filter: brightness(0) saturate(100%);'
+      }, parent);
+      return;
+    }
+    text(18, 40, card.iconFallback || '•', {
+      fill: 'rgba(10,10,10,0.88)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '28'
+    }, parent);
+  }
+
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(12, 26, 'structa', {
-      fill: 'rgba(244,239,228,0.94)',
+    text(12, 24, 'structa', {
+      fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '15',
-      'letter-spacing': '0.02em'
+      'font-size': '17',
+      'letter-spacing': '0.01em'
     });
   }
 
@@ -365,35 +390,35 @@
     const rect = mk('rect', {
       x: 0,
       y: 0,
-      width: 136,
-      height: 136,
-      rx: 12,
-      ry: 12,
-      fill: selected ? card.color : 'rgba(255,255,255,0.04)',
-      stroke: selected ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)',
-      'stroke-width': selected ? 1.3 : 1
+      width: 144,
+      height: 144,
+      rx: 18,
+      ry: 18,
+      fill: selected ? card.color : 'rgba(18,18,18,0.96)',
+      stroke: selected ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.10)',
+      'stroke-width': selected ? 1.2 : 1.1
     }, group);
 
-    text(18, 40, card.icon, {
-      fill: selected ? 'rgba(10,10,10,0.88)' : card.color,
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '28'
-    }, group);
+    drawCardIcon(card, selected, group);
 
-    text(18, 74, card.title, {
-      fill: selected ? 'rgba(10,10,10,0.94)' : 'rgba(244,239,228,0.94)',
+    text(18, 72, card.title, {
+      fill: selected ? 'rgba(8,8,8,0.96)' : 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '18'
+      'font-size': selected ? '19' : '17'
     }, group);
 
     if (selected) {
-      text(18, 96, card.role, {
-        fill: 'rgba(10,10,10,0.70)',
+      text(18, 95, lower(card.roleShort || card.role), {
+        fill: 'rgba(8,8,8,0.70)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      }, group);
+      text(18, 124, 'press to open', {
+        fill: 'rgba(8,8,8,0.48)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       }, group);
     }
-
 
     const activate = event => {
       event.preventDefault();
@@ -409,57 +434,66 @@
     return { group, rect };
   }
 
+  function drawSectionLabel(group, x, y, label) {
+    text(x, y, lower(label), {
+      fill: 'rgba(8,8,8,0.56)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'letter-spacing': '0.02em'
+    }, group);
+  }
+
   function drawNowPanel() {
     if (activeSurface !== 'project') return;
     const data = buildNowSummary();
-    const group = mk('g', { transform: 'translate(10, 38)' });
-    mk('rect', { x: 0, y: 0, width: 220, height: 164, rx: 16, ry: 16, fill: 'rgba(255,138,101,0.12)', stroke: 'rgba(255,138,101,0.26)', 'stroke-width': 1.2 }, group);
-    text(14, 24, 'now', { fill: 'rgba(255,138,101,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
-    text(14, 46, lower(data.title), { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
-    text(14, 64, 'since last time', { fill: 'rgba(244,239,228,0.52)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
-    wrapText(group, lower(data.changed), 14, 80, 188, 11, 'rgba(244,239,228,0.86)');
-    text(14, 104, 'latest useful capture', { fill: 'rgba(244,239,228,0.52)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
-    wrapText(group, lower(data.capture), 14, 120, 188, 10, 'rgba(244,239,228,0.72)');
-    text(14, 140, 'next move', { fill: 'rgba(244,239,228,0.52)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
-    wrapText(group, lower(data.next), 14, 154, 188, 10, 'rgba(244,239,228,0.88)');
-    text(14, 152 + 20, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(244,239,228,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+    const group = mk('g', { transform: 'translate(8, 34)' });
+    mk('rect', { x: 0, y: 0, width: 224, height: 170, rx: 18, ry: 18, fill: '#ff8a65', stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 1.1 }, group);
+    text(14, 24, 'now', { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
+    text(14, 44, lower(data.title), { fill: 'rgba(8,8,8,0.72)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
+    drawSectionLabel(group, 14, 63, 'since last time');
+    wrapText(group, lower(data.changed), 14, 80, 194, 12, 'rgba(8,8,8,0.92)', '12');
+    drawSectionLabel(group, 14, 106, 'latest useful capture');
+    wrapText(group, lower(data.capture), 14, 123, 194, 11, 'rgba(8,8,8,0.76)', '11');
+    drawSectionLabel(group, 14, 149, 'next move');
+    wrapText(group, lower(data.next), 14, 166, 194, 11, 'rgba(8,8,8,0.96)', '11');
+    text(14, 158, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
     const insights = buildInsights();
     const item = insights[insightIndex % insights.length];
-    const group = mk('g', { transform: 'translate(10, 38)' });
+    const group = mk('g', { transform: 'translate(8, 34)' });
     mk('rect', {
-      x: 0, y: 0, width: 220, height: 164, rx: 16, ry: 16,
-      fill: 'rgba(248,193,93,0.14)', stroke: 'rgba(248,193,93,0.34)', 'stroke-width': 1.2
+      x: 0, y: 0, width: 224, height: 170, rx: 18, ry: 18,
+      fill: '#f8c15d', stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 1.1
     }, group);
-    text(14, 24, 'know', { fill: 'rgba(248,193,93,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
-    text(14, 46, lower(item.title), { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
-    text(14, 64, 'why it matters', { fill: 'rgba(244,239,228,0.52)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
-    wrapText(group, lower(item.body), 14, 80, 188, 10, 'rgba(244,239,228,0.82)');
-    text(14, 124, 'next step', { fill: 'rgba(244,239,228,0.52)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
-    wrapText(group, lower(item.next), 14, 140, 188, 10, 'rgba(244,239,228,0.92)');
-    text(14, 152 + 20, `item ${insightIndex + 1} of ${insights.length}`, { fill: 'rgba(244,239,228,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+    text(14, 24, 'know', { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
+    text(14, 44, lower(item.title), { fill: 'rgba(8,8,8,0.72)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
+    drawSectionLabel(group, 14, 63, 'why it matters');
+    wrapText(group, lower(item.body), 14, 80, 194, 11, 'rgba(8,8,8,0.90)', '11');
+    drawSectionLabel(group, 14, 130, 'next step');
+    wrapText(group, lower(item.next), 14, 147, 194, 11, 'rgba(8,8,8,0.96)', '11');
+    text(14, 160, `item ${insightIndex + 1} of ${insights.length}`, { fill: 'rgba(8,8,8,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
-  function wrapText(parent, content, x, y, width, lineHeight, fill) {
+  function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {
     const words = lower(content).split(/\s+/);
     let line = '';
     let row = 0;
     const measure = document.createElement('canvas').getContext('2d');
-    measure.font = '10px PowerGrotesk-Regular';
+    measure.font = `${fontSize}px PowerGrotesk-Regular`;
     words.forEach(word => {
       const test = line ? `${line} ${word}` : word;
       if (measure.measureText(test).width > width && line) {
-        text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10' }, parent);
+        text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': fontSize }, parent);
         line = word;
         row += 1;
       } else {
         line = test;
       }
     });
-    if (line) text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10' }, parent);
+    if (line) text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': fontSize }, parent);
   }
 
   function render() {

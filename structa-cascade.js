@@ -9,8 +9,8 @@
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   const cards = [
-    { id: 'show', title: 'show', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture image', roleShort: 'capture image', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/4.png', iconFallback: '⌇', role: 'capture commands', roleShort: 'speak update', color: 'var(--tell)', surface: 'voice' },
+    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'capture image', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture commands', roleShort: 'speak update', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: 'assets/icons/png/5.png', iconFallback: '◈', role: 'generate insights', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'catch up fast', color: 'var(--now)', surface: 'project' }
   ];

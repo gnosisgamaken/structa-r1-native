@@ -141,24 +141,47 @@
     if (surface !== 'log') setLogDrawer(false);
   }
 
+  function openCameraSurface(source = 'touch') {
+    queuedIndex = null;
+    queuedDirection = 0;
+    native?.setActiveNode?.('show');
+    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
+    activeSurface = 'camera';
+    window.StructaVoice?.close?.();
+    window.StructaCamera?.close?.();
+    render();
+    requestAnimationFrame(() => {
+      window.StructaCamera?.open?.();
+      pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
+    });
+  }
+
+  function openVoiceSurface(source = 'touch') {
+    queuedIndex = null;
+    queuedDirection = 0;
+    native?.setActiveNode?.('tell');
+    native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'voice' });
+    activeSurface = 'voice';
+    render();
+    if (source === 'ptt') window.StructaVoice?.startListening?.();
+    else window.StructaVoice?.open?.();
+    pushLog(source === 'ptt' ? 'tell ready from ptt' : 'tell ready', 'focus');
+  }
+
   function openCard(card) {
     queuedIndex = null;
     queuedDirection = 0;
     native?.setActiveNode?.(card.id);
     native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
-    pushLog(`${card.title} ready`, 'focus');
     if (card.surface === 'camera') {
-      activeSurface = 'camera';
-      window.StructaCamera?.open?.();
-      render();
+      openCameraSurface('touch');
       return;
     }
     if (card.surface === 'voice') {
-      activeSurface = 'voice';
-      window.StructaVoice?.open?.();
-      render();
+      openVoiceSurface('touch');
       return;
     }
+    pushLog(`${card.title} ready`, 'focus');
     if (card.surface === 'insight') {
       activeSurface = 'insight';
       knowLaneIndex = 0;
@@ -275,12 +298,11 @@
     }
     const card = currentCard();
     if (card.id === 'tell') {
-      activeSurface = 'voice';
-      window.StructaVoice?.startListening?.();
-      render();
+      openVoiceSurface('ptt');
       return;
     }
     if (card.id === 'show') {
+      openCameraSurface('ptt');
       return;
     }
   }
@@ -571,12 +593,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 118, y: 48, scale: 1.19, opacity: 1 };
+    if (index === selectedIndex) return { x: 120, y: 36, scale: 1.22, opacity: 1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 12, y: 96, scale: 0.62, opacity: 0.78 },
-      { x: 4, y: 84, scale: 0.54, opacity: 0.50 },
-      { x: -2, y: 74, scale: 0.46, opacity: 0.24 }
+      { x: 18, y: 74, scale: 0.64, opacity: 0.86 },
+      { x: 6, y: 74, scale: 0.56, opacity: 0.58 },
+      { x: -6, y: 74, scale: 0.48, opacity: 0.30 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -621,10 +643,10 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(6, 28, 'structa', {
+    text(4, 18, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '31',
+      'font-size': '32',
       'letter-spacing': '0.00em'
     });
   }
@@ -682,16 +704,16 @@
       rect.setAttribute('opacity', '0.92');
       if (card.iconPath) {
         image(card.iconPath, {
-          x: 52,
-          y: 52,
-          width: 34,
-          height: 34,
+          x: 18,
+          y: 18,
+          width: 30,
+          height: 30,
           preserveAspectRatio: 'xMidYMid meet',
           opacity: 0.92,
           style: 'filter: brightness(0) saturate(100%);'
         }, group);
       } else {
-        text(58, 80, card.iconFallback || '•', {
+        text(18, 42, card.iconFallback || '•', {
           fill: 'rgba(8,8,8,0.96)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '28'
@@ -854,6 +876,17 @@
       backHome();
     }
   }
+
+  let lastShakeAt = 0;
+  window.addEventListener('devicemotion', event => {
+    const accel = event.accelerationIncludingGravity || event.acceleration;
+    if (!accel) return;
+    const magnitude = Math.abs(accel.x || 0) + Math.abs(accel.y || 0) + Math.abs(accel.z || 0);
+    const now = Date.now();
+    if (magnitude < 42 || now - lastShakeAt < 1400) return;
+    lastShakeAt = now;
+    if (activeSurface !== 'home' || logOpen) backHome();
+  });
 
   svg.addEventListener('wheel', onWheel, { passive: false });
   log.addEventListener('wheel', event => {

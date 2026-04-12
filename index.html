@@ -238,22 +238,32 @@
     }
 
     .capture-glyph {
-      width: auto;
-      height: auto;
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
       display: grid;
       place-items: center;
-      color: rgba(255,255,255,0.78);
-      font-size: 46px;
-      line-height: 1;
       border: 0;
-      background: transparent;
-      box-shadow: none;
+      background: rgba(255,255,255,0.12);
+      box-shadow: 0 0 18px rgba(255,255,255,0.10);
       transition: transform 140ms ease, opacity 140ms ease;
-      text-shadow: 0 0 18px rgba(255,255,255,0.10);
+      opacity: 0.78;
     }
 
     #voice-overlay {
       background: #0b140c;
+    }
+
+    #camera-glyph {
+      display: none;
+    }
+
+    #voice-glyph {
+      width: 18px;
+      height: 18px;
+      background: rgba(146,255,157,0.88);
+      box-shadow: 0 0 18px rgba(146,255,157,0.20);
+      opacity: 0.72;
     }
 
     #voice-overlay.listening .capture-glyph {
@@ -265,8 +275,8 @@
     #voice-wave {
       position: absolute;
       left: 50%;
-      bottom: 58px;
-      transform: translateX(-50%);
+      top: 50%;
+      transform: translate(-50%, 22px);
       width: 116px;
       height: 28px;
       opacity: 0.72;
@@ -325,14 +335,14 @@
       <video id="camera-preview" autoplay playsinline muted></video>
       <canvas id="camera-canvas"></canvas>
       <div class="capture-center">
-        <div class="capture-glyph" id="camera-glyph">◉</div>
+        <div class="capture-glyph" id="camera-glyph" aria-hidden="true"></div>
       </div>
       <div id="camera-status" class="sr-only"></div>
     </section>
 
     <section id="voice-overlay" class="overlay" aria-hidden="true">
       <div class="capture-center">
-        <div class="capture-glyph" id="voice-glyph">⌇</div>
+        <div class="capture-glyph" id="voice-glyph" aria-hidden="true"></div>
       </div>
       <svg id="voice-wave" viewBox="0 0 116 28" aria-hidden="true" hidden>
         <rect class="bar" x="10" y="6" width="10" height="16" rx="5" fill="rgba(146,255,157,0.9)"></rect>

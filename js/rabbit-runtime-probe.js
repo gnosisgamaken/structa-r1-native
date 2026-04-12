@@ -30,6 +30,9 @@
     state.events.push(entry);
     state.events = state.events.slice(-MAX_EVENTS);
     try {
+      window.localStorage?.setItem('structa-last-probe-event', JSON.stringify(entry));
+    } catch (_) {}
+    try {
       window.dispatchEvent(new CustomEvent('structa-probe-event', { detail: entry }));
     } catch (_) {}
     return entry;
@@ -40,7 +43,8 @@
       type: event?.type,
       key: event?.key,
       code: event?.code,
-      deltaY: event?.deltaY
+      deltaY: event?.deltaY,
+      visibilityState: document.visibilityState
     });
     window.addEventListener(name, handler);
     state.listeners.push(() => window.removeEventListener(name, handler));
@@ -74,6 +78,7 @@
     state.active = true;
     [
       'backbutton',
+      'back',
       'scrollUp',
       'scrollDown',
       'sideClick',
@@ -81,9 +86,14 @@
       'longPressEnd',
       'pttStart',
       'pttEnd',
+      'pagehide',
+      'beforeunload',
+      'blur',
+      'focus',
+      'visibilitychange',
       'structa-native-event'
     ].forEach(attachWindowListener);
-    ['keydown', 'wheel', 'pointerdown', 'pointerup'].forEach(attachDocumentListener);
+    ['keydown', 'wheel', 'pointerdown', 'pointerup', 'visibilitychange'].forEach(attachDocumentListener);
     attachPluginWrapper();
     record('probe', 'started', {
       href: window.location.href,

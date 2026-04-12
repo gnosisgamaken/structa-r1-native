@@ -184,14 +184,17 @@
       return;
     }
     if (activeSurface === 'voice') {
-      if (!window.StructaVoice?.listening) window.StructaVoice?.startListening?.();
       return;
     }
     if (logOpen) {
       setLogDrawer(false);
       return;
     }
-    openCard(currentCard());
+    const card = currentCard();
+    if (card.id === 'tell') {
+      return;
+    }
+    openCard(card);
   }
 
   function handleLongPressStart() {

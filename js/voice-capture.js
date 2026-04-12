@@ -98,9 +98,7 @@
       }
     }
     setStatus('idle');
-    setTimeout(() => {
-      close();
-    }, 180);
+    close();
   }
 
   async function startListening() {

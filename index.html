@@ -122,7 +122,7 @@
 
     .tile-title {
       font-family: Inter, system-ui, sans-serif;
-      font-size: 10px;
+      font-size: 16px;
       letter-spacing: 0.08em;
       text-transform: none;
       font-weight: 650;
@@ -130,7 +130,7 @@
 
     .tile-note {
       font-family: Inter, system-ui, sans-serif;
-      font-size: 9px;
+      font-size: 13px;
       font-weight: 600;
       letter-spacing: 0.01em;
     }
@@ -212,7 +212,7 @@
       padding: 8px 12px;
       font: inherit;
       font-size: 11px;
-      min-height: 32px;
+      min-height: 34px;
     }
 
     .glow-line {
@@ -286,7 +286,7 @@
     }
 
     #log-handle .log-title {
-      font-size: 9px;
+      font-size: 11px;
       letter-spacing: 0.08em;
       color: rgba(246,240,230,0.88);
     }
@@ -303,13 +303,13 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 20px;
+      height: 22px;
       padding: 0 8px;
       border-radius: 999px;
       border: 1px solid rgba(255,255,255,0.08);
       background: rgba(255,255,255,0.035);
       color: rgba(246,240,230,0.82);
-      font-size: 7px;
+      font-size: 10px;
       letter-spacing: 0.12em;
       white-space: nowrap;
       flex: 0 0 auto;
@@ -333,9 +333,9 @@
       background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
       color: #f6f0e6;
       border-radius: 999px;
-      padding: 4px 10px;
+      padding: 5px 11px;
       font: inherit;
-      font-size: 9px;
+      font-size: 11px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
     }
@@ -418,7 +418,7 @@
       padding: 8px 10px;
       font: inherit;
       font-size: 11px;
-      min-height: 32px;
+      min-height: 34px;
       touch-action: manipulation;
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
     }
@@ -601,14 +601,6 @@
 </head>
 <body>
   <div id="app">
-    <div id="welcome-tip" role="status" aria-live="polite">
-      <div class="welcome-card">
-        <div class="welcome-kicker">STRUCTA</div>
-        <div class="welcome-title">One intent. One surface. No loose threads.</div>
-        <div class="welcome-copy">Tap CAPTURE, choose an action, or swipe the log drawer. Voice and camera stay silent until you act.</div>
-        <button id="welcome-dismiss" type="button">Got it</button>
-      </div>
-    </div>
     <main>
       <svg id="scene" viewBox="0 0 240 220" role="img" aria-label="Native panel composition"></svg>
     </main>
@@ -631,8 +623,8 @@
       </div>
       <div id="log">
         <div class="entry"><span class="muted">[--:--]</span> Panel loaded.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Four-node primary state active.</div>
-        <div class="entry"><span class="muted">[--:--]</span> Hold to reveal deeper nodes.</div>
+        <div class="entry"><span class="muted">[--:--]</span> Square stack active.</div>
+        <div class="entry"><span class="muted">[--:--]</span> Tap selected card again to open it.</div>
       </div>
     </section>
 

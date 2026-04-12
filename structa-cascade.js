@@ -281,9 +281,7 @@
       return;
     }
     if (card.id === 'show') {
-      activeSurface = 'camera';
-      window.StructaCamera?.open?.();
-      render();
+      return;
     }
   }
 
@@ -573,12 +571,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 118, y: 58, scale: 1.16, opacity: 1 };
+    if (index === selectedIndex) return { x: 118, y: 48, scale: 1.19, opacity: 1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 8, y: 100, scale: 0.60, opacity: 0.58 },
-      { x: 0, y: 88, scale: 0.52, opacity: 0.34 },
-      { x: -6, y: 78, scale: 0.44, opacity: 0.18 }
+      { x: 12, y: 96, scale: 0.62, opacity: 0.78 },
+      { x: 4, y: 84, scale: 0.54, opacity: 0.50 },
+      { x: -2, y: 74, scale: 0.46, opacity: 0.24 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -623,10 +621,10 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(8, 40, 'structa', {
+    text(6, 28, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '30',
+      'font-size': '31',
       'letter-spacing': '0.00em'
     });
   }
@@ -678,6 +676,10 @@
         }, group);
       }
     } else {
+      rect.setAttribute('fill', card.color);
+      rect.setAttribute('stroke', 'rgba(255,255,255,0.04)');
+      rect.setAttribute('stroke-width', '0.8');
+      rect.setAttribute('opacity', '0.92');
       if (card.iconPath) {
         image(card.iconPath, {
           x: 52,
@@ -685,12 +687,12 @@
           width: 34,
           height: 34,
           preserveAspectRatio: 'xMidYMid meet',
-          opacity: 0.96,
-          style: `filter: brightness(0) saturate(100%) drop-shadow(0 0 0 ${card.color});`
+          opacity: 0.92,
+          style: 'filter: brightness(0) saturate(100%);'
         }, group);
       } else {
         text(58, 80, card.iconFallback || '•', {
-          fill: card.color,
+          fill: 'rgba(8,8,8,0.96)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '28'
         }, group);

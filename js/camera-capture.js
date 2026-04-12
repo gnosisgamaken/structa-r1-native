@@ -19,7 +19,6 @@
     overlay?.classList.add('open');
     overlay?.setAttribute('aria-hidden', 'false');
     window.dispatchEvent(new CustomEvent('structa-camera-open'));
-    history.pushState({ structa_surface: 'camera' }, '', '#camera');
   }
 
   function hideOverlay() {

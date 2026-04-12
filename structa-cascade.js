@@ -4,7 +4,6 @@
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
   const logPreview = document.getElementById('log-preview');
-  const logExport = document.getElementById('log-export');
   const native = window.StructaNative;
   const router = window.StructaActionRouter;
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
@@ -153,6 +152,83 @@
     render();
   }
 
+  function exportLogsFromHardware() {
+    const result = native?.exportLatestLogs?.(33);
+    pushLog(result?.ok ? 'saved 33 logs to rabbit hole' : 'could not save logs', 'logs');
+    return result;
+  }
+
+  function handleScrollDirection(direction) {
+    if (activeSurface === 'camera') {
+      window.StructaCamera?.flip?.();
+      pushLog('camera angle changed', 'show');
+      return;
+    }
+    if (activeSurface === 'insight') {
+      const insights = buildInsights();
+      insightIndex = (insightIndex + (direction > 0 ? 1 : -1) + insights.length) % insights.length;
+      render();
+      return;
+    }
+    if (logOpen) {
+      const delta = direction > 0 ? 28 : -28;
+      log.scrollTop += delta;
+      return;
+    }
+    selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
+  }
+
+  function handleSideClick() {
+    if (activeSurface === 'camera') {
+      window.StructaCamera?.capture?.();
+      return;
+    }
+    if (activeSurface === 'voice') {
+      if (!window.StructaVoice?.listening) window.StructaVoice?.startListening?.();
+      return;
+    }
+    if (logOpen) {
+      setLogDrawer(false);
+      return;
+    }
+    openCard(currentCard());
+  }
+
+  function handleLongPressStart() {
+    if (logOpen) return;
+    if (activeSurface === 'camera') {
+      window.StructaCamera?.capture?.();
+      return;
+    }
+    if (activeSurface === 'voice') {
+      window.StructaVoice?.startListening?.();
+      return;
+    }
+    const card = currentCard();
+    if (card.id === 'tell') {
+      activeSurface = 'voice';
+      window.StructaVoice?.startListening?.();
+      render();
+      return;
+    }
+    if (card.id === 'show') {
+      activeSurface = 'camera';
+      window.StructaCamera?.open?.();
+      render();
+    }
+  }
+
+  function handleLongPressEnd() {
+    if (logOpen) {
+      exportLogsFromHardware();
+      return;
+    }
+    if (activeSurface === 'voice' && window.StructaVoice?.listening) {
+      window.StructaVoice?.stopListening?.(true);
+      return;
+    }
+  }
+
   function backHome() {
     if (activeSurface === 'camera') {
       window.StructaCamera?.close?.();
@@ -274,14 +350,6 @@
       'font-size': '10'
     }, group);
 
-    if (selected) {
-      const hint = card.id === 'show' ? 'ptt to capture' : card.id === 'tell' ? 'hold ptt' : card.id === 'know' ? 'tap for insight' : 'project at a glance';
-      text(18, 114, hint, {
-        fill: 'rgba(10,10,10,0.62)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9'
-      }, group);
-    }
 
     const activate = event => {
       event.preventDefault();
@@ -352,28 +420,8 @@
   }
 
   function onWheel(event) {
-    if (activeSurface === 'camera') {
-      event.preventDefault();
-      window.StructaCamera?.flip?.();
-      pushLog('camera angle changed', 'show');
-      return;
-    }
-    if (activeSurface === 'voice') {
-      event.preventDefault();
-      return;
-    }
-    if (activeSurface === 'insight') {
-      event.preventDefault();
-      const insights = buildInsights();
-      insightIndex = (insightIndex + (event.deltaY > 0 ? 1 : -1) + insights.length) % insights.length;
-      render();
-      return;
-    }
-    if (logOpen) {
-      return;
-    }
     event.preventDefault();
-    selectIndex(selectedIndex + (event.deltaY > 0 ? 1 : -1));
+    handleScrollDirection(event.deltaY > 0 ? 1 : -1);
   }
 
   function handleNativeBack(event) {
@@ -392,12 +440,6 @@
     if (activeSurface === 'camera' || activeSurface === 'voice') return;
     setLogDrawer(!logOpen);
   });
-  logExport.addEventListener('click', event => {
-    event.preventDefault();
-    event.stopPropagation();
-    const result = native?.exportLatestLogs?.(33);
-    pushLog(result?.ok ? 'saved 33 logs to rabbit hole' : 'could not save logs', 'logs');
-  });
 
   window.addEventListener('structa-camera-open', () => { activeSurface = 'camera'; render(); });
   window.addEventListener('structa-camera-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
@@ -405,6 +447,11 @@
   window.addEventListener('structa-voice-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
   window.addEventListener('structa-memory-updated', () => { refreshLogFromMemory(); render(); });
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
+  window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(-1); });
+  window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(1); });
+  window.addEventListener('sideClick', event => { event.preventDefault?.(); handleSideClick(); });
+  window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
+  window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
   window.addEventListener('backbutton', handleNativeBack);
   window.addEventListener('popstate', handleNativeBack);
   document.addEventListener('keydown', event => {

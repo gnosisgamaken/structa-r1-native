@@ -57,7 +57,6 @@
     overlay?.classList.add('open');
     overlay?.setAttribute('aria-hidden', 'false');
     window.dispatchEvent(new CustomEvent('structa-voice-open'));
-    history.pushState({ structa_surface: 'voice' }, '', '#voice');
   }
 
   function hideOverlay() {

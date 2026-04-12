@@ -573,12 +573,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 116, y: 70, scale: 1.10, opacity: 1 };
+    if (index === selectedIndex) return { x: 118, y: 58, scale: 1.16, opacity: 1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 10, y: 104, scale: 0.62, opacity: 0.54 },
-      { x: 2, y: 92, scale: 0.54, opacity: 0.32 },
-      { x: -4, y: 82, scale: 0.46, opacity: 0.16 }
+      { x: 8, y: 100, scale: 0.60, opacity: 0.58 },
+      { x: 0, y: 88, scale: 0.52, opacity: 0.34 },
+      { x: -6, y: 78, scale: 0.44, opacity: 0.18 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -623,10 +623,10 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(8, 32, 'structa', {
+    text(8, 40, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '28',
+      'font-size': '30',
       'letter-spacing': '0.00em'
     });
   }
@@ -649,9 +649,10 @@
       height: 150,
       rx: 20,
       ry: 20,
-      fill: selected ? card.color : 'rgba(20,20,20,0.98)',
-      stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.08)',
-      'stroke-width': 1
+      fill: selected ? card.color : 'rgba(18,18,18,0.98)',
+      stroke: selected ? 'rgba(255,255,255,0.10)' : card.color,
+      'stroke-width': selected ? 1 : 0.6,
+      'stroke-opacity': selected ? 1 : 0.32
     }, group);
 
     if (selected) {
@@ -661,11 +662,21 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '22'
       }, group);
-      text(18, 103, lower(card.roleShort || card.role), {
+      const words = lower(card.roleShort || card.role).split(/\s+/);
+      const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
+      const secondLine = words.slice(Math.ceil(words.length / 2)).join(' ');
+      text(18, 101, firstLine, {
         fill: 'rgba(8,8,8,0.74)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       }, group);
+      if (secondLine) {
+        text(18, 116, secondLine, {
+          fill: 'rgba(8,8,8,0.74)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '12'
+        }, group);
+      }
     } else {
       if (card.iconPath) {
         image(card.iconPath, {
@@ -674,12 +685,12 @@
           width: 34,
           height: 34,
           preserveAspectRatio: 'xMidYMid meet',
-          opacity: 0.90,
-          style: 'filter: brightness(0) invert(0.96);'
+          opacity: 0.96,
+          style: `filter: brightness(0) saturate(100%) drop-shadow(0 0 0 ${card.color});`
         }, group);
       } else {
         text(58, 80, card.iconFallback || '•', {
-          fill: 'rgba(244,239,228,0.92)',
+          fill: card.color,
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '28'
         }, group);

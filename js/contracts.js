@@ -1,38 +1,14 @@
 (() => {
   const allowedVerbs = Object.freeze([
-    'build',
-    'patch',
-    'delete',
-    'solve',
-    'inspect',
-    'consolidate',
-    'decide',
-    'research',
-    'withdraw',
-    'approve',
-    'rollback',
-    'capture',
-    'export',
-    'journal',
-    'email'
+    'build', 'patch', 'delete', 'solve', 'inspect', 'consolidate', 'decide', 'research', 'withdraw',
+    'approve', 'rollback', 'capture', 'export', 'journal', 'email'
   ]);
 
   const allowedTargets = Object.freeze([
-    'project',
-    'node',
-    'issue',
-    'decision',
-    'asset',
-    'capture',
-    'journal',
-    'export',
-    'camera',
-    'voice',
-    'context',
-    'drawer'
+    'project', 'node', 'issue', 'decision', 'asset', 'capture', 'journal', 'export', 'camera', 'voice', 'context', 'drawer', 'insight', 'structure'
   ]);
 
-  const baseProjectCode = 'PRJ-STRUCTA-R1';
+  const baseProjectCode = 'prj-structa-r1';
 
   function pad(n) {
     return String(n).padStart(2, '0');
@@ -40,11 +16,7 @@
 
   function makeEntryId(kind = 'event') {
     const now = new Date();
-    return [
-      now.getFullYear(),
-      pad(now.getMonth() + 1),
-      pad(now.getDate())
-    ].join('') + '-' + [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('') + `-${kind}`;
+    return [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('') + '-' + [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('') + `-${kind}`;
   }
 
   function createEnvelope(input = {}) {
@@ -95,8 +67,8 @@
       project_code: input.project_code || baseProjectCode,
       entry_id: input.entry_id || makeEntryId('journal'),
       source_type: input.source_type || 'voice',
-      title: input.title || 'Untitled entry',
-      body: input.body || '',
+      title: (input.title || 'untitled entry').toLowerCase(),
+      body: (input.body || '').toLowerCase(),
       attachments: Array.isArray(input.attachments) ? input.attachments : [],
       created_at: input.created_at || now,
       meta: input.meta || {}

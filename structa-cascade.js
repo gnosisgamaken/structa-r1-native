@@ -4,641 +4,427 @@
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
   const logPreview = document.getElementById('log-preview');
-  const logChevron = document.getElementById('log-chevron');
-  const logCount = document.getElementById('log-count');
-  const capturePreview = document.getElementById('capture-preview');
-  const captureThumb = document.getElementById('capture-thumb');
-  const capturePreviewCopy = document.getElementById('capture-preview-copy');
-  const captureLauncher = document.getElementById('capture-launcher');
-
+  const logExport = document.getElementById('log-export');
   const native = window.StructaNative;
-  const contracts = window.StructaContracts;
   const router = window.StructaActionRouter;
-  const projectCode = contracts?.baseProjectCode || 'PRJ-STRUCTA-R1';
+  const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   const cards = [
-    {
-      id: 'core',
-      title: 'Core',
-      summary: 'Command loop',
-      verb: 'inspect',
-      surface: 'log',
-      color: 'var(--core)',
-      glyph: 'core',
-      pill: 'Inspect'
-    },
-    {
-      id: 'memory',
-      title: 'Memory',
-      summary: 'State + assets',
-      verb: 'journal',
-      surface: 'voice',
-      color: 'var(--memory)',
-      glyph: 'memory',
-      pill: 'Journal'
-    },
-    {
-      id: 'output',
-      title: 'Output',
-      summary: 'Response surface',
-      verb: 'export',
-      surface: 'log',
-      color: 'var(--output)',
-      glyph: 'output',
-      pill: 'Export'
-    },
-    {
-      id: 'support',
-      title: 'Support',
-      summary: 'Voice + camera',
-      verb: 'capture',
-      surface: 'camera',
-      color: 'var(--support)',
-      glyph: 'support',
-      pill: 'Capture'
-    }
+    { id: 'show', title: 'show', icon: '◉', color: 'var(--show)', role: 'capture image', summary: 'image capture', surface: 'camera' },
+    { id: 'tell', title: 'tell', icon: '⌇', color: 'var(--tell)', role: 'capture commands', summary: 'voice capture', surface: 'voice' },
+    { id: 'know', title: 'know', icon: '◈', color: 'var(--know)', role: 'generate insights', summary: 'insight surface', surface: 'insight' },
+    { id: 'now', title: 'now', icon: '▣', color: 'var(--now)', role: 'project structure', summary: 'project state', surface: 'project' }
   ];
 
-  let selectedIndex = 0;
+  let selectedIndex = 3;
   let logOpen = false;
-  let activeVerb = router?.getContext?.().active_verb || 'inspect';
-  let touch = null;
-  let logSwipe = null;
-  let lastCapture = native?.getMemory?.().captures?.slice(-1)[0] || null;
-  let lastLogPreview = 'No logs yet';
+  let activeSurface = 'home';
+  let insightIndex = 0;
 
-  const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const syncLogCount = () => {
-    if (logCount) logCount.textContent = `${log.children.length}`;
-  };
+  function stamp() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toLowerCase();
+  }
 
-  const syncLogDrawerChrome = () => {
-    if (logPreview) logPreview.textContent = logOpen ? 'AUDIT' : lastLogPreview;
-    if (logChevron) logChevron.hidden = logOpen;
-    if (logCount) {
-      logCount.hidden = !logOpen;
-      logCount.textContent = `${log.children.length}`;
-    }
-  };
+  function lower(text = '') {
+    return String(text || '').toLowerCase();
+  }
 
-  const syncCapturePreview = () => {
-    const capture = lastCapture || native?.getMemory?.().captures?.slice(-1)[0] || null;
-    if (!capturePreview || !capturePreviewCopy || !captureThumb) return;
-    const shell = captureThumb?.parentElement;
-    if (!capture) {
-      if (shell) shell.hidden = true;
-      captureThumb.hidden = true;
-      captureThumb.removeAttribute('src');
-      capturePreviewCopy.textContent = '';
-      return;
-    }
-    const img = capture.image_asset?.data || capture.image_asset?.url || '';
-    const audio = capture.audio_asset?.data || capture.audio_asset?.url || '';
-    if (shell) shell.hidden = !img;
-    if (img) {
-      captureThumb.hidden = false;
-      captureThumb.src = img;
-    } else {
-      captureThumb.hidden = true;
-      captureThumb.removeAttribute('src');
-    }
-    capturePreviewCopy.textContent = capture.summary || capture.prompt_text || (audio ? 'Saved voice capture' : 'Saved capture');
-  };
+  function currentCard() {
+    return cards[selectedIndex];
+  }
 
-  const pushLog = (text, strong = '') => {
+  function getMemory() {
+    return native?.getMemory?.() || { captures: [], runtimeEvents: [], projectMemory: null };
+  }
+
+  function getProjectMemory() {
+    return native?.getProjectMemory?.() || getMemory().projectMemory || null;
+  }
+
+  function lastCapture() {
+    const captures = getMemory().captures || [];
+    return captures[captures.length - 1] || null;
+  }
+
+  function latestLogText() {
+    const row = log.lastElementChild;
+    return row ? lower(row.textContent || '') : 'no logs yet';
+  }
+
+  function pushLog(text, strong = '') {
     const row = document.createElement('div');
     row.className = 'entry';
     const time = document.createElement('span');
     time.className = 'muted';
     time.textContent = `[${stamp()}]`;
     row.appendChild(time);
-    row.appendChild(document.createTextNode(' '));
     if (strong) {
       const accent = document.createElement('span');
       accent.className = 'accent';
-      accent.textContent = strong;
+      accent.textContent = lower(strong);
       row.appendChild(accent);
-      row.appendChild(document.createTextNode(' '));
     }
     const message = document.createElement('span');
-    message.textContent = text;
+    message.textContent = lower(text);
     row.appendChild(message);
     log.appendChild(row);
-    while (log.children.length > 5) log.removeChild(log.firstChild);
-    log.scrollTop = 9999;
-    lastLogPreview = strong ? `${strong} ${text}` : text;
-    syncLogCount();
-    syncLogDrawerChrome();
-    native?.emit?.('ui_log', { text, strong, project_code: projectCode });
-  };
+    while (log.children.length > 5 && !logOpen) log.removeChild(log.firstChild);
+    if (!logOpen && log.children.length > 5) {
+      while (log.children.length > 5) log.removeChild(log.firstChild);
+    }
+    logPreview.textContent = latestLogText();
+    native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
+  }
 
-  const mk = (name, attrs = {}, parent = svg) => {
+  function refreshLogFromMemory() {
+    const entries = (native?.getRecentLogEntries?.(5) || []).slice(-5);
+    log.innerHTML = '';
+    if (!entries.length) {
+      logPreview.textContent = 'no logs yet';
+      return;
+    }
+    entries.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = 'entry';
+      const time = document.createElement('span');
+      time.className = 'muted';
+      time.textContent = `[${lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}]`;
+      row.appendChild(time);
+      const message = document.createElement('span');
+      message.textContent = lower(entry.message || 'event');
+      row.appendChild(message);
+      log.appendChild(row);
+    });
+    logPreview.textContent = latestLogText();
+  }
+
+  function setLogDrawer(open) {
+    logOpen = !!open;
+    logDrawer.classList.toggle('open', logOpen);
+    logDrawer.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
+    if (logOpen) {
+      const entries = native?.getRecentLogEntries?.(33) || [];
+      log.innerHTML = '';
+      entries.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = 'entry';
+        const time = document.createElement('span');
+        time.className = 'muted';
+        time.textContent = `[${lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}]`;
+        row.appendChild(time);
+        const message = document.createElement('span');
+        message.textContent = lower(entry.message || 'event');
+        row.appendChild(message);
+        log.appendChild(row);
+      });
+      log.scrollTop = log.scrollHeight;
+    } else {
+      refreshLogFromMemory();
+    }
+  }
+
+  function enterSurface(surface) {
+    activeSurface = surface;
+    if (surface !== 'log') setLogDrawer(false);
+  }
+
+  function openCard(card) {
+    native?.setActiveNode?.(card.id);
+    pushLog(`${card.title} ready`, 'focus');
+    if (card.surface === 'camera') {
+      activeSurface = 'camera';
+      window.StructaCamera?.open?.();
+      render();
+      return;
+    }
+    if (card.surface === 'voice') {
+      activeSurface = 'voice';
+      window.StructaVoice?.open?.();
+      render();
+      return;
+    }
+    if (card.surface === 'insight') {
+      activeSurface = 'insight';
+      insightIndex = 0;
+      render();
+      return;
+    }
+    activeSurface = 'project';
+    render();
+  }
+
+  function backHome() {
+    if (activeSurface === 'camera') {
+      window.StructaCamera?.close?.();
+    }
+    if (activeSurface === 'voice') {
+      window.StructaVoice?.close?.();
+    }
+    setLogDrawer(false);
+    activeSurface = 'home';
+    native?.returnHome?.();
+    render();
+  }
+
+  function selectIndex(next) {
+    selectedIndex = (next + cards.length) % cards.length;
+    native?.setActiveNode?.(currentCard().id);
+    render();
+  }
+
+  function buildNowSummary() {
+    const memory = getMemory();
+    const project = getProjectMemory();
+    const captures = memory.captures || [];
+    const insights = project?.insights || [];
+    const backlog = project?.backlog || [];
+    return [
+      project?.name || 'untitled project',
+      `${captures.length} captures`,
+      `${backlog.length} open items`,
+      `${insights.length} insights`
+    ];
+  }
+
+  function buildInsights() {
+    const project = getProjectMemory();
+    const captures = project?.captures || [];
+    const backlog = project?.backlog || [];
+    const decisions = project?.decisions || [];
+    const openQuestions = project?.open_questions || [];
+    const suggestions = [];
+    suggestions.push({ title: 'state', body: `${captures.length} captures are linked to this project` });
+    suggestions.push({ title: 'focus', body: backlog[0]?.title || 'capture the next concrete task with tell' });
+    suggestions.push({ title: 'gap', body: openQuestions[0] || 'no open question has been recorded yet' });
+    suggestions.push({ title: 'decision', body: decisions[0]?.title || 'no decision has been locked yet' });
+    return suggestions;
+  }
+
+  function cardLayout(index) {
+    const distance = index - selectedIndex;
+    const normalized = ((distance % cards.length) + cards.length) % cards.length;
+    if (distance === 0) return { x: 54, y: 56, scale: 1, opacity: 1 };
+    if (normalized === 1 || distance === 1) return { x: 146, y: 72, scale: 0.68, opacity: 0.48 };
+    if (normalized === cards.length - 1 || distance === -1) return { x: -10, y: 72, scale: 0.68, opacity: 0.48 };
+    if (normalized === 2 || distance === 2) return { x: 182, y: 86, scale: 0.52, opacity: 0.18 };
+    return { x: -42, y: 86, scale: 0.52, opacity: 0.18 };
+  }
+
+  function mk(name, attrs = {}, parent = svg) {
     const el = document.createElementNS('http://www.w3.org/2000/svg', name);
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
     parent.appendChild(el);
     return el;
-  };
+  }
 
-  const text = (x, y, value, attrs = {}, parent = svg) => {
-    const t = mk('text', { x, y, ...attrs }, parent);
-    t.textContent = value;
-    return t;
-  };
+  function text(x, y, value, attrs = {}, parent = svg) {
+    const el = mk('text', { x, y, ...attrs }, parent);
+    el.textContent = value;
+    return el;
+  }
 
-  const clearSvg = () => {
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-  };
-
-  const TOP_SAFE_PX = 23;
-
-  const addTopBand = () => {
-    const band = mk('g', {
-      id: 'top-band',
-      role: 'button',
-      tabindex: '0',
-      'aria-label': 'Back to home',
-      cursor: 'pointer'
-    });
-    text(10, TOP_SAFE_PX + 10, '←', {
-      class: 'topbar-back',
-      fill: 'rgba(248,244,235,0.70)',
-      'letter-spacing': '0'
-    }, band);
-    text(28, TOP_SAFE_PX + 11, 'STRUCTA', {
-      class: 'topbar-title',
-      fill: 'var(--support)',
-      'letter-spacing': '0.10em'
-    }, band);
-    band.addEventListener('pointerup', e => {
-      e.preventDefault();
-      goBackHome();
-    });
-    band.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        goBackHome();
-      }
-    });
-  };
-
-
-  const drawCore = (g, cx, cy, ink) => {
-    mk('circle', { cx, cy, r: 18, fill: 'none', stroke: ink, 'stroke-width': 7, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx, cy, r: 6, fill: ink }, g);
-    mk('path', { d: `M ${cx - 11} ${cy + 11} A 12 12 0 0 1 ${cx + 11} ${cy + 11}`, fill: 'none', stroke: ink, 'stroke-width': 6, 'stroke-linecap': 'round' }, g);
-  };
-
-  const drawMemory = (g, cx, cy, ink) => {
-    mk('rect', { x: cx - 18, y: cy - 18, width: 36, height: 36, fill: 'none', stroke: ink, 'stroke-width': 7 }, g);
-    mk('rect', { x: cx - 7, y: cy - 7, width: 14, height: 14, fill: ink }, g);
-    mk('path', { d: `M ${cx - 18} ${cy + 15} H ${cx + 18}`, fill: 'none', stroke: ink, 'stroke-width': 5, 'stroke-linecap': 'round' }, g);
-  };
-
-  const drawOutput = (g, cx, cy, ink) => {
-    mk('path', { d: `M ${cx} ${cy - 17} L ${cx + 17} ${cy} L ${cx} ${cy + 17} L ${cx - 17} ${cy} Z`, fill: 'none', stroke: ink, 'stroke-width': 7, 'stroke-linejoin': 'round' }, g);
-    mk('path', { d: `M ${cx - 11} ${cy + 5} A 13 13 0 0 1 ${cx + 11} ${cy + 5}`, fill: 'none', stroke: ink, 'stroke-width': 5, 'stroke-linecap': 'round' }, g);
-    mk('circle', { cx, cy: cy - 1, r: 4, fill: ink }, g);
-  };
-
-  const drawSupport = (g, cx, cy, ink) => {
-    mk('circle', { cx, cy, r: 18, fill: 'none', stroke: ink, 'stroke-width': 7 }, g);
-    mk('circle', { cx, cy, r: 6, fill: ink }, g);
-    mk('circle', { cx: cx - 8, cy: cy - 7, r: 3, fill: ink }, g);
-    mk('circle', { cx: cx + 8, cy: cy + 7, r: 3, fill: ink }, g);
-  };
-
-  const glyphMap = {
-    core: drawCore,
-    memory: drawMemory,
-    output: drawOutput,
-    support: drawSupport
-  };
-
-  const currentCard = () => cards[selectedIndex];
-
-  const selectIndex = (index, note = 'FOCUS') => {
-    selectedIndex = (index + cards.length) % cards.length;
-    const card = currentCard();
-    native?.setActiveNode?.(card.id);
-    native?.emit?.('card_focus', { project_code: projectCode, node_id: card.id, verb: card.verb });
-    pushLog(`Selected ${card.title}.`, note);
-    render();
-    syncCapturePreview();
-  };
-
-  const setLogDrawer = open => {
-    logOpen = open;
-    logDrawer.classList.toggle('open', open);
-    logDrawer.setAttribute('aria-expanded', open ? 'true' : 'false');
-    syncLogDrawerChrome();
-    if (open) log.scrollTop = log.scrollHeight;
-  };
-
-  const setActiveVerb = (verb, source = 'mode') => {
-    activeVerb = router?.canonicalizeVerb?.(verb) || verb || 'inspect';
-    native?.setActiveVerb?.(activeVerb, source);
-    pushLog(`Mode ${activeVerb.toUpperCase()}.`, 'MODE');
-  };
-
-  const openVoiceSurface = panel => {
-    if (window.StructaVoice?.setPanel) window.StructaVoice.setPanel(panel || 'voice');
-    window.StructaVoice?.open?.();
-    pushLog(`${panel === 'camera' ? 'Camera' : 'Voice'} surface opened.`, 'CAPTURE');
-  };
-
-  const openCameraSurface = mode => {
-    window.StructaVoice?.setPanel?.('camera');
-    pushLog('Camera capture opened.', 'CAPTURE');
-  };
-
-  const routeCurrentCard = () => {
-    const card = currentCard();
-    const route = native?.routeAction?.({
-      project_code: projectCode,
-      target: card.id,
-      verb: card.verb,
-      intent: `${card.verb} ${card.id}`,
-      goal: `${card.verb} ${card.title}`,
-      source_type: 'touch',
-      input_type: 'card-activate',
-      approval_mode: 'optional',
-      payload: { card_id: card.id, surface: card.surface }
-    });
-
-    pushLog(`${card.verb.toUpperCase()} → ${card.title.toUpperCase()}`, 'ROUTE');
-    if (route?.route?.requires_approval) pushLog('Approval required before mutation.', 'CHECK');
-
-    if (card.surface === 'log') {
-      setLogDrawer(true);
-      return;
-    }
-
-    if (card.surface === 'voice') {
-      openVoiceSurface('voice');
-      return;
-    }
-
-    if (card.surface === 'camera') {
-      openCameraSurface('environment');
-      return;
-    }
-  };
-
-  const goBackHome = () => {
-    if (logOpen) {
-      setLogDrawer(false);
-      return;
-    }
-    if (window.StructaVoice?.closeTray && document.getElementById('capture-tray')?.classList.contains('open')) {
-      window.StructaVoice.closeTray();
-      return;
-    }
-    if (window.StructaCamera?.stop && document.getElementById('capture-tray')?.classList.contains('open')) {
-      window.StructaCamera.stop();
-      return;
-    }
-    if (window.history.length > 1) window.history.back();
-  };
-
-
-  const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 42, y: 52, scale: 1.04, opacity: 1 };
-    if (slot === 'prev') return { x: -20, y: 14, scale: 0.46, opacity: 0.02 };
-    return { x: 126, y: 90, scale: 0.46, opacity: 0.02 };
-  };
-
-  const drawCard = (card, slot, index) => {
-    const selected = slot === 'selected';
-    const layout = cardLayoutFor(slot);
-    const ink = (card.id === 'support' || card.id === 'output') ? 'rgba(18,18,18,0.92)' : 'rgba(246,240,230,0.96)';
-    const group = mk('g', {
-      class: `card card-${card.id}`,
-      tabindex: '0',
-      role: 'button',
-      'aria-pressed': selected ? 'true' : 'false',
-      'aria-label': `${card.title} card. ${card.summary}. ${card.pill}.`,
-      transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`
-    });
-    group.style.opacity = `${layout.opacity}`;
-    group.style.transformOrigin = 'center';
-    group.style.transition = 'transform 140ms ease, opacity 140ms ease, filter 140ms ease';
-    if (selected) group.style.filter = `drop-shadow(0 12px 20px rgba(0,0,0,0.18))`;
-
-    mk('rect', {
-      x: 0,
-      y: 0,
-      width: 150,
-      height: 150,
-      rx: 10,
-      ry: 10,
-      fill: card.color,
-      stroke: 'rgba(255,255,255,0.12)',
-      'stroke-width': 1
-    }, group);
-    mk('rect', {
-      x: 1,
-      y: 1,
-      width: 148,
-      height: 148,
-      rx: 8,
-      ry: 8,
-      fill: 'none',
-      stroke: 'rgba(255,255,255,0.08)',
-      'stroke-width': 1
-    }, group);
-    if (selected) {
-      text(75, 24, card.title, {
-        class: 'tile-title',
-        fill: ink,
-        'text-anchor': 'middle',
-        'letter-spacing': '0.03em',
-        'font-size': '18px'
-      }, group);
-    }
-
-    const motif = mk('g', { transform: 'translate(75,82)' }, group);
-    glyphMap[card.glyph](motif, 0, 0, ink);
-
-    group.style.pointerEvents = 'none';
-    group.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        if (selectedIndex === index) routeCurrentCard();
-        else selectIndex(index, 'FOCUS');
-      }
-    });
-  };
-
-  const render = () => {
-    clearSvg();
-    addTopBand();
-
-    const total = cards.length;
-    const prev = (selectedIndex - 1 + total) % total;
-    const next = (selectedIndex + 1) % total;
-
-    drawCard(cards[prev], 'prev', prev);
-    drawCard(cards[next], 'next', next);
-    drawCard(cards[selectedIndex], 'selected', selectedIndex);
-  };
-
-  const svgPointFromEvent = event => {
-    const rect = svg.getBoundingClientRect();
-    const viewBox = svg.viewBox.baseVal;
-    const scaleX = viewBox.width / rect.width;
-    const scaleY = viewBox.height / rect.height;
-    return {
-      x: (event.clientX - rect.left) * scaleX,
-      y: (event.clientY - rect.top) * scaleY
-    };
-  };
-
-  const pickVisibleCard = point => {
-    const total = cards.length;
-    const prev = (selectedIndex - 1 + total) % total;
-    const next = (selectedIndex + 1) % total;
-    const visible = [
-      { index: prev, slot: 'prev' },
-      { index: next, slot: 'next' },
-      { index: selectedIndex, slot: 'selected' }
-    ];
-
-    const hits = visible
-      .map(item => ({
-        ...item,
-        layout: cardLayoutFor(item.slot),
-      }))
-      .filter(item => {
-        const w = 150 * item.layout.scale;
-        const h = 150 * item.layout.scale;
-        return point.x >= item.layout.x && point.x <= item.layout.x + w && point.y >= item.layout.y && point.y <= item.layout.y + h;
-      })
-      .map(item => {
-        const centerX = item.layout.x + 75 * item.layout.scale;
-        const centerY = item.layout.y + 75 * item.layout.scale;
-        const distance = Math.hypot(point.x - centerX, point.y - centerY);
-        return { ...item, distance };
-      })
-      .sort((a, b) => a.distance - b.distance);
-
-    return hits[0] || null;
-  };
-
-  svg.addEventListener('pointerup', e => {
-    const point = svgPointFromEvent(e);
-    const hit = pickVisibleCard(point);
-    if (!hit) return;
-    if (hit.index === selectedIndex) routeCurrentCard();
-    else selectIndex(hit.index, 'FOCUS');
-  });
-
-  const openCoreTrace = () => {
-    setLogDrawer(true);
-    pushLog('Trace surface opened.', 'TRACE');
-  };
-
-  const handleRouteByCard = () => {
-    const card = currentCard();
-    if (card.id === 'core') {
-      openCoreTrace();
-      return;
-    }
-    if (card.id === 'memory') {
-      openVoiceSurface('voice');
-      return;
-    }
-    if (card.id === 'output') {
-      openCoreTrace();
-      return;
-    }
-    if (card.id === 'support') {
-      openCameraSurface('environment');
-      return;
-    }
-  };
-
-  // Replace the generic route with the native surface mapping when a selected card is activated.
-  const routeSelectedCard = () => {
-    const card = currentCard();
-    native?.routeAction?.({
-      project_code: projectCode,
-      target: card.id,
-      verb: card.verb,
-      intent: `${card.verb} ${card.id}`,
-      goal: `${card.title} surface`,
-      source_type: 'touch',
-      input_type: 'card-activate',
-      approval_mode: 'optional',
-      payload: { card_id: card.id, surface: card.surface }
-    });
-    pushLog(`${card.verb.toUpperCase()} → ${card.title.toUpperCase()}`, 'ROUTE');
-    handleRouteByCard();
-  };
-
-  const selectNext = delta => {
-    selectIndex(selectedIndex + delta, 'FOCUS');
-  };
-
-  const routeCurrent = () => {
-    routeSelectedCard();
-  };
-
-  const showCapture = bundle => {
-    if (bundle) {
-      lastCapture = bundle;
-      syncCapturePreview();
-      pushLog('Capture stored.', 'MEMORY');
-    }
-  };
-
-  window.addEventListener('structa-native-event', event => {
-    const detail = event.detail || {};
-    if (detail.event_type === 'capture_bundle_stored') {
-      showCapture(detail.payload);
-    }
-  });
-
-  // Home / setup
-  render();
-  syncCapturePreview();
-  native?.emit?.('panel_boot', {
-    project_code: projectCode,
-    capabilities: native?.getCapabilities?.() || {},
-    context: native?.getContext?.() || {}
-  });
-  syncLogCount();
-  setLogDrawer(false);
-
-  captureLauncher?.addEventListener('click', () => {
-    openVoiceSurface('voice');
-  });
-
-  const isCameraPanelActive = () => document.querySelector('#capture-tray.open .capture-panel[data-panel="camera"]')?.classList.contains('active');
-  const isVoicePanelActive = () => document.querySelector('#capture-tray.open .capture-panel[data-panel="voice"]')?.classList.contains('active');
-
-  const handleGlobalWheel = event => {
-    if (logOpen) {
-      event.preventDefault();
-      log.scrollTop += event.deltaY;
-      return;
-    }
-    if (isCameraPanelActive()) return;
-    event.preventDefault();
-    selectNext(event.deltaY < 0 ? -1 : 1);
-  };
-
-  const handleScrollHardware = delta => {
-    if (isCameraPanelActive()) return;
-    selectNext(delta);
-  };
-
-  window.addEventListener('scrollUp', event => {
-    event.preventDefault?.();
-    handleScrollHardware(-1);
-  });
-
-  window.addEventListener('scrollDown', event => {
-    event.preventDefault?.();
-    handleScrollHardware(1);
-  });
-
-  window.addEventListener('sideClick', event => {
-    event.preventDefault?.();
-    openVoiceSurface('voice');
-  });
-
-  window.addEventListener('longPressStart', event => {
-    event.preventDefault?.();
-    openVoiceSurface('voice');
-  });
-
-  window.addEventListener('longPressEnd', event => {
-    event.preventDefault?.();
-    if (isVoicePanelActive() || window.StructaVoice?.listening) window.StructaVoice?.stop?.();
-  });
-
-  window.addEventListener('wheel', handleGlobalWheel, { passive: false });
-
-  document.addEventListener('keydown', e => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      selectNext(1);
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      selectNext(-1);
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      routeCurrent();
-    } else if (e.key === 'v' || e.key === 'V') {
-      e.preventDefault();
-      openVoiceSurface('voice');
-    } else if (e.key === 'c' || e.key === 'C') {
-      e.preventDefault();
-      openCameraSurface('environment');
-    } else if (e.key === 'b' || e.key === 'B') {
-      e.preventDefault();
-      setActiveVerb('build');
-    } else if (e.key === 'p' || e.key === 'P') {
-      e.preventDefault();
-      setActiveVerb('patch');
-    } else if (e.key === 'd' || e.key === 'D') {
-      e.preventDefault();
-      setActiveVerb('delete');
-    } else if (e.key === 's' || e.key === 'S') {
-      e.preventDefault();
-      setActiveVerb('solve');
-    } else if (e.key === 'r' || e.key === 'R') {
-      e.preventDefault();
-      setActiveVerb('research');
-    } else if (e.key === 'w' || e.key === 'W') {
-      e.preventDefault();
-      setActiveVerb('withdraw');
-    } else if (e.key === 'x' || e.key === 'X') {
-      e.preventDefault();
-      setActiveVerb('consolidate');
-    } else if (e.key === 'o' || e.key === 'O') {
-      e.preventDefault();
-      setActiveVerb('decide');
-    } else if (e.key === 'Escape' || e.key === 'Backspace') {
-      e.preventDefault();
-      if (window.StructaVoice?.closeTray) window.StructaVoice.closeTray();
-      if (window.StructaCamera?.stop) window.StructaCamera.stop();
-      if (logOpen) setLogDrawer(false);
-      else if (window.history.length > 1) window.history.back();
-    }
-  });
-
-  if (logHandle) {
-    logHandle.addEventListener('click', () => setLogDrawer(!logOpen));
-    logHandle.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        setLogDrawer(!logOpen);
-      }
-    });
-    logHandle.addEventListener('pointerdown', e => {
-      logSwipe = { x: e.clientX, y: e.clientY };
-    });
-    logHandle.addEventListener('pointerup', e => {
-      if (!logSwipe) return;
-      const dy = e.clientY - logSwipe.y;
-      logSwipe = null;
-      if (dy < -18) setLogDrawer(true);
-      else if (dy > 18) setLogDrawer(false);
-    });
-    logHandle.addEventListener('pointercancel', () => {
-      logSwipe = null;
+  function drawWordmark() {
+    if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
+    text(14, 34, 'structa', {
+      fill: 'rgba(244,239,228,0.94)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '15',
+      'letter-spacing': '0.02em'
     });
   }
 
-  // expose a tiny internal control surface for other modules.
+  function drawCard(card, index) {
+    const selected = index === selectedIndex;
+    const layout = cardLayout(index);
+    const group = mk('g', {
+      transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
+      opacity: String(layout.opacity),
+      tabindex: '0',
+      role: 'button',
+      'aria-label': `${card.title} ${card.role}`
+    });
+
+    const rect = mk('rect', {
+      x: 0,
+      y: 0,
+      width: 132,
+      height: 132,
+      rx: 12,
+      ry: 12,
+      fill: selected ? card.color : 'rgba(255,255,255,0.04)',
+      stroke: selected ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)',
+      'stroke-width': selected ? 1.3 : 1
+    }, group);
+
+    text(18, 40, card.icon, {
+      fill: selected ? 'rgba(10,10,10,0.88)' : card.color,
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '28'
+    }, group);
+
+    text(18, 74, card.title, {
+      fill: selected ? 'rgba(10,10,10,0.94)' : 'rgba(244,239,228,0.94)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '18'
+    }, group);
+
+    text(18, 96, card.role, {
+      fill: selected ? 'rgba(10,10,10,0.70)' : 'rgba(244,239,228,0.48)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    }, group);
+
+    if (selected) {
+      const hint = card.id === 'show' ? 'ptt to capture' : card.id === 'tell' ? 'hold ptt' : card.id === 'know' ? 'tap for insight' : 'project at a glance';
+      text(18, 114, hint, {
+        fill: 'rgba(10,10,10,0.62)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      }, group);
+    }
+
+    const activate = event => {
+      event.preventDefault();
+      if (selected) openCard(card);
+      else selectIndex(index);
+    };
+
+    group.addEventListener('pointerup', activate);
+    group.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') activate(event);
+    });
+
+    return { group, rect };
+  }
+
+  function drawNowPanel() {
+    if (activeSurface !== 'project' && activeSurface !== 'home') return;
+    const lines = buildNowSummary();
+    const group = mk('g', { transform: 'translate(14, 182)' });
+    lines.slice(0, 4).forEach((line, i) => {
+      text(0, i * 11, lower(line), {
+        fill: i === 0 ? 'rgba(244,239,228,0.90)' : 'rgba(244,239,228,0.56)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': i === 0 ? '11' : '9'
+      }, group);
+    });
+  }
+
+  function drawInsightSurface() {
+    if (activeSurface !== 'insight') return;
+    const insights = buildInsights();
+    const item = insights[insightIndex % insights.length];
+    const group = mk('g', { transform: 'translate(16, 54)' });
+    mk('rect', {
+      x: 0, y: 0, width: 208, height: 126, rx: 14, ry: 14,
+      fill: 'rgba(248,193,93,0.14)', stroke: 'rgba(248,193,93,0.34)', 'stroke-width': 1.2
+    }, group);
+    text(14, 26, 'know', { fill: 'rgba(248,193,93,0.94)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' }, group);
+    text(14, 48, lower(item.title), { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
+    wrapText(group, lower(item.body), 14, 68, 180, 10, 'rgba(244,239,228,0.72)');
+  }
+
+  function wrapText(parent, content, x, y, width, lineHeight, fill) {
+    const words = lower(content).split(/\s+/);
+    let line = '';
+    let row = 0;
+    const measure = document.createElement('canvas').getContext('2d');
+    measure.font = '10px PowerGrotesk-Regular';
+    words.forEach(word => {
+      const test = line ? `${line} ${word}` : word;
+      if (measure.measureText(test).width > width && line) {
+        text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10' }, parent);
+        line = word;
+        row += 1;
+      } else {
+        line = test;
+      }
+    });
+    if (line) text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10' }, parent);
+  }
+
+  function render() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    drawWordmark();
+    cards.forEach((card, index) => drawCard(card, index));
+    drawNowPanel();
+    drawInsightSurface();
+  }
+
+  function onWheel(event) {
+    if (activeSurface === 'camera') {
+      event.preventDefault();
+      window.StructaCamera?.flip?.();
+      pushLog('camera angle changed', 'show');
+      return;
+    }
+    if (activeSurface === 'voice') {
+      event.preventDefault();
+      return;
+    }
+    if (activeSurface === 'insight') {
+      event.preventDefault();
+      const insights = buildInsights();
+      insightIndex = (insightIndex + (event.deltaY > 0 ? 1 : -1) + insights.length) % insights.length;
+      render();
+      return;
+    }
+    if (logOpen) {
+      return;
+    }
+    event.preventDefault();
+    selectIndex(selectedIndex + (event.deltaY > 0 ? 1 : -1));
+  }
+
+  function handleNativeBack(event) {
+    if (activeSurface !== 'home' || logOpen) {
+      if (event) event.preventDefault?.();
+      backHome();
+    }
+  }
+
+  svg.addEventListener('wheel', onWheel, { passive: false });
+  log.addEventListener('wheel', event => {
+    if (!logOpen) event.preventDefault();
+  }, { passive: false });
+  logHandle.addEventListener('click', event => {
+    event.preventDefault();
+    if (activeSurface === 'camera' || activeSurface === 'voice') return;
+    setLogDrawer(!logOpen);
+  });
+  logExport.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const result = native?.exportLatestLogs?.(33);
+    pushLog(result?.ok ? 'saved 33 logs to rabbit hole' : 'could not save logs', 'logs');
+  });
+
+  window.addEventListener('structa-camera-open', () => { activeSurface = 'camera'; render(); });
+  window.addEventListener('structa-camera-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
+  window.addEventListener('structa-voice-open', () => { activeSurface = 'voice'; render(); });
+  window.addEventListener('structa-voice-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
+  window.addEventListener('structa-memory-updated', () => { refreshLogFromMemory(); render(); });
+  window.addEventListener('backbutton', handleNativeBack);
+  window.addEventListener('popstate', handleNativeBack);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'ArrowRight') selectIndex(selectedIndex + 1);
+    if (event.key === 'ArrowLeft') selectIndex(selectedIndex - 1);
+    if (event.key === 'Enter' || event.key === ' ') openCard(currentCard());
+    if (event.key === 'Escape') backHome();
+  });
+
+  native?.setActiveNode?.(currentCard().id);
+  refreshLogFromMemory();
+  render();
+
   window.StructaPanel = Object.freeze({
-    selectIndex,
-    routeCurrent,
-    setActiveVerb,
-    setLogDrawer,
-    openVoiceSurface,
-    openCameraSurface,
-    showCapture
+    render,
+    pushLog,
+    setSurface: surface => { activeSurface = surface; render(); },
+    backHome,
+    selectCard: id => {
+      const index = cards.findIndex(card => card.id === id);
+      if (index >= 0) selectIndex(index);
+    }
   });
 })();

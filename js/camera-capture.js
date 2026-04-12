@@ -1,61 +1,53 @@
 (() => {
   const native = window.StructaNative;
-  const tray = document.getElementById('capture-tray');
+  const overlay = document.getElementById('camera-overlay');
   const preview = document.getElementById('camera-preview');
   const canvas = document.getElementById('camera-canvas');
   const status = document.getElementById('camera-status');
 
-
   let stream = null;
   let facingMode = 'environment';
-  let lastBundle = null;
   let captureArmed = false;
+  let lastBundle = null;
 
   function setStatus(text) {
-    if (status) status.textContent = text;
+    if (status) status.textContent = String(text || '').toLowerCase();
   }
 
-  function openTray() {
-    tray?.classList.add('open');
-    tray?.setAttribute('aria-hidden', 'false');
+  function showOverlay() {
+    document.getElementById('app')?.classList.add('overlay-active');
+    overlay?.classList.add('open');
+    overlay?.setAttribute('aria-hidden', 'false');
+    window.dispatchEvent(new CustomEvent('structa-camera-open'));
+    history.pushState({ structa_surface: 'camera' }, '', '#camera');
   }
 
-  function closeTray() {
-    tray?.classList.remove('open');
-    tray?.setAttribute('aria-hidden', 'true');
-  }
-
-  function pause() {
-    stopStream();
-  }
-
-  function teardown() {
-    stopStream();
-    closeTray();
+  function hideOverlay() {
+    overlay?.classList.remove('open');
+    overlay?.setAttribute('aria-hidden', 'true');
+    document.getElementById('app')?.classList.remove('overlay-active');
+    window.dispatchEvent(new CustomEvent('structa-camera-close'));
   }
 
   function stopStream() {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
       stream = null;
     }
     if (preview) preview.srcObject = null;
-    setStatus('Camera idle');
+    setStatus('idle');
   }
 
-  async function openCamera(mode = facingMode) {
-    openTray();
+  async function open(mode = facingMode) {
+    showOverlay();
     const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
     if (stream && nextMode === facingMode) return { ok: true, facingMode };
     facingMode = nextMode;
-
-    const safeBrowser = !navigator.webdriver && window.isSecureContext !== false;
-    if (!safeBrowser || !navigator.mediaDevices?.getUserMedia) {
-      setStatus('Camera unavailable');
+    if (!navigator.mediaDevices?.getUserMedia) {
       native?.openCamera?.(facingMode);
+      setStatus('camera unavailable');
       return { ok: false };
     }
-
     stopStream();
     try {
       native?.openCamera?.(facingMode);
@@ -64,20 +56,20 @@
         preview.srcObject = stream;
         await preview.play().catch(() => {});
       }
-      setStatus(facingMode === 'user' ? 'Selfie ready' : 'Camera ready');
-      return { ok: true };
+      setStatus('ready');
+      return { ok: true, facingMode };
     } catch (error) {
-      setStatus('Camera blocked');
+      setStatus('blocked');
       return { ok: false, error };
     }
   }
 
-  async function captureFrame() {
-    if (!preview || !stream) {
-      setStatus('Open camera first');
-      return null;
-    }
+  function flip() {
+    return open(facingMode === 'user' ? 'environment' : 'user');
+  }
 
+  async function capture() {
+    if (!preview || !stream) return null;
     const w = preview.videoWidth || 720;
     const h = preview.videoHeight || 720;
     canvas.width = w;
@@ -85,7 +77,6 @@
     const ctx = canvas.getContext('2d');
     ctx.drawImage(preview, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/png');
-
     const imageAsset = {
       kind: 'capture',
       name: `camera-${Date.now()}.png`,
@@ -93,23 +84,17 @@
       data: dataUrl,
       meta: { facingMode, width: w, height: h, captured_at: new Date().toISOString() }
     };
-
-    const bundle = {
-      project_code: window.StructaContracts?.baseProjectCode || 'PRJ-STRUCTA-R1',
-      entry_id: window.StructaContracts?.makeEntryId?.('capture') || `capture-${Date.now()}`,
+    const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
       input_type: 'image',
-      captured_at: new Date().toISOString(),
       image_asset: imageAsset,
       prompt_text: facingMode === 'user' ? 'selfie capture' : 'camera capture',
-      ai_response: '',
-      summary: facingMode === 'user' ? 'Selfie captured' : 'Camera frame captured',
+      summary: facingMode === 'user' ? 'selfie captured' : 'camera frame captured',
       approval_state: 'draft',
       tags: [facingMode, 'capture'],
       links: [],
       meta: { facingMode, width: w, height: h }
-    };
-
+    });
     lastBundle = bundle;
     native?.storeCaptureBundle?.(bundle);
     native?.sendStructuredMessage?.({
@@ -123,54 +108,44 @@
       fallback: 'store-only',
       payload: bundle
     });
-
-    setStatus('Saved');
-    window.StructaPanel?.showCapture?.(bundle);
+    close();
     return bundle;
   }
 
-  function setSelfieMode() {
-    return openCamera('user');
+  function close() {
+    stopStream();
+    hideOverlay();
   }
 
-  function flipFacing() {
-    const nextMode = facingMode === 'user' ? 'environment' : 'user';
-    return openCamera(nextMode);
-  }
-
-  preview?.addEventListener('click', event => {
+  overlay?.addEventListener('wheel', event => {
+    if (!overlay.classList.contains('open')) return;
     event.preventDefault();
-  });
-  tray?.addEventListener('wheel', event => {
-    if (!stream) return;
-    event.preventDefault();
-    const wheelUp = event.deltaY < 0;
-    return openCamera(wheelUp ? 'user' : 'environment');
+    flip();
   }, { passive: false });
-  const cameraPanel = tray?.querySelector('.capture-panel[data-panel="camera"]');
-  cameraPanel?.addEventListener('pointerdown', event => {
-    if (!stream || !cameraPanel.classList.contains('active')) return;
+
+  overlay?.addEventListener('pointerdown', event => {
     event.preventDefault();
     captureArmed = true;
   });
-  cameraPanel?.addEventListener('pointerup', async event => {
+
+  overlay?.addEventListener('pointerup', event => {
     if (!captureArmed) return;
     event.preventDefault();
     captureArmed = false;
-    await captureFrame().catch(() => {});
+    capture().catch(() => {});
   });
-  cameraPanel?.addEventListener('pointercancel', () => {
+
+  overlay?.addEventListener('pointercancel', () => {
     captureArmed = false;
   });
+
   window.StructaCamera = Object.freeze({
-    open: openCamera,
-    capture: captureFrame,
-    selfie: setSelfieMode,
-    flip: flipFacing,
-    stop: teardown,
-    pause,
-    teardown,
-    setStatus,
+    open,
+    capture,
+    flip,
+    close,
+    stop: close,
+    teardown: close,
     get facingMode() { return facingMode; },
     get lastBundle() { return lastBundle; }
   });

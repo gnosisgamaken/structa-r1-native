@@ -1,16 +1,11 @@
 (() => {
   const native = window.StructaNative;
+  const overlay = document.getElementById('voice-overlay');
   const transcript = document.getElementById('voice-transcript');
   const status = document.getElementById('voice-status');
-  const btnStart = document.getElementById('voice-start');
-  const tray = document.getElementById('capture-tray');
-  const captureLauncher = document.getElementById('capture-launcher');
-  const captureTitle = document.getElementById('capture-title');
-  const captureHint = document.getElementById('capture-hint');
-
+  const wave = document.getElementById('voice-wave');
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const voicePanel = document.querySelector('#capture-tray .capture-panel[data-panel="voice"]');
-  const cameraPanel = document.querySelector('#capture-tray .capture-panel[data-panel="camera"]');
+
   let recognition = null;
   let listening = false;
   let audioRecorder = null;
@@ -19,14 +14,14 @@
   let pendingAudioAsset = null;
 
   function setStatus(text) {
-    if (status) status.textContent = text;
+    if (status) status.textContent = String(text || '').toLowerCase();
   }
 
   function blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error || new Error('Failed to read blob'));
+      reader.onerror = () => reject(reader.error || new Error('failed to read blob'));
       reader.readAsDataURL(blob);
     });
   }
@@ -39,11 +34,10 @@
   }
 
   async function finalizeAudioCapture() {
-    if (!audioChunks.length) return;
+    if (!audioChunks.length) return null;
     const blob = new Blob(audioChunks, { type: audioRecorder?.mimeType || 'audio/webm' });
     const dataUrl = await blobToDataURL(blob).catch(() => '');
-    if (!dataUrl) return;
-
+    if (!dataUrl) return null;
     pendingAudioAsset = {
       kind: 'asset',
       name: `voice-${Date.now()}.webm`,
@@ -54,52 +48,24 @@
         mode: 'ptt'
       }
     };
-
     native?.storeAsset?.(pendingAudioAsset);
-    const bundle = window.StructaCaptureBundles?.saveCaptureBundle?.({
-      source_type: 'microphone',
-      input_type: 'audio',
-      audio_asset: pendingAudioAsset,
-      prompt_text: 'voice capture',
-      summary: 'Audio note captured',
-      approval_state: 'draft',
-      tags: ['voice', 'audio'],
-      links: [],
-      meta: { entry_mode: 'ptt-fallback' }
-    });
-    if (bundle?.ok) {
-      setStatus('Saved');
-      if (captureTitle) captureTitle.textContent = 'Voice';
-      if (transcript) transcript.textContent = '';
-    }
+    return pendingAudioAsset;
   }
 
-  function openTray() {
-    tray?.classList.add('open');
-    tray?.setAttribute('aria-hidden', 'false');
-    if (captureLauncher) captureLauncher.hidden = true;
+  function showOverlay() {
+    document.getElementById('app')?.classList.add('overlay-active');
+    overlay?.classList.add('open');
+    overlay?.setAttribute('aria-hidden', 'false');
+    window.dispatchEvent(new CustomEvent('structa-voice-open'));
+    history.pushState({ structa_surface: 'voice' }, '', '#voice');
   }
 
-  function closeTray() {
-    tray?.classList.remove('open');
-    tray?.setAttribute('aria-hidden', 'true');
-    if (captureLauncher) captureLauncher.hidden = false;
-    stopListening(false);
-    window.StructaCamera?.teardown?.();
-    if (captureTitle) captureTitle.textContent = 'Voice';
-  }
-
-  function setPanel(panel) {
-    document.querySelectorAll('#capture-tray .capture-panel').forEach(el => {
-      el.classList.toggle('active', el.dataset.panel === panel);
-    });
-    openTray();
-    if (captureTitle) captureTitle.textContent = panel === 'camera' ? 'Camera' : 'Voice';
-    if (panel === 'camera') {
-      window.StructaCamera?.open?.(window.StructaCamera?.facingMode || 'environment');
-    } else {
-      window.StructaCamera?.pause?.();
-    }
+  function hideOverlay() {
+    overlay?.classList.remove('open', 'listening');
+    overlay?.setAttribute('aria-hidden', 'true');
+    document.getElementById('app')?.classList.remove('overlay-active');
+    if (wave) wave.hidden = true;
+    window.dispatchEvent(new CustomEvent('structa-voice-close'));
   }
 
   async function stopListening(emit = true) {
@@ -110,51 +76,53 @@
       try { audioRecorder.stop(); } catch (_) {}
     }
     stopAudioStream();
+    overlay?.classList.remove('listening');
+    if (wave) wave.hidden = true;
     listening = false;
-    if (btnStart) btnStart.textContent = 'PTT';
-    setStatus('Idle');
+    const text = (transcript?.textContent || '').trim();
     if (emit) {
-      const text = transcript?.textContent?.trim() || '';
-      if (text && native?.stopPTT) native.stopPTT(text);
-      if (text && native?.writeJournalEntry) {
-        native.writeJournalEntry({
-          title: deriveTitle(text),
+      if (text) native?.stopPTT?.(text);
+      if (text) {
+        native?.writeJournalEntry?.({
+          title: text.slice(0, 42) || 'voice note',
           body: text,
           source_type: 'voice',
           meta: { entry_mode: 'auto' }
         });
-        setStatus('Saved');
-      }
-      if (!text && pendingAudioAsset) {
+      } else if (pendingAudioAsset) {
         native?.writeJournalEntry?.({
-          title: 'Voice note',
-          body: 'Audio note captured.',
+          title: 'voice note',
+          body: 'audio note captured',
           source_type: 'voice',
           meta: { entry_mode: 'audio-fallback' }
         });
       }
     }
+    setStatus('idle');
+    setTimeout(() => {
+      close();
+    }, 180);
   }
 
   async function startListening() {
-    openTray();
-    setPanel('voice');
-    if (btnStart) btnStart.textContent = 'Stop';
-    setStatus('Listening...');
+    if (listening) return;
+    showOverlay();
+    overlay?.classList.add('listening');
+    if (wave) wave.hidden = false;
     if (transcript) transcript.textContent = '';
+    audioChunks = [];
+    pendingAudioAsset = null;
+    listening = true;
+    setStatus('listening');
     native?.startPTT?.();
 
     if (!SR) {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        setStatus('mic unavailable');
         listening = false;
-        if (btnStart) btnStart.textContent = 'PTT';
-        setStatus('Mic unavailable');
         return;
       }
-
       try {
-        audioChunks = [];
-        pendingAudioAsset = null;
         audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const preferredMime = [
           'audio/webm;codecs=opus',
@@ -169,18 +137,14 @@
         audioRecorder.onstop = () => {
           finalizeAudioCapture().catch(() => {});
           audioRecorder = null;
-          stopAudioStream();
         };
         audioRecorder.start();
-        listening = true;
-        setStatus('Recording audio...');
-        if (transcript) transcript.textContent = '';
-        native?.startPTT?.();
         return;
       } catch (_) {
+        setStatus('mic unavailable');
         listening = false;
-        if (btnStart) btnStart.textContent = 'PTT';
-        setStatus('Mic unavailable');
+        overlay?.classList.remove('listening');
+        if (wave) wave.hidden = true;
         return;
       }
     }
@@ -192,103 +156,62 @@
       recognition.continuous = false;
       recognition.onresult = event => {
         let finalText = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
           const part = event.results[i][0]?.transcript || '';
           if (event.results[i].isFinal) finalText += part;
-          else if (!transcript.textContent) transcript.textContent = part;
+          else if (transcript && !transcript.textContent) transcript.textContent = part;
         }
-        if (finalText) transcript.textContent = (transcript.textContent + ' ' + finalText).trim();
+        if (finalText && transcript) transcript.textContent = `${transcript.textContent || ''} ${finalText}`.trim();
       };
       recognition.onerror = () => {
-        if (btnStart) btnStart.textContent = 'PTT';
-        setStatus('Mic error');
+        setStatus('mic error');
       };
       recognition.onend = () => {
-        listening = false;
-        if (btnStart) btnStart.textContent = 'PTT';
-        setStatus('Ready');
+        if (listening && !(transcript?.textContent || '').trim()) setStatus('ready');
       };
     }
 
     try {
-      listening = true;
       recognition.start();
     } catch (_) {
-      setStatus('Mic unavailable');
+      setStatus('mic unavailable');
+      listening = false;
+      overlay?.classList.remove('listening');
+      if (wave) wave.hidden = true;
     }
   }
 
-  function deriveTitle(text) {
-    const head = String(text || '').trim().split(/\n+/)[0].slice(0, 42).trim();
-    return head || 'Voice note';
+  function open() {
+    showOverlay();
+    setStatus('ready');
   }
 
-  function saveJournal() {
-    const text = transcript?.textContent?.trim() || '';
-    if (!text) {
-      setStatus('Need transcript');
-      return;
+  function close() {
+    if (listening) {
+      stopListening(false).catch?.(() => {});
     }
-    native?.writeJournalEntry?.({
-      title: deriveTitle(text),
-      body: text,
-      source_type: 'voice',
-      meta: { entry_mode: 'manual' }
-    });
-    setStatus('Journal saved');
+    hideOverlay();
   }
 
-  function withdrawEmail() {
-    const text = transcript?.textContent?.trim() || '';
-    if (!text) {
-      setStatus('Need transcript');
-      return;
-    }
-    native?.requestEmailWithdrawal?.({
-      title: deriveTitle(text),
-      body: text,
-      source_type: 'voice',
-      meta: { entry_mode: 'withdrawal', approval_state: 'pending' }
-    });
-    setStatus('Withdrawal queued');
-  }
+  overlay?.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    startListening().catch(() => {});
+  });
 
-  voicePanel?.addEventListener('pointerdown', event => {
-    if (!voicePanel.classList.contains('active')) return;
+  overlay?.addEventListener('pointerup', event => {
     event.preventDefault();
-    if (!listening) startListening();
+    if (listening) stopListening(true).catch(() => {});
   });
-  voicePanel?.addEventListener('pointerup', event => {
-    if (!listening) return;
-    event.preventDefault();
-    stopListening(true);
-  });
-  voicePanel?.addEventListener('pointercancel', () => {
-    if (listening) stopListening(true);
-  });
-  cameraPanel?.addEventListener('pointerdown', event => {
-    if (!cameraPanel.classList.contains('active')) return;
-    event.preventDefault();
-  });
-  cameraPanel?.addEventListener('pointerup', async event => {
-    if (!cameraPanel.classList.contains('active')) return;
-    event.preventDefault();
-    await window.StructaCamera?.capture?.();
-  });
-  tray?.addEventListener('click', event => {
-    if (event.target === tray) closeTray();
+
+  overlay?.addEventListener('pointercancel', () => {
+    if (listening) stopListening(false).catch(() => {});
   });
 
   window.StructaVoice = Object.freeze({
-    open: startListening,
-    stop: stopListening,
-    setPanel,
-    openTray,
-    closeTray,
-    saveJournal,
-    withdrawEmail,
-    setStatus,
-    setTranscript: text => { if (transcript) transcript.textContent = String(text || 'Awaiting PTT.'); },
+    open,
+    close,
+    startListening,
+    stopListening,
     get listening() { return listening; }
   });
 })();

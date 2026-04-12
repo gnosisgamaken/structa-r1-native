@@ -2,17 +2,12 @@
   const contracts = window.StructaContracts;
   const validation = window.StructaValidation;
   const router = window.StructaActionRouter;
+
   const runtimeEvents = [];
-  const memory = {
-    messages: [],
-    journals: [],
-    assets: [],
-    captures: [],
-    exports: []
-  };
   const MAX_RUNTIME_EVENTS = 200;
-  const MAX_MEMORY_ITEMS = 120;
-  const MAX_EXPORTS = 40;
+  const MAX_MEMORY_ITEMS = 200;
+  const MAX_LOG_ITEMS = 240;
+  const EXPORT_BATCH_SIZE = 33;
 
   function pushLimited(list, item, limit = MAX_MEMORY_ITEMS) {
     list.push(item);
@@ -20,23 +15,65 @@
     return item;
   }
 
-  function hasBridge() {
-    return typeof window.PluginMessageHandler !== 'undefined' && typeof window.PluginMessageHandler.postMessage === 'function';
+  function lower(value = '') {
+    return String(value || '').toLowerCase();
   }
 
-  function getCapabilities() {
-    return {
-      hasPluginMessageHandler: hasBridge(),
-      hasJournal: typeof window.PluginMessageHandler !== 'undefined',
-      hasStorage: typeof window.localStorage !== 'undefined',
-      hasCamera: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-      hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
-      hasVibration: typeof navigator.vibrate === 'function',
-      hasMotion: 'DeviceOrientationEvent' in window || 'DeviceMotionEvent' in window,
-      hasScrollHardware: true,
-      hasPTT: true
-    };
+  function hashText(value = '') {
+    let hash = 2166136261;
+    const text = String(value || 'structa');
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    }
+    return `r1-${(hash >>> 0).toString(16)}`;
   }
+
+  function detectDeviceId() {
+    const candidates = [
+      window.__RABBIT_DEVICE_ID__,
+      window.rabbit?.deviceId,
+      window.Rabbit?.deviceId,
+      window.creationStorage?.deviceId,
+      window.PluginMessageHandler?.deviceId
+    ].filter(Boolean);
+    if (candidates.length) return String(candidates[0]);
+    try {
+      const existing = window.localStorage?.getItem('structa-device-id');
+      if (existing) return existing;
+      const generated = `browser-${Math.random().toString(36).slice(2, 10)}`;
+      window.localStorage?.setItem('structa-device-id', generated);
+      return generated;
+    } catch (_) {
+      return 'browser-fallback';
+    }
+  }
+
+  const deviceId = detectDeviceId();
+  const deviceScopeKey = hashText(deviceId);
+  const cacheKey = `structa-native-cache-v2:${deviceScopeKey}`;
+
+  const memory = {
+    messages: [],
+    journals: [],
+    assets: [],
+    captures: [],
+    exports: [],
+    logs: [],
+    projectMemory: {
+      project_id: contracts.baseProjectCode,
+      device_scope_key: deviceScopeKey,
+      name: 'untitled project',
+      structure: [],
+      backlog: [],
+      decisions: [],
+      captures: [],
+      insights: [],
+      open_questions: [],
+      exports: [],
+      updated_at: new Date().toISOString()
+    }
+  };
 
   function emit(eventType, payload) {
     const record = {
@@ -47,53 +84,103 @@
     pushLimited(runtimeEvents, record, MAX_RUNTIME_EVENTS);
     try {
       window.dispatchEvent(new CustomEvent('structa-native-event', { detail: record }));
-    } catch (_) {
-      // no-op in older runtimes
-    }
+    } catch (_) {}
     return record;
   }
 
-  function saveFallback() {
-    const blob = { messages: memory.messages, journals: memory.journals, assets: memory.assets, captures: memory.captures, exports: memory.exports, runtimeEvents };
+  function persist() {
+    const blob = {
+      deviceId,
+      deviceScopeKey,
+      memory,
+      runtimeEvents
+    };
     try {
-      if (window.localStorage) {
-        window.localStorage.setItem('structa-native-cache-v1', JSON.stringify(blob));
-      }
-    } catch (_) {
-      // ignore quota or serialization issues in browser fallback
-    }
-    try {
-      const creationStorage = window.creationStorage?.plain;
-      if (creationStorage?.setItem) {
-        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(blob))));
-        Promise.resolve(creationStorage.setItem('structa-native-cache-v1', encoded)).catch(() => {});
-      }
-    } catch (_) {
-      // ignore unavailable creation storage in non-Rabbit runtimes
-    }
+      window.localStorage?.setItem(cacheKey, JSON.stringify(blob));
+    } catch (_) {}
   }
 
+  function hydrate() {
+    try {
+      const raw = window.localStorage?.getItem(cacheKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      Object.assign(memory, parsed.memory || {});
+    } catch (_) {}
+  }
+
+  hydrate();
+
   function postPayload(payload) {
-    if (hasBridge()) {
+    if (typeof window.PluginMessageHandler !== 'undefined' && typeof window.PluginMessageHandler.postMessage === 'function') {
       window.PluginMessageHandler.postMessage(JSON.stringify(payload));
       return { sent: true, bridge: 'PluginMessageHandler' };
     }
-
     pushLimited(memory.messages, payload);
-    saveFallback();
-    console.log('[Structa Native Fallback]', payload);
+    persist();
     return { sent: false, bridge: 'fallback' };
+  }
+
+  function touchProjectMemory(mutator) {
+    mutator(memory.projectMemory);
+    memory.projectMemory.updated_at = new Date().toISOString();
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return memory.projectMemory;
+  }
+
+  function appendLogEntry(raw = {}) {
+    const entry = {
+      id: contracts.makeEntryId('log'),
+      kind: lower(raw.kind || 'event'),
+      message: lower(raw.message || 'event'),
+      linked_capture_id: raw.linked_capture_id || null,
+      linked_response_id: raw.linked_response_id || null,
+      created_at: raw.created_at || new Date().toISOString()
+    };
+    pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return entry;
+  }
+
+  function inferCaptureInsight(bundle) {
+    if (!bundle) return '';
+    if (bundle.ai_response) return lower(bundle.ai_response);
+    if (bundle.summary) return lower(bundle.summary);
+    if (bundle.prompt_text) return lower(bundle.prompt_text);
+    return 'new capture stored';
+  }
+
+  function updateProjectFromCapture(bundle) {
+    touchProjectMemory(project => {
+      project.captures = Array.isArray(project.captures) ? project.captures : [];
+      project.captures.push({
+        id: bundle.entry_id,
+        type: bundle.input_type,
+        summary: lower(bundle.summary || bundle.prompt_text || 'capture'),
+        created_at: bundle.captured_at || new Date().toISOString()
+      });
+      project.structure = [
+        { title: 'captures', count: project.captures.length },
+        { title: 'insights', count: (project.insights || []).length },
+        { title: 'open items', count: (project.backlog || []).length }
+      ];
+      if (bundle.summary) {
+        project.insights = Array.isArray(project.insights) ? project.insights : [];
+        project.insights.unshift({ title: 'capture insight', body: lower(bundle.summary), created_at: new Date().toISOString() });
+        project.insights = project.insights.slice(0, 16);
+      }
+    });
   }
 
   function sendStructuredMessage(raw = {}) {
     const routed = router?.routeAction?.(raw);
     const verdict = validation.validateEnvelope(raw);
     if (!verdict.ok) {
-      const error = validation.validationMessage('Structured message', verdict.errors);
       emit('validation_failed', { kind: 'message', errors: verdict.errors, raw });
-      return { ok: false, error, payload: verdict.value, capabilities: getCapabilities() };
+      return { ok: false, error: validation.validationMessage('structured message', verdict.errors), payload: verdict.value };
     }
-
     const payload = verdict.value;
     if (routed?.ok) {
       payload.meta = {
@@ -102,57 +189,35 @@
         context_snapshot: routed.context_snapshot,
         context_summary: router?.summarizeContext?.(routed.context_snapshot)
       };
-      emit('action_routed', routed.route);
     }
-    emit('message_prepared', payload);
     const result = postPayload({
       ...payload,
       useLLM: true,
       wantsR1Response: payload.wantsR1Response !== false,
       wantsJournalEntry: payload.wantsJournalEntry === true
     });
+    appendLogEntry({ kind: payload.verb, message: `${payload.verb} ${payload.target}` });
     emit('message_sent', { payload, result });
-    return { ok: true, payload, result, capabilities: getCapabilities() };
-  }
-
-  function buildJournalExport(raw = {}) {
-    const now = new Date().toISOString();
-    return {
-      project_code: raw.project_code || contracts.baseProjectCode,
-      entry_id: raw.entry_id || contracts.makeEntryId('export'),
-      source_type: raw.source_type || 'voice',
-      destination: raw.destination || 'email',
-      approval_state: raw.approval_state || 'pending',
-      title: raw.title || 'Journal export',
-      body: raw.body || '',
-      journals: [...memory.journals],
-      assets: [...memory.assets],
-      runtime_events: [...runtimeEvents],
-      created_at: raw.created_at || now,
-      meta: raw.meta || {}
-    };
-  }
-
-  function queueJournalExport(raw = {}) {
-    const payload = buildJournalExport(raw);
-    pushLimited(memory.exports, payload, MAX_EXPORTS);
-    saveFallback();
-    emit('journal_export_prepared', payload);
-    return payload;
+    return { ok: true, payload, result };
   }
 
   function writeJournalEntry(raw = {}) {
     const verdict = validation.validateJournalEntry(raw);
     if (!verdict.ok) {
-      const error = validation.validationMessage('Journal entry', verdict.errors);
       emit('validation_failed', { kind: 'journal', errors: verdict.errors, raw });
-      return { ok: false, error, payload: verdict.value };
+      return { ok: false, error: validation.validationMessage('journal entry', verdict.errors), payload: verdict.value };
     }
-
     const payload = verdict.value;
     pushLimited(memory.journals, payload);
-    saveFallback();
-    emit('journal_written', payload);
+    appendLogEntry({ kind: 'journal', message: payload.title });
+    touchProjectMemory(project => {
+      project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
+      if (payload.body.includes('?')) project.open_questions.unshift(payload.body);
+      project.open_questions = project.open_questions.slice(0, 12);
+      if (!project.backlog.length) {
+        project.backlog.push({ title: payload.title, created_at: payload.created_at, state: 'open' });
+      }
+    });
     return sendStructuredMessage({
       project_code: payload.project_code,
       entry_id: payload.entry_id,
@@ -168,61 +233,86 @@
     });
   }
 
-  function requestEmailWithdrawal(raw = {}) {
-    const bundle = queueJournalExport({
-      ...raw,
-      title: raw.title || 'Email withdrawal',
-      body: raw.body || (raw.note || ''),
-      destination: 'email',
-      approval_state: 'pending'
-    });
-    return sendStructuredMessage({
-      project_code: bundle.project_code,
-      entry_id: bundle.entry_id,
-      source_type: bundle.source_type,
-      input_type: 'withdrawal',
-      target: 'export',
-      verb: 'withdraw',
-      intent: `withdraw journal export via email`,
-      goal: bundle.body || 'prepare email export',
-      approval_mode: 'human_required',
-      fallback: 'store-only',
-      payload: bundle
-    });
-  }
-
   function storeAsset(raw = {}) {
     const verdict = validation.validateAsset(raw);
     if (!verdict.ok) {
-      const error = validation.validationMessage('Asset', verdict.errors);
       emit('validation_failed', { kind: 'asset', errors: verdict.errors, raw });
-      return { ok: false, error, payload: verdict.value };
+      return { ok: false, error: validation.validationMessage('asset', verdict.errors), payload: verdict.value };
     }
-
-    const payload = verdict.value;
-    pushLimited(memory.assets, payload);
-    saveFallback();
-    emit('asset_stored', payload);
-    return { ok: true, payload };
+    pushLimited(memory.assets, verdict.value);
+    persist();
+    return { ok: true, payload: verdict.value };
   }
 
   function storeCaptureBundle(raw = {}) {
     const verdict = validation.validateCaptureBundle(raw);
     if (!verdict.ok) {
-      const error = validation.validationMessage('Capture bundle', verdict.errors);
       emit('validation_failed', { kind: 'capture_bundle', errors: verdict.errors, raw });
-      return { ok: false, error, payload: verdict.value };
+      return { ok: false, error: validation.validationMessage('capture bundle', verdict.errors), payload: verdict.value };
     }
-
     const payload = verdict.value;
     pushLimited(memory.captures, payload);
-    saveFallback();
-    emit('capture_bundle_stored', payload);
+    appendLogEntry({ kind: payload.input_type, message: payload.summary || payload.prompt_text || 'capture stored', linked_capture_id: payload.entry_id });
+    updateProjectFromCapture(payload);
+    persist();
     return { ok: true, payload };
   }
 
-  function openCamera(mode = 'rear') {
-    const payload = contracts.createEnvelope({
+  function requestEmailWithdrawal(raw = {}) {
+    const body = lower(raw.body || raw.note || 'prepare export');
+    appendLogEntry({ kind: 'withdraw', message: body });
+    return sendStructuredMessage({
+      project_code: raw.project_code || contracts.baseProjectCode,
+      entry_id: raw.entry_id || contracts.makeEntryId('withdraw'),
+      source_type: raw.source_type || 'voice',
+      input_type: 'withdrawal',
+      target: 'export',
+      verb: 'withdraw',
+      intent: 'withdraw journal export via email',
+      goal: body,
+      approval_mode: 'human_required',
+      fallback: 'store-only',
+      payload: raw
+    });
+  }
+
+  function exportLatestLogs(limit = EXPORT_BATCH_SIZE) {
+    const items = memory.logs.slice(-limit);
+    const now = new Date();
+    const name = `structa logs ${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const body = [
+      `# ${name}`,
+      '',
+      ...items.map(item => `- ${item.created_at} · ${item.message}`)
+    ].join("\n");
+    const payload = {
+      name,
+      body,
+      created_at: new Date().toISOString(),
+      device_scope_key: deviceScopeKey,
+      items
+    };
+    pushLimited(memory.exports, payload, 60);
+    touchProjectMemory(project => {
+      project.exports = Array.isArray(project.exports) ? project.exports : [];
+      project.exports.unshift({ name, created_at: payload.created_at, count: items.length });
+      project.exports = project.exports.slice(0, 20);
+    });
+    postPayload({
+      type: 'rabbit_hole_save',
+      name,
+      body,
+      wantsJournalEntry: true,
+      useLLM: false
+    });
+    appendLogEntry({ kind: 'export', message: `${name} saved` });
+    persist();
+    return { ok: true, payload };
+  }
+
+  function openCamera(mode = 'environment') {
+    appendLogEntry({ kind: 'camera', message: `${mode} camera open` });
+    return sendStructuredMessage(contracts.createEnvelope({
       verb: 'capture',
       target: 'camera',
       input_type: 'camera',
@@ -231,13 +321,13 @@
       goal: `open ${mode} camera`,
       approval_mode: 'human_required',
       fallback: 'camera-ui',
-      meta: { mode }
-    });
-    return sendStructuredMessage(payload);
+      meta: { mode, device_scope_key: deviceScopeKey }
+    }));
   }
 
-  function setCameraFacing(facing = 'rear') {
-    const payload = contracts.createEnvelope({
+  function setCameraFacing(facing = 'environment') {
+    appendLogEntry({ kind: 'camera', message: `${facing} facing` });
+    return sendStructuredMessage(contracts.createEnvelope({
       verb: 'capture',
       target: 'camera',
       input_type: 'camera-facing',
@@ -246,12 +336,12 @@
       goal: `switch camera to ${facing}`,
       approval_mode: 'human_required',
       fallback: 'camera-ui',
-      meta: { facing }
-    });
-    return sendStructuredMessage(payload);
+      meta: { facing, device_scope_key: deviceScopeKey }
+    }));
   }
 
   function startPTT() {
+    appendLogEntry({ kind: 'voice', message: 'voice capture started' });
     emit('ptt_started', { active: true });
     return sendStructuredMessage({
       verb: 'capture',
@@ -261,53 +351,80 @@
       intent: 'start voice capture',
       goal: 'capture spoken intent',
       approval_mode: 'human_required',
-      fallback: 'voice-capture'
+      fallback: 'voice-capture',
+      payload: { device_scope_key: deviceScopeKey }
     });
   }
 
   function stopPTT(transcript = '') {
+    appendLogEntry({ kind: 'voice', message: transcript ? `voice ${lower(transcript).slice(0, 48)}` : 'voice capture stopped' });
     emit('ptt_stopped', { transcript });
     return sendStructuredMessage({
       verb: 'inspect',
       target: 'voice',
       input_type: 'ptt-stop',
       source_type: 'microphone',
-      intent: transcript ? `process transcript: ${transcript}` : 'process voice capture',
+      intent: transcript ? `process transcript ${lower(transcript)}` : 'process voice capture',
       goal: 'normalize spoken intent',
       approval_mode: 'human_required',
       fallback: 'voice-capture',
-      payload: { transcript }
+      payload: { transcript: lower(transcript), device_scope_key: deviceScopeKey }
     });
+  }
+
+  function getRecentLogEntries(limit = 5) {
+    return memory.logs.slice(-limit);
   }
 
   function getMemory() {
     return {
+      ...memory,
       messages: [...memory.messages],
       journals: [...memory.journals],
       assets: [...memory.assets],
       captures: [...memory.captures],
       exports: [...memory.exports],
-      runtimeEvents: [...runtimeEvents]
+      logs: [...memory.logs],
+      runtimeEvents: [...runtimeEvents],
+      deviceId,
+      deviceScopeKey
     };
   }
 
+  function getProjectMemory() {
+    return JSON.parse(JSON.stringify(memory.projectMemory));
+  }
+
+  function returnHome() {
+    router?.updateContext?.({ surface: 'home', active_node: 'now' });
+    emit('return_home', { surface: 'home' });
+  }
+
+  persist();
+
   window.StructaNative = Object.freeze({
-    getCapabilities,
+    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true }),
     getContext: () => router?.getContext?.() || null,
-    routeAction: (raw = {}) => router?.routeAction?.(raw) || { ok: false },
+    routeAction: raw => router?.routeAction?.(raw) || { ok: false },
     setActiveVerb: (verb, target) => router?.setActiveVerb?.(verb, target),
     setActiveNode: node => router?.setActiveNode?.(node),
     sendStructuredMessage,
     writeJournalEntry,
     requestEmailWithdrawal,
-    queueJournalExport,
     storeAsset,
     storeCaptureBundle,
     openCamera,
     setCameraFacing,
     startPTT,
     stopPTT,
+    appendLogEntry,
+    getRecentLogEntries,
+    exportLatestLogs,
+    getProjectMemory,
     getMemory,
-    emit
+    returnHome,
+    emit,
+    deviceId,
+    deviceScopeKey
   });
 })();

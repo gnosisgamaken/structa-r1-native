@@ -87,7 +87,7 @@
     stopListening(false);
     window.StructaCamera?.teardown?.();
     if (captureTitle) captureTitle.textContent = 'Voice';
-    if (captureHint) captureHint.textContent = 'PTT first. Camera is preview-driven. Back closes.';
+    if (captureHint) captureHint.textContent = 'Device PTT records voice. Back closes.';
   }
 
   function setPanel(panel) {
@@ -98,8 +98,8 @@
     if (captureTitle) captureTitle.textContent = panel === 'camera' ? 'Camera' : 'Voice';
     if (captureHint) {
       captureHint.textContent = panel === 'camera'
-        ? 'Tap preview to flip. Back closes.'
-        : 'PTT first. Camera is preview-driven. Back closes.';
+        ? 'Wheel flips selfie. Back closes.'
+        : 'Device PTT records voice. Back closes.';
     }
     if (panel === 'camera') {
       window.StructaCamera?.open?.(window.StructaCamera?.facingMode || 'environment');
@@ -291,7 +291,7 @@
     saveJournal,
     withdrawEmail,
     setStatus,
-    setTranscript: text => { if (transcript) transcript.textContent = String(text || 'Tap PTT to capture speech.'); },
+    setTranscript: text => { if (transcript) transcript.textContent = String(text || 'Awaiting PTT.'); },
     get listening() { return listening; }
   });
 })();

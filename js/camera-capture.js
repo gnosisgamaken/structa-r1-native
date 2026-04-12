@@ -4,7 +4,7 @@
   const preview = document.getElementById('camera-preview');
   const canvas = document.getElementById('camera-canvas');
   const status = document.getElementById('camera-status');
-  const btnCapture = document.getElementById('camera-capture');
+
 
   let stream = null;
   let facingMode = 'environment';
@@ -135,8 +135,12 @@
   }
 
   preview?.addEventListener('click', flipFacing);
-  btnCapture?.addEventListener('click', captureFrame);
-
+  tray?.addEventListener('wheel', event => {
+    if (!stream) return;
+    event.preventDefault();
+    const wheelUp = event.deltaY < 0;
+    return openCamera(wheelUp ? 'user' : 'environment');
+  }, { passive: false });
   window.StructaCamera = Object.freeze({
     open: openCamera,
     capture: captureFrame,

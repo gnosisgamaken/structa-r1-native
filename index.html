@@ -227,8 +227,8 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(112px, 36%);
-      transform: translateY(calc(100% - 32px));
+      height: min(84px, 30%);
+      transform: translateY(calc(100% - 20px));
       transition: transform 220ms cubic-bezier(.18,.67,.2,1), box-shadow 220ms ease;
       z-index: 10;
       will-change: transform;
@@ -243,10 +243,10 @@
 
     #log-handle {
       width: 100%;
-      min-height: 32px;
+      min-height: 20px;
       border: 0;
       margin: 0;
-      padding: 0 10px;
+      padding: 0 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -295,14 +295,8 @@
     #log-handle .capture-preview {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
       min-width: 0;
-      max-width: 146px;
       flex: 1 1 auto;
-      padding: 3px 10px 3px 3px;
-      border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(255,255,255,0.04);
       color: rgba(246,240,230,0.82);
       overflow: hidden;
     }
@@ -621,21 +615,8 @@
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <div id="log-handle" role="button" tabindex="0" aria-label="Toggle log">
-        <span class="grip" aria-hidden="true"></span>
-        <span class="log-copy">
-          <span class="log-text">
-            <span class="log-title">Log</span>
-          </span>
-        </span>
-        <span class="log-meta">
-          <span class="log-chip live">Live</span>
-          <span class="capture-preview" id="capture-preview" aria-live="polite">
-            <span id="capture-thumb-shell"><img id="capture-thumb" alt="Latest capture preview" hidden /></span>
-            <span id="capture-preview-copy">No capture</span>
-          </span>
-          <span class="handle-actions">
-            <button id="capture-launcher" type="button" aria-label="Open voice capture">PTT</button>
-          </span>
+        <span class="capture-preview" id="capture-preview" aria-live="polite">
+          <span id="capture-preview-copy">No capture yet</span>
         </span>
       </div>
       <div id="log">
@@ -655,10 +636,8 @@
           </div>
         </div>
         <div class="capture-panel active" data-panel="voice">
-          <div class="capture-row">
-            <button id="voice-start" type="button">PTT</button>
-          </div>
-          <div id="voice-transcript" aria-live="polite">Tap PTT to capture speech.</div>
+          <div class="capture-surface-note">Use the device PTT for voice. Back returns to the previous screen.</div>
+          <div id="voice-transcript" aria-live="polite">Awaiting PTT.</div>
           <div class="capture-foot">
             <span id="voice-status">Idle</span>
           </div>
@@ -667,9 +646,7 @@
         <div class="capture-panel" data-panel="camera">
           <video id="camera-preview" autoplay playsinline muted></video>
           <canvas id="camera-canvas" hidden></canvas>
-          <div class="capture-row">
-            <button id="camera-capture" type="button">Capture</button>
-          </div>
+          <div class="capture-surface-note">PTT takes the shot. Tap preview to flip selfie mode. Back returns.</div>
           <div class="capture-foot">
             <span id="camera-status">Camera idle</span>
           </div>

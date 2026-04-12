@@ -75,7 +75,9 @@
   const syncCapturePreview = () => {
     const capture = lastCapture || native?.getMemory?.().captures?.slice(-1)[0] || null;
     if (!capturePreview || !capturePreviewCopy || !captureThumb) return;
+    const shell = captureThumb?.parentElement;
     if (!capture) {
+      if (shell) shell.hidden = true;
       captureThumb.hidden = true;
       captureThumb.removeAttribute('src');
       capturePreviewCopy.textContent = 'No capture yet';
@@ -83,6 +85,7 @@
     }
     const img = capture.image_asset?.data || capture.image_asset?.url || '';
     const audio = capture.audio_asset?.data || capture.audio_asset?.url || '';
+    if (shell) shell.hidden = !img;
     if (img) {
       captureThumb.hidden = false;
       captureThumb.src = img;
@@ -274,9 +277,9 @@
 
 
   const cardLayoutFor = (slot) => {
-    if (slot === 'selected') return { x: 46, y: 34, scale: 1, opacity: 1 };
-    if (slot === 'prev') return { x: -12, y: -34, scale: 0.72, opacity: 0.32 };
-    return { x: 100, y: 132, scale: 0.72, opacity: 0.32 };
+    if (slot === 'selected') return { x: 46, y: 72, scale: 1, opacity: 1 };
+    if (slot === 'prev') return { x: -6, y: 2, scale: 0.64, opacity: 0.18 };
+    return { x: 112, y: 138, scale: 0.64, opacity: 0.18 };
   };
 
   const drawCard = (card, slot, index) => {
@@ -301,8 +304,8 @@
       y: 0,
       width: 150,
       height: 150,
-      rx: 14,
-      ry: 14,
+      rx: 10,
+      ry: 10,
       fill: card.color,
       stroke: 'rgba(255,255,255,0.12)',
       'stroke-width': 1
@@ -312,8 +315,8 @@
       y: 1,
       width: 148,
       height: 148,
-      rx: 12,
-      ry: 12,
+      rx: 8,
+      ry: 8,
       fill: 'none',
       stroke: 'rgba(255,255,255,0.08)',
       'stroke-width': 1
@@ -341,7 +344,7 @@
       y: 118,
       width: 82,
       height: 22,
-      rx: 7,
+      rx: 6,
       fill: 'rgba(255,255,255,0.10)',
       stroke: 'rgba(255,255,255,0.14)',
       'stroke-width': 1
@@ -505,8 +508,6 @@
     }
     if (Math.abs(beta) > 28) {
       tiltLockAt = now;
-      if (beta > 0) setLogDrawer(true);
-      else setLogDrawer(false);
     }
   };
 
@@ -601,7 +602,7 @@
       if (window.StructaVoice?.closeTray) window.StructaVoice.closeTray();
       if (window.StructaCamera?.stop) window.StructaCamera.stop();
       if (logOpen) setLogDrawer(false);
-      else pushLog('Back action received.', 'BACK');
+      else if (window.history.length > 1) window.history.back();
     }
   });
 

@@ -193,6 +193,19 @@
     return entry;
   }
 
+  function isVisibleLogEntry(entry = {}) {
+    const kind = lower(entry.kind || '');
+    const message = lower(entry.message || '');
+    if (kind === 'probe' && (message.includes('document pointerdown') || message.includes('document pointerup'))) return false;
+    if (kind === 'probe' && message.includes('window structa-native-event')) return false;
+    if (kind === 'ui' && message.includes('probe probe mode active')) return false;
+    return true;
+  }
+
+  function getVisibleLogs(limit = 5) {
+    return memory.logs.filter(isVisibleLogEntry).slice(-limit);
+  }
+
   function inferCaptureInsight(bundle) {
     if (!bundle) return '';
     if (bundle.ai_response) return lower(bundle.ai_response);
@@ -421,8 +434,8 @@
     });
   }
 
-  function getRecentLogEntries(limit = 5) {
-    return memory.logs.slice(-limit);
+  function getRecentLogEntries(limit = 5, options = {}) {
+    return options.visible_only ? getVisibleLogs(limit) : memory.logs.slice(-limit);
   }
 
   function getMemory() {

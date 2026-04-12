@@ -9,10 +9,10 @@
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   const cards = [
-    { id: 'show', title: 'show', icon: '◉', color: 'var(--show)', role: 'capture image', summary: 'image capture', surface: 'camera' },
-    { id: 'tell', title: 'tell', icon: '⌇', color: 'var(--tell)', role: 'capture commands', summary: 'voice capture', surface: 'voice' },
-    { id: 'know', title: 'know', icon: '◈', color: 'var(--know)', role: 'generate insights', summary: 'insight surface', surface: 'insight' },
-    { id: 'now', title: 'now', icon: '▣', color: 'var(--now)', role: 'project structure', summary: 'project state', surface: 'project' }
+    { id: 'show', title: 'show', icon: '◉', role: 'capture image', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', icon: '⌇', role: 'capture commands', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', icon: '◈', role: 'generate insights', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', icon: '▣', role: 'project structure', color: 'var(--now)', surface: 'project' }
   ];
 
   let selectedIndex = 3;
@@ -76,7 +76,7 @@
   }
 
   function refreshLogFromMemory() {
-    const entries = (native?.getRecentLogEntries?.(5) || []).slice(-5);
+    const entries = (native?.getRecentLogEntries?.(5, { visible_only: true }) || []).slice(-5);
     log.innerHTML = '';
     if (!entries.length) {
       logPreview.textContent = 'no logs yet';
@@ -102,7 +102,7 @@
     logDrawer.classList.toggle('open', logOpen);
     logDrawer.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
     if (logOpen) {
-      const entries = native?.getRecentLogEntries?.(33) || [];
+      const entries = native?.getRecentLogEntries?.(33, { visible_only: true }) || [];
       log.innerHTML = '';
       entries.forEach(entry => {
         const row = document.createElement('div');
@@ -257,7 +257,6 @@
     return [
       project?.name || 'untitled project',
       `${captures.length} captures`,
-      `${backlog.length} open items`,
       `${insights.length} insights`
     ];
   }
@@ -279,11 +278,11 @@
   function cardLayout(index) {
     const distance = index - selectedIndex;
     const normalized = ((distance % cards.length) + cards.length) % cards.length;
-    if (distance === 0) return { x: 54, y: 56, scale: 1, opacity: 1 };
-    if (normalized === 1 || distance === 1) return { x: 146, y: 72, scale: 0.68, opacity: 0.48 };
-    if (normalized === cards.length - 1 || distance === -1) return { x: -10, y: 72, scale: 0.68, opacity: 0.48 };
-    if (normalized === 2 || distance === 2) return { x: 182, y: 86, scale: 0.52, opacity: 0.18 };
-    return { x: -42, y: 86, scale: 0.52, opacity: 0.18 };
+    if (distance === 0) return { x: 54, y: 42, scale: 1, opacity: 1 };
+    if (normalized === 1 || distance === 1) return { x: 158, y: 56, scale: 0.62, opacity: 0.34 };
+    if (normalized === cards.length - 1 || distance === -1) return { x: -22, y: 56, scale: 0.62, opacity: 0.34 };
+    if (normalized === 2 || distance === 2) return { x: 194, y: 70, scale: 0.46, opacity: 0.12 };
+    return { x: -52, y: 70, scale: 0.46, opacity: 0.12 };
   }
 
   function mk(name, attrs = {}, parent = svg) {
@@ -301,7 +300,7 @@
 
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
-    text(14, 34, 'structa', {
+    text(12, 26, 'structa', {
       fill: 'rgba(244,239,228,0.94)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '15',
@@ -323,8 +322,8 @@
     const rect = mk('rect', {
       x: 0,
       y: 0,
-      width: 132,
-      height: 132,
+      width: 136,
+      height: 136,
       rx: 12,
       ry: 12,
       fill: selected ? card.color : 'rgba(255,255,255,0.04)',
@@ -344,11 +343,13 @@
       'font-size': '18'
     }, group);
 
-    text(18, 96, card.role, {
-      fill: selected ? 'rgba(10,10,10,0.70)' : 'rgba(244,239,228,0.48)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10'
-    }, group);
+    if (selected) {
+      text(18, 96, card.role, {
+        fill: 'rgba(10,10,10,0.70)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      }, group);
+    }
 
 
     const activate = event => {
@@ -366,9 +367,9 @@
   }
 
   function drawNowPanel() {
-    if (activeSurface !== 'project' && activeSurface !== 'home') return;
+    if (activeSurface !== 'project') return;
     const lines = buildNowSummary();
-    const group = mk('g', { transform: 'translate(14, 182)' });
+    const group = mk('g', { transform: 'translate(16, 188)' });
     lines.slice(0, 4).forEach((line, i) => {
       text(0, i * 11, lower(line), {
         fill: i === 0 ? 'rgba(244,239,228,0.90)' : 'rgba(244,239,228,0.56)',

@@ -596,16 +596,23 @@
   }
 
   function cardLayout(index) {
-    // Hero — right side
     if (index === selectedIndex) return { x: 86, y: 18, scale: 1.34, opacity: 1, depth: -1 };
-    // Stack — symmetric cascade LEFT, full width, 60px step each
-    // icon center on each card (at 33px from left) aligns at same y
+    // Stack — all centers aligned with hero center (y=118.5)
+    // Equal 60px steps. Last card left edge at x=0.
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    const stack = [
-      { x: 26, y: 36, scale: 0.88, opacity: 1, depth: 0 },
-      { x: -34, y: 54, scale: 0.74, opacity: 0.98, depth: 1 },
-      { x: -94, y: 72, scale: 0.62, opacity: 0.96, depth: 2 }
-    ];
+    var heroCenterY = 18 + (150 * 1.34) / 2;
+    var scales = [0.88, 0.74, 0.62];
+    var step = 60;
+    var stack = scales.map(function(s, i) {
+      var cardH = 150 * s;
+      return {
+        x: 86 - step * (i + 1),
+        y: heroCenterY - cardH / 2,
+        scale: s,
+        opacity: 1 - i * 0.02,
+        depth: i
+      };
+    });
     return stack[Math.min(depth, stack.length - 1)];
   }
 

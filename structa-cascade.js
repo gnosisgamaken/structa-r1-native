@@ -1020,22 +1020,19 @@
   render();
 
   // === R1 API REVERSE ENGINEERING PROBE ===
-  // Dump all window properties that might be R1 native bridges
   (function probeR1APIs() {
-    // Check known R1 bridge objects
-    const bridges = ['PluginMessageHandler', 'Android', 'rabbit', 'Rabbit',
-      'creationStorage', 'creationStorageHandler', 'accelerometerHandler', '__RABBIT_DEVICE_ID__', 'onPluginMessage'];
+    const bridges = ['PluginMessageHandler', 'onPluginMessage', 'Android', 'rabbit', 'Rabbit',
+      'creationStorage', '__RABBIT_DEVICE_ID__'];
     bridges.forEach(name => {
       const val = window[name];
       if (val === undefined) return;
       if (typeof val === 'object' && val !== null) {
-        const allKeys = [];
-        let obj = val;
-        while (obj) { allKeys.push(...Object.getOwnPropertyNames(obj)); obj = Object.getPrototypeOf(obj); }
-        const unique = [...new Set(allKeys)].filter(k => k !== 'constructor');
-        const methods = unique.filter(k => { try { return typeof val[k] === 'function'; } catch(e) { return false; } });
-        const props = unique.filter(k => { try { return typeof val[k] !== 'function'; } catch(e) { return false; } });
-        pushLog(`${name}: m=[${methods.slice(0,8).join(',')}] p=[${props.slice(0,5).join(',')}]`, 'probe');
+        const methods = [];
+        const props = [];
+        try { Object.getOwnPropertyNames(val).forEach(k => {
+          try { (typeof val[k] === 'function' ? methods : props).push(k); } catch(e) {}
+        }); } catch(e) {}
+        pushLog(`${name}: m=[${methods.slice(0,6).join(',')}] p=[${props.slice(0,4).join(',')}]`, 'probe');
       } else {
         pushLog(`${name}: ${typeof val}`, 'probe');
       }

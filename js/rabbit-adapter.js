@@ -219,6 +219,15 @@
     if (kind === 'probe' && (message.includes('document pointerdown') || message.includes('document pointerup'))) return false;
     if (kind === 'probe' && message.includes('window structa-native-event')) return false;
     if (kind === 'ui' && message.includes('probe probe mode active')) return false;
+    // Suppress noisy window events from runtime probe
+    if (kind === 'probe' && message.startsWith('window ')) {
+      const noise = ['focus', 'blur', 'scrollup', 'scrolldown', 'beforeunload', 'pagehide', 'visibilitychange'];
+      if (noise.some(n => message.includes(n))) return false;
+    }
+    if (kind === 'probe' && message.startsWith('document ')) {
+      const noise = ['visibilitychange', 'pointerdown', 'pointerup', 'keydown', 'wheel'];
+      if (noise.some(n => message.includes(n))) return false;
+    }
     return true;
   }
 

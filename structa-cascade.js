@@ -1022,54 +1022,26 @@
   // === R1 API REVERSE ENGINEERING PROBE ===
   // Dump all window properties that might be R1 native bridges
   (function probeR1APIs() {
-    const r1Keys = [];
-    const skip = new Set(['StructaNative', 'StructaContracts', 'StructaValidation', 'StructaActionRouter',
-      'StructaRuntimeProbe', 'StructaLLM', 'StructaVoice', 'StructaCamera', 'StructaPanel',
-      'chrome', 'performance', 'navigator', 'document', 'window', 'self', 'frames', 'parent', 'top',
-      'location', 'history', 'screen', 'visualViewport', 'clientInformation', 'external',
-      'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'cookieStore',
-      'crossOriginIsolated', 'isSecureContext', 'origin', 'webkitStorageInfo',
-      'speechSynthesis', 'trustedTypes', 'getScreenDetails', 'queryLocalFonts',
-      'showDirectoryPicker', 'showOpenFilePicker', 'showSaveFilePicker',
-      'launchQueue', 'documentPictureInPicture', 'getDigitalGoodsService',
-      'sharedStorage', 'fetchLater']);
     // Check known R1 bridge objects
-    const bridges = ['PluginMessageHandler', 'Android', 'rabbit', 'Rabbit', 'webkit',
+    const bridges = ['PluginMessageHandler', 'Android', 'rabbit', 'Rabbit',
       'creationStorage', 'creationStorageHandler', 'accelerometerHandler', '__RABBIT_DEVICE_ID__', 'onPluginMessage'];
     bridges.forEach(name => {
       const val = window[name];
-      if (val !== undefined) {
-        if (typeof val === 'object' && val !== null) {
-          const allKeys = [];
-          let obj = val;
-          while (obj) { allKeys.push(...Object.getOwnPropertyNames(obj)); obj = Object.getPrototypeOf(obj); }
-          const unique = [...new Set(allKeys)].filter(k => k !== 'constructor');
-          const methods = unique.filter(k => { try { return typeof val[k] === 'function'; } catch(e) { return false; } });
-          const props = unique.filter(k => { try { return typeof val[k] !== 'function'; } catch(e) { return false; } });
-          r1Keys.push(`${name}: methods=[${methods.join(',')}] props=[${props.join(',')}]`);
-        } else {
-          r1Keys.push(`${name}: ${typeof val}=${String(val).slice(0, 80)}`);
-        }
+      if (val === undefined) return;
+      if (typeof val === 'object' && val !== null) {
+        const allKeys = [];
+        let obj = val;
+        while (obj) { allKeys.push(...Object.getOwnPropertyNames(obj)); obj = Object.getPrototypeOf(obj); }
+        const unique = [...new Set(allKeys)].filter(k => k !== 'constructor');
+        const methods = unique.filter(k => { try { return typeof val[k] === 'function'; } catch(e) { return false; } });
+        const props = unique.filter(k => { try { return typeof val[k] !== 'function'; } catch(e) { return false; } });
+        pushLog(`${name}: m=[${methods.slice(0,8).join(',')}] p=[${props.slice(0,5).join(',')}]`, 'probe');
+      } else {
+        pushLog(`${name}: ${typeof val}`, 'probe');
       }
     });
-    // Check for any custom window properties
-    const ownKeys = Object.getOwnPropertyNames(window).filter(k => {
-      if (skip.has(k)) return false;
-      if (k.startsWith('on')) return false;
-      if (k.startsWith('webkit')) return false;
-      if (k.startsWith('__')) return false;
-      if (k.startsWith('Structa')) return false;
-      try {
-        const val = window[k];
-        if (typeof val === 'function' && val.toString().includes('[native code]')) return false;
-        return typeof val === 'object' || typeof val === 'function';
-      } catch(e) { return false; }
-    });
-    if (ownKeys.length) r1Keys.push('custom: ' + ownKeys.join(', '));
-    // Log viewport info for R1 screen geometry detection
-    r1Keys.push(`viewport: inner=${window.innerWidth}x${window.innerHeight} outer=${window.outerWidth}x${window.outerHeight}`);
-    r1Keys.push(`screen: ${screen.width}x${screen.height} avail=${screen.availWidth}x${screen.availHeight}`);
-    if (r1Keys.length) pushLog('r1 probe: ' + r1Keys.join(' | '), 'probe');
+    pushLog(`viewport: ${window.innerWidth}x${window.innerHeight}`, 'probe');
+    pushLog(`screen: ${screen.width}x${screen.height}`, 'probe');
   })();
 
   // Prime camera on first touch — getUserMedia needs a user gesture on R1.

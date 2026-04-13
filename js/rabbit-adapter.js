@@ -386,11 +386,9 @@
       project.exports = project.exports.slice(0, 20);
     });
     postPayload({
-      type: 'rabbit_hole_save',
-      name,
-      body,
-      wantsJournalEntry: true,
-      useLLM: false
+      message: body,
+      useLLM: false,
+      wantsJournalEntry: true
     });
     appendLogEntry({ kind: 'export', message: `${name} saved` });
     persist();

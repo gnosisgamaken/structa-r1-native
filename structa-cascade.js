@@ -148,30 +148,25 @@
     window.__STRUCTA_PTT_TARGET__ = source === 'ptt' ? 'camera' : null;
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
-    activeSurface = 'camera';
+    // Do NOT set activeSurface = 'camera' or call render() here.
+    // The camera-open event from showOverlay() inside StructaCamera.open()
+    // will set activeSurface and trigger render() when the stream is confirmed live.
+    // Setting it early causes a flash of the home stack underneath the grey overlay.
     window.StructaVoice?.close?.();
-    // Do NOT call StructaCamera.close() here — it kills the warmup stream that
-    // was pre-primed on app load. Killing it forces a cold getUserMedia() call
-    // in the PTT path which races on Rabbit hardware and produces the grey screen.
-    render();
 
     const openCamera = async () => {
-      // Always try native bridge first (no-op on non-native)
-      try { await native?.openCamera?.('environment'); } catch (_) {}
-      // Open camera — overlay is shown inside open() only after stream is live
       const result = await window.StructaCamera?.open?.();
-      if (result?.ok === false) {
+      if (!result?.ok) {
         pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');
         return;
       }
       pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
     };
 
-    // Both PTT and touch use requestAnimationFrame to ensure a user-gesture
-    // context is available for getUserMedia on all platforms including Rabbit.
-    requestAnimationFrame(() => {
-      void openCamera();
-    });
+    // Always use requestAnimationFrame — gives user-gesture budget for getUserMedia
+    // on both touch and PTT paths. PTT fires longPressStart synchronously inside
+    // a user-gesture, so rAF here still qualifies and keeps both paths identical.
+    requestAnimationFrame(() => void openCamera());
   }
 
   function openVoiceSurface(source = 'touch') {

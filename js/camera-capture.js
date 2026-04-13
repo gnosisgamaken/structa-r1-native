@@ -10,7 +10,7 @@
   let lastBundle = null;
   let flipLocked = false;
   let cameraPrimed = false;
-  let warmupPromise = null;
+  let openInFlight = false;
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -39,65 +39,25 @@
     setStatus('idle');
   }
 
-  async function warmup(mode = facingMode) {
-    if (cameraPrimed) return { ok: true, primed: true, facingMode };
-    if (warmupPromise) return warmupPromise;
-    const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
-    if (!navigator.mediaDevices?.getUserMedia) return { ok: false };
-    warmupPromise = (async () => {
-      facingMode = nextMode;
-      stopStream();
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
-        if (preview) {
-          preview.srcObject = stream;
-          await preview.play().catch(() => {});
-        }
-        cameraPrimed = true;
-        native?.setCameraFacing?.(facingMode);
-        stopStream();
-        return { ok: true, primed: true, facingMode };
-      } catch (error) {
-        stopStream();
-        return { ok: false, error };
-      } finally {
-        warmupPromise = null;
-      }
-    })();
-    return warmupPromise;
-  }
-
-  async function waitForPreviewReady(timeout = 900) {
+  async function waitForPreviewReady(timeout = 1200) {
     if (!preview) return true;
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeout) {
-      if ((preview.readyState >= 2 && preview.videoWidth > 0 && preview.videoHeight > 0) || !preview.paused) {
-        return true;
-      }
+      if (preview.readyState >= 2 && preview.videoWidth > 0 && preview.videoHeight > 0) return true;
+      if (!preview.paused) return true;
       await preview.play().catch(() => {});
-      await new Promise(resolve => setTimeout(resolve, 120));
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
-    return preview.readyState >= 2 || preview.videoWidth > 0;
+    // Last chance: accept if paused but has dimensions
+    return preview.videoWidth > 0 || preview.readyState >= 2;
   }
 
-  async function open(mode = facingMode) {
-    const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
-    if (stream && nextMode === facingMode) {
-      showOverlay();
-      return { ok: true, facingMode };
-    }
-    facingMode = nextMode;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus('camera unavailable');
-      return { ok: false };
-    }
-    // Do NOT show overlay until the stream is confirmed live.
-    // On cold start (especially via PTT on Rabbit hardware), showing the overlay
-    // before the stream is ready causes the permanent grey screen bug.
-    setStatus('starting');
+  // Core getUserMedia acquisition — called only when we have a user-gesture budget.
+  async function acquireStream(mode) {
+    if (!navigator.mediaDevices?.getUserMedia) return { ok: false, error: new Error('no getUserMedia') };
     stopStream();
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: false });
       if (preview) {
         preview.srcObject = stream;
         await preview.play().catch(() => {});
@@ -105,18 +65,50 @@
       const ready = await waitForPreviewReady();
       if (!ready) {
         stopStream();
-        setStatus('warming');
-        return { ok: false, error: new Error('camera preview not ready') };
+        return { ok: false, error: new Error('preview not ready') };
       }
+      return { ok: true };
+    } catch (error) {
+      stopStream();
+      return { ok: false, error };
+    }
+  }
+
+  // open() — always called from a user-gesture context (touch or rAF from PTT handler).
+  // Does NOT show overlay until stream is confirmed live.
+  async function open(mode = facingMode) {
+    if (openInFlight) return { ok: false, busy: true };
+    openInFlight = true;
+    try {
+      const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+
+      // Already have a live stream on the right facing mode — just show overlay.
+      if (stream && nextMode === facingMode && preview?.srcObject) {
+        await preview.play().catch(() => {});
+        showOverlay();
+        cameraPrimed = true;
+        native?.setCameraFacing?.(facingMode);
+        setStatus('ready');
+        return { ok: true, facingMode };
+      }
+
+      facingMode = nextMode;
+      setStatus('starting');
+
+      const result = await acquireStream(facingMode);
+      if (!result.ok) {
+        setStatus('blocked');
+        return { ok: false, error: result.error };
+      }
+
       cameraPrimed = true;
       native?.setCameraFacing?.(facingMode);
       setStatus('ready');
-      showOverlay(); // Only show overlay once stream is confirmed live
+      // Only show overlay once stream is confirmed live — eliminates grey screen.
+      showOverlay();
       return { ok: true, facingMode };
-    } catch (error) {
-      stopStream();
-      setStatus('blocked');
-      return { ok: false, error };
+    } finally {
+      openInFlight = false;
     }
   }
 
@@ -124,7 +116,14 @@
     if (flipLocked) return { ok: false, locked: true, facingMode };
     flipLocked = true;
     try {
-      return await open(facingMode === 'user' ? 'environment' : 'user');
+      const nextMode = facingMode === 'user' ? 'environment' : 'user';
+      facingMode = nextMode;
+      const result = await acquireStream(facingMode);
+      if (result.ok) {
+        native?.setCameraFacing?.(facingMode);
+        setStatus('ready');
+      }
+      return result.ok ? { ok: true, facingMode } : result;
     } finally {
       setTimeout(() => { flipLocked = false; }, 180);
     }
@@ -176,23 +175,30 @@
 
   function close() {
     stopStream();
+    cameraPrimed = false;
+    openInFlight = false;
     hideOverlay();
   }
 
+  // Overlay scroll = flip camera.
   overlay?.addEventListener('wheel', event => {
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
     flip();
   }, { passive: false });
 
+  // Overlay tap = capture (not close).
+  // PTT is handled by sideClick / longPressStart at the app level.
+  // Tapping the live overlay should capture, not dismiss.
   overlay?.addEventListener('pointerup', event => {
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
-    close();
+    event.stopPropagation();
+    capture();
   });
 
   const cleanupOnHide = () => {
-    if (document.hidden || overlay?.classList.contains('open')) close();
+    if (document.hidden) close();
   };
 
   window.addEventListener('pagehide', cleanupOnHide);
@@ -200,7 +206,6 @@
 
   window.StructaCamera = Object.freeze({
     open,
-    warmup,
     capture,
     flip,
     close,
@@ -211,7 +216,16 @@
     get primed() { return cameraPrimed; }
   });
 
-  setTimeout(() => {
-    void warmup().catch(() => {});
-  }, 180);
+  // Pre-warm: silently acquire + immediately release stream on app load.
+  // This grants getUserMedia permission context so PTT can reuse it instantly.
+  window.addEventListener('load', () => {
+    setTimeout(async () => {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        s.getTracks().forEach(t => t.stop());
+        cameraPrimed = true;
+      } catch (_) {}
+    }, 120);
+  });
 })();

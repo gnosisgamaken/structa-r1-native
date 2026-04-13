@@ -593,12 +593,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 100, y: 38, scale: 1.16, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 104, y: 34, scale: 1.12, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 70, y: 84, scale: 0.58, opacity: 1, depth: 0 },
-      { x: 82, y: 98, scale: 0.29, opacity: 0.98, depth: 1 },
-      { x: 90, y: 105, scale: 0.145, opacity: 0.96, depth: 2 }
+      { x: 74, y: 60, scale: 0.9, opacity: 1, depth: 0 },
+      { x: 50, y: 80, scale: 0.72, opacity: 0.98, depth: 1 },
+      { x: 30, y: 96, scale: 0.58, opacity: 0.96, depth: 2 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -645,14 +645,14 @@
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
     image('assets/icons/png/7.png', {
       x: 5,
-      y: -1,
+      y: -7,
       width: 18,
       height: 18,
       preserveAspectRatio: 'xMidYMid meet',
       opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(31, 16, 'structa', {
+    text(30, 10, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '34',
@@ -866,7 +866,14 @@
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     drawWordmark();
     if (activeSurface === 'home') {
-      cards.forEach((card, index) => drawCard(card, index));
+      cards
+        .map((card, index) => ({ card, index, layout: cardLayout(index) }))
+        .sort((a, b) => {
+          if (a.layout.depth === -1) return 1;
+          if (b.layout.depth === -1) return -1;
+          return b.layout.depth - a.layout.depth;
+        })
+        .forEach(({ card, index }) => drawCard(card, index));
     }
     drawNowPanel();
     drawInsightSurface();

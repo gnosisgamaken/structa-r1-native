@@ -1,56 +1,228 @@
-
-(() => {
-  var n = window.StructaNative;
-  var B = 'https://r1a.boondit.site/quick-fox-53';
-  var A = 'Bearer ' + String(575932);
-  var M = 'r1-command';
-  var T = 150;
-  var tmp = 0.5;
-  var hist = [];
-  var HMAX = 12;
-  var SYS = 'You are Structa, project cognition assistant. Be concise 2-4 sentences. Focus on project, no GitHub/web questions. Extract intent from voice, propose one next action. Never say cannot access. No headers.';
-
-  var DRIFT = [/github|repository/gi,/can.t access.*web/gi,/dlam|rabbit.tech/gi,/web search|look up online/gi,/I can.t help/gi];
-
-  function clean(t){if(!t)return'';var s=t.trim().split(/(?<=[.!?])\s+/);s=s.filter(function(x){return!DRIFT.some(function(d){return d.test(x)})});return s.join(' ').trim()||'';}
-
-  function fields(t){var r={raw:t,insight:t,next:'',conf:'med'};var m=t.match(/(?:next step|suggest|recommend|you should|start by|try)[:\s]*(.{10,100})/i);if(m)r.next=m[1].trim();if(/definitely|clearly/i.test(t))r.conf='high';if(/maybe|perhaps|might/i.test(t))r.conf='low';return r;}
-
+/**
+ * r1-llm.js -- Structa LLM client via R1 native bridge.
+ *
+ * Uses PluginMessageHandler.postMessage() to send messages to the R1's
+ * on-device LLM. Responses come back via window.onPluginMessage().
+ *
+ * This is the CORRECT way to access the R1 LLM — not HTTP.
+ */
+(function() {
+  var native = window.StructaNative;
+  var pendingCallbacks = {};
+  var requestId = 0;
+  var conversationHistory = [];
+  var MAX_HISTORY = 10;
   var lastCallTime = 0;
-  var MIN_GAP_MS = 8000; // 8s between calls — respect device connection
+  var MIN_GAP_MS = 5000;
 
-  async function ask(msg,opts){
-    // Rate limit: don't flood the R1 device connection
-    var now = Date.now();
-    var elapsed = now - lastCallTime;
-    if (elapsed < MIN_GAP_MS) {
-      await new Promise(function(r) { setTimeout(r, MIN_GAP_MS - elapsed); });
-    }
-    lastCallTime = Date.now();
-
-    opts=opts||{};var ms=[{role:'system',content:opts.sys||SYS}];
-    for(var i=0;i<hist.length;i++)ms.push(hist[i]);
-    ms.push({role:'user',content:msg});
-    try{
-      var r=await fetch(B+'/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':A},body:JSON.stringify({model:M,messages:ms,temperature:opts.tmp!=null?opts.tmp:tmp,max_tokens:opts.tok||T,stop:['\n\n']})});
-      if(!r.ok)return{ok:false,err:'HTTP '+r.status};
-      var d=await r.json();var raw=(d.choices&&d.choices[0]&&d.choices[0].message)?d.choices[0].message.content:'';var c=clean(raw);if(!c)return{ok:false,err:'drift',raw:raw};
-      if(opts.hist!==false){hist.push({role:'user',content:msg});hist.push({role:'assistant',content:c});while(hist.length>HMAX)hist.shift();}
-      return{ok:true,raw:raw,clean:c,fields:fields(c),usage:d.usage};
-    }catch(e){var errMsg = e.message || 'fail';
-      if(n && n.appendLogEntry) n.appendLogEntry({kind:'llm',message:'llm err: '+errMsg.slice(0,60)});
-      return{ok:false,err:errMsg};}
+  function getNextId() {
+    requestId++;
+    return 'structa-' + Date.now() + '-' + requestId;
   }
 
-  async function voice(t){var p=n&&n.getProjectMemory?n.getProjectMemory():{};var s=['Project: '+(p.name||'untitled')];if(p.backlog&&p.backlog.length)s.push('Tasks: '+p.backlog[0].title);if(p.decisions&&p.decisions.length)s.push('Decision: '+p.decisions[0].title);s.push('','Voice: "'+t+'"','','One next action.');return ask(s.filter(Boolean).join('\n'),{tok:120});}
+  /**
+   * sendToLLM -- core function.
+   * Sends a message to the R1's on-device LLM via PluginMessageHandler.
+   * Returns a promise that resolves with { ok, text } when the response arrives.
+   */
+  function sendToLLM(message, options) {
+    var opts = options || {};
+    var id = getNextId();
 
-  async function img(d,m){var p=n&&n.getProjectMemory?n.getProjectMemory():{};return ask('Project: '+(p.name||'untitled')+'\nCamera: '+(m&&m.facingMode||'environment')+'\n\nImage: "'+(d||'no desc')+'"\n\n1-2 key elements from this image.',{tok:120});}
+    return new Promise(function(resolve) {
+      // Rate limit
+      var now = Date.now();
+      var elapsed = now - lastCallTime;
+      var delay = elapsed < MIN_GAP_MS ? MIN_GAP_MS - elapsed : 0;
 
-  async function q(question){var p=n&&n.getProjectMemory?n.getProjectMemory():{};var s=['Project: '+(p.name||'untitled')];if(p.backlog&&p.backlog.length)s.push('Open: '+p.backlog.slice(0,3).map(function(b){return b.title}).join(', '));s.push('',question);return ask(s.filter(Boolean).join('\n'));}
+      setTimeout(function() {
+        lastCallTime = Date.now();
 
-  function save(r,src){if(!r||!r.ok||!r.clean)return null;if(!n||!n.touchProjectMemory)return null;return n.touchProjectMemory(function(p){p.insights=Array.isArray(p.insights)?p.insights:[];p.insights.unshift({title:(src||'llm')+' insight',body:r.clean,next:r.fields?r.fields.next:'',confidence:r.fields?r.fields.conf:'med',created_at:new Date().toISOString()});p.insights=p.insights.slice(0,16);});}
+        // Store callback for when response arrives
+        pendingCallbacks[id] = {
+          resolve: resolve,
+          timeout: setTimeout(function() {
+            delete pendingCallbacks[id];
+            resolve({ ok: false, error: 'timeout' });
+          }, opts.timeout || 30000)
+        };
 
-  function reset(){hist=[];}
+        // Build payload — this is the R1 Create SDK format
+        var payload = {
+          message: message,
+          useLLM: true,
+          wantsR1Response: opts.speak || false,
+          wantsJournalEntry: opts.journal || false
+        };
 
-  window.StructaLLM=Object.freeze({sendToLLM:ask,processVoice:voice,processImage:img,query:q,storeAsInsight:save,resetHistory:reset,get historyLength(){return hist.length;}});
+        if (opts.pluginId) payload.pluginId = opts.pluginId;
+
+        // Send via native bridge
+        if (typeof PluginMessageHandler !== 'undefined') {
+          try {
+            PluginMessageHandler.postMessage(JSON.stringify(payload));
+            if (native && native.appendLogEntry) {
+              native.appendLogEntry({ kind: 'llm', message: 'llm: thinking...' });
+            }
+          } catch (err) {
+            delete pendingCallbacks[id];
+            resolve({ ok: false, error: 'postMessage failed: ' + err.message });
+          }
+        } else {
+          delete pendingCallbacks[id];
+          resolve({ ok: false, error: 'PluginMessageHandler not available' });
+        }
+      }, delay);
+    });
+  }
+
+  // === Response handler ===
+  // The R1 OS sends LLM responses back via onPluginMessage.
+  // We intercept all responses and route to the correct pending callback.
+  var previousHandler = window.onPluginMessage;
+
+  window.onPluginMessage = function(data) {
+    // Try to extract the LLM response text
+    var responseText = '';
+    var responseType = '';
+
+    if (data) {
+      responseType = data.type || '';
+      // The LLM response can be in several places:
+      responseText = data.message || data.content || data.response || '';
+      // Try parsing data.data if it's a JSON string
+      if (!responseText && data.data) {
+        try {
+          var parsed = JSON.parse(data.data);
+          responseText = parsed.message || parsed.content || parsed.response || '';
+          responseType = responseType || parsed.type || '';
+        } catch (e) {
+          responseText = data.data;
+        }
+      }
+    }
+
+    // If this is an STT response, let voice-capture handle it
+    if (responseType === 'sttEnded' && data.transcript) {
+      // Let other handlers process STT
+      if (previousHandler) {
+        try { previousHandler(data); } catch (e) {}
+      }
+      // Also dispatch custom event for voice-capture.js
+      window.dispatchEvent(new CustomEvent('structa-stt-ended', {
+        detail: { transcript: data.transcript }
+      }));
+      return;
+    }
+
+    // Route LLM response to the most recent pending callback
+    var callbackIds = Object.keys(pendingCallbacks);
+    if (callbackIds.length > 0 && responseText) {
+      var oldestId = callbackIds[0];
+      var cb = pendingCallbacks[oldestId];
+      if (cb) {
+        clearTimeout(cb.timeout);
+        delete pendingCallbacks[oldestId];
+        var clean = sanitizeResponse(responseText);
+        cb.resolve({
+          ok: true,
+          text: responseText,
+          clean: clean,
+          structured: extractFields(clean)
+        });
+        return;
+      }
+    }
+
+    // Pass to previous handler if any
+    if (previousHandler) {
+      try { previousHandler(data); } catch (e) {}
+    }
+  };
+
+  // === Sanitization ===
+  var DRIFT = [
+    /github|repository/gi,
+    /can.t access.*web|unable to.*web/gi,
+    /dlam|rabbit\.tech/gi,
+    /web search|look up online/gi,
+    /I can.t help/gi
+  ];
+
+  function sanitizeResponse(text) {
+    if (!text) return '';
+    var clean = text.trim();
+    var sentences = clean.split(/(?<=[.!?])\s+/);
+    var filtered = sentences.filter(function(s) {
+      return !DRIFT.some(function(d) { return d.test(s); });
+    });
+    return filtered.join(' ').trim() || '';
+  }
+
+  function extractFields(text) {
+    var result = { raw: text, insight: text, next: '', conf: 'med' };
+    var m = text.match(/(?:next step|suggest|recommend|you should|start by|try)[:\s]*(.{10,100})/i);
+    if (m) result.next = m[1].trim();
+    if (/definitely|clearly/i.test(text)) result.conf = 'high';
+    if (/maybe|perhaps|might/i.test(text)) result.conf = 'low';
+    return result;
+  }
+
+  // === Specialized entry points ===
+
+  function processVoice(transcript) {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var parts = ['Project: ' + (project.name || 'untitled')];
+    if (project.backlog && project.backlog.length) parts.push('Tasks: ' + project.backlog[0].title);
+    if (project.decisions && project.decisions.length) parts.push('Decision: ' + project.decisions[0].title);
+    parts.push('', 'Voice: "' + transcript + '"', '', 'One concrete next action.');
+    return sendToLLM(parts.filter(Boolean).join('\n'));
+  }
+
+  function processImage(desc, meta) {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var parts = ['Project: ' + (project.name || 'untitled'),
+      'Camera: ' + (meta && meta.facingMode || 'environment'), '',
+      'Image captured: "' + (desc || 'no description') + '"', '',
+      'What does this tell us? 1-2 key elements.'];
+    return sendToLLM(parts.join('\n'));
+  }
+
+  function query(question) {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var parts = ['Project: ' + (project.name || 'untitled')];
+    if (project.backlog && project.backlog.length) {
+      parts.push('Open: ' + project.backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
+    }
+    parts.push('', question);
+    return sendToLLM(parts.filter(Boolean).join('\n'));
+  }
+
+  function storeAsInsight(result, sourceType) {
+    if (!result || !result.ok || !result.clean) return null;
+    if (!native || !native.touchProjectMemory) return null;
+    return native.touchProjectMemory(function(project) {
+      project.insights = Array.isArray(project.insights) ? project.insights : [];
+      project.insights.unshift({
+        title: (sourceType || 'llm') + ' insight',
+        body: result.clean,
+        next: result.structured ? result.structured.next : '',
+        confidence: result.structured ? result.structured.conf : 'med',
+        created_at: new Date().toISOString()
+      });
+      project.insights = project.insights.slice(0, 16);
+    });
+  }
+
+  function resetHistory() { conversationHistory = []; }
+
+  window.StructaLLM = Object.freeze({
+    sendToLLM: sendToLLM,
+    processVoice: processVoice,
+    processImage: processImage,
+    query: query,
+    storeAsInsight: storeAsInsight,
+    resetHistory: resetHistory,
+    get pendingCount() { return Object.keys(pendingCallbacks).length; }
+  });
 })();

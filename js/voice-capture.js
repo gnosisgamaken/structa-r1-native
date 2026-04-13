@@ -123,7 +123,7 @@
     close();
   }
 
-  function startListening() {
+  async function startListening() {
     if (listening) return;
 
     // Don't interfere with camera PTT
@@ -220,20 +220,12 @@
     }
   }
 
-  // R1 native STT callback — THIS IS THE KEY
-  // The R1 OS sends sttEnded when it finishes processing voice audio.
-  window.onPluginMessage = function(data) {
-    if (data && data.type === 'sttEnded' && data.transcript) {
-      if (transcript) transcript.textContent = data.transcript;
-      handleTranscript(data.transcript);
-      stopListening(false);
-    }
-  };
-
-  // Also listen via addEventListener in case onPluginMessage isn't the right hook
-  window.addEventListener('pluginmessage', function(event) {
+  // Listen for STT transcript from R1 native bridge.
+  // r1-llm.js intercepts onPluginMessage and dispatches this custom event
+  // when type === 'sttEnded'.
+  window.addEventListener('structa-stt-ended', function(event) {
     var data = event && event.detail;
-    if (data && data.type === 'sttEnded' && data.transcript) {
+    if (data && data.transcript) {
       if (transcript) transcript.textContent = data.transcript;
       handleTranscript(data.transcript);
       stopListening(false);

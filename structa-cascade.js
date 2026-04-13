@@ -593,12 +593,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 116, y: 14, scale: 1.34, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 107, y: 18, scale: 1.38, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 83, y: 38, scale: 1.07, opacity: 1, depth: 0 },
-      { x: 60, y: 66, scale: 0.86, opacity: 0.98, depth: 1 },
-      { x: 41, y: 88, scale: 0.69, opacity: 0.96, depth: 2 }
+      { x: 81, y: 39, scale: 1.08, opacity: 1, depth: 0 },
+      { x: 58, y: 67, scale: 0.86, opacity: 0.98, depth: 1 },
+      { x: 40, y: 89, scale: 0.69, opacity: 0.96, depth: 2 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -644,19 +644,19 @@
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
     image('assets/icons/png/5.png', {
-      x: 5,
-      y: -15,
+      x: 11,
+      y: -17,
       width: 18,
       height: 18,
       preserveAspectRatio: 'xMidYMid meet',
       opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(32, 2, 'structa', {
+    text(36, 0, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '35',
-      'letter-spacing': '0.005em'
+      'letter-spacing': '0.0em'
     });
   }
 

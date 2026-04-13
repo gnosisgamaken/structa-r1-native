@@ -106,7 +106,8 @@
     setStatus('acquiring');
 
     // 3. getUserMedia called NOW — still inside the synchronous event handler chain.
-    navigator.mediaDevices.getUserMedia({ video: { facingMode } })
+    // Cap at 640×480 for Rabbithole sync compatibility
+    navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { max: 640 }, height: { max: 480 } } })
       .then(async (mediaStream) => {
         stream = mediaStream;
         window.__STRUCTA_PRIMED_STREAM__ = stream;
@@ -133,7 +134,8 @@
       const nextMode = facingMode === 'user' ? 'environment' : 'user';
       killStream();
       // Flip is triggered from scroll which is a trusted gesture
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: nextMode } })
+      // Cap at 640×480 for Rabbithole sync compatibility
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: nextMode, width: { max: 640 }, height: { max: 480 } } })
         .then(async (mediaStream) => {
           stream = mediaStream;
           facingMode = nextMode;

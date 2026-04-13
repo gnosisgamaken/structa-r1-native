@@ -470,33 +470,15 @@
   function startPTT() {
     appendLogEntry({ kind: 'voice', message: 'voice capture started' });
     emit('ptt_started', { active: true });
-    return sendStructuredMessage({
-      verb: 'capture',
-      target: 'voice',
-      input_type: 'ptt-start',
-      source_type: 'microphone',
-      intent: 'start voice capture',
-      goal: 'capture spoken intent',
-      approval_mode: 'human_required',
-      fallback: 'voice-capture',
-      payload: { device_scope_key: deviceScopeKey }
-    });
+    // Local event only — do NOT send to LLM.
+    // voice-capture.js handles the LLM call after transcript arrives (r1-llm.js → processVoice).
   }
 
   function stopPTT(transcript = '') {
     appendLogEntry({ kind: 'voice', message: transcript ? `voice ${lower(transcript).slice(0, 48)}` : 'voice capture stopped' });
     emit('ptt_stopped', { transcript });
-    return sendStructuredMessage({
-      verb: 'inspect',
-      target: 'voice',
-      input_type: 'ptt-stop',
-      source_type: 'microphone',
-      intent: transcript ? `process transcript ${lower(transcript)}` : 'process voice capture',
-      goal: 'normalize spoken intent',
-      approval_mode: 'human_required',
-      fallback: 'voice-capture',
-      payload: { transcript: lower(transcript), device_scope_key: deviceScopeKey }
-    });
+    // Local event only — do NOT send to LLM.
+    // voice-capture.js already sent transcript to LLM via r1-llm.js (handleTranscript → processVoice).
   }
 
   function getRecentLogEntries(limit = 5, options = {}) {

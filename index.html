@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=240, height=282, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0b0b0b" />
@@ -33,8 +33,17 @@
     }
 
     * {
+      margin: 0;
+      padding: 0;
       box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
+    }
+
+    body.input-locked {
+      pointer-events: none;
     }
 
     html, body {
@@ -353,6 +362,16 @@
       50% { transform: scaleY(1); opacity: 0.9; }
     }
 
+    @keyframes pulse-red {
+      0%, 100% { opacity: 0.5; r: 6; }
+      50% { opacity: 1; r: 10; }
+    }
+
+    /* Voice overlay: no transition delay — instant appearance */
+    #voice-overlay {
+      transition: none;
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -421,6 +440,7 @@
   <script src="js/voice-capture.js"></script>
   <script src="js/camera-capture.js"></script>
   <script src="js/r1-llm.js"></script>
+  <script src="js/heartbeat.js"></script>
   <script src="structa-cascade.js"></script>
 </body>
 </html>

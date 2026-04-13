@@ -51,9 +51,16 @@
 
   function exitHintMode() {
     if (!hintMode) return;
+    // Clean up camera if it was opened for hint mode
+    if (hintTarget === 'show' && window.StructaCamera?.primed) {
+      window.StructaCamera?.close?.();
+    }
     pushLog('hint mode exit', 'focus');
     hintMode = false;
     hintTarget = null;
+    pttActive = false;
+    window.__STRUCTA_PTT_TARGET__ = null;
+    document.body.classList.remove('input-locked');
     updateHintUI(null, false); // Clear hint UI
   }
 
@@ -75,7 +82,7 @@
   }
 
   function isHintModeActive() {
-    return hintMode && pttActive;
+    return hintMode;
   }
 
   function currentCard() {
@@ -365,35 +372,37 @@
 
   function handleLongPressStart() {
     if (logOpen) return;
-    
-    // If in hint mode, PTT hold should activate instantly
-    if (isHintModeActive()) {
+
+    // If in hint mode, PTT hold activates the target surface instantly
+    if (hintMode) {
       if (hintTarget === 'show') {
-        // Instant camera activation from hint mode
+        // C1 fix: Open camera preview only — do NOT capture on release
         window.__STRUCTA_PTT_TARGET__ = 'camera';
         window.StructaCamera?.openFromGesture?.('environment');
         pttActive = true;
-        updateHintUI('show', true); // Show active state
-        pushLog('show: instant capture', 'focus');
+        updateHintUI('show', true);
+        pushLog('show: camera aiming', 'focus');
         return;
       }
       if (hintTarget === 'tell') {
         // Instant voice activation from hint mode
         window.__STRUCTA_PTT_TARGET__ = 'voice';
+        document.body.classList.add('input-locked');
         window.StructaVoice?.startListening?.();
         pttActive = true;
-        updateHintUI('tell', true); // Show active state
+        updateHintUI('tell', true);
         pushLog('tell: instant listening', 'focus');
         return;
       }
     }
-    
-    // Existing behavior when not in hint mode active
+
+    // Not in hint mode — existing behavior
     if (activeSurface === 'camera') {
       window.StructaCamera?.capture?.();
       return;
     }
     if (activeSurface === 'voice') {
+      document.body.classList.add('input-locked');
       window.StructaVoice?.startListening?.();
       return;
     }
@@ -414,6 +423,7 @@
       return;
     }
     if (card.id === 'show') {
+      // C1 fix: Open camera preview (touch-activate) — user taps to open, aims, then captures
       openCameraSurface('ptt');
       return;
     }
@@ -424,17 +434,21 @@
       exportLogsFromHardware();
       return;
     }
-    
-    // If PTT was active during hint mode, complete the action and exit hint mode
+
+    document.body.classList.remove('input-locked');
+
+    // If PTT was active during hint mode, handle completion
     if (pttActive && hintMode) {
       pttActive = false;
       if (hintTarget === 'show') {
-        // Camera capture was active, now complete it
-        window.StructaCamera?.capture?.();
-        pushLog('show: capture complete', 'focus');
+        // C1 fix: Do NOT capture on release — camera stays open for aiming.
+        // User captures via side button or tap on camera overlay.
+        pushLog('show: release — aim and press side to shoot', 'focus');
+        // Don't exit hint mode — camera is still active
+        return;
       }
       if (hintTarget === 'tell') {
-        // Voice listening was active, now stop and process
+        // Voice listening was active, stop and process transcript
         window.StructaVoice?.stopListening?.(true);
         pushLog('tell: listening complete', 'focus');
       }
@@ -442,7 +456,7 @@
       window.__STRUCTA_PTT_TARGET__ = null;
       return;
     }
-    
+
     // Existing behavior
     window.__STRUCTA_PTT_TARGET__ = null;
     if (activeSurface === 'voice' && window.StructaVoice?.listening) {
@@ -727,13 +741,15 @@
 
   function cardLayout(index) {
     // Hero — left edge at viewport center (x=120), extends past right edge
-    if (index === selectedIndex) return { x: 120, y: 58, scale: 1.5, opacity: 1, depth: -1 };
+    // Y=48 to avoid clipping into log drawer (bottom 18px at 274-292)
+    // Card bottom = 48 + 150*1.5 = 273, just above drawer at 274
+    if (index === selectedIndex) return { x: 120, y: 48, scale: 1.5, opacity: 1, depth: -1 };
     // Stack — 3 cards in left half (x=0 to x=120), equal 40px zones
     // Left half = 120px / 3 cards = 40px zone per card
     // Front (closest to hero): largest scale, peeks least (40px zone)
     // Back (furthest from hero): smallest scale, peeks most (full 120px visible)
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 58 + (150 * 1.5) / 2; // 170.5 — centered below title
+    var heroCenterY = 48 + (150 * 1.5) / 2; // 160.5 — centered below title
     // depth 0 = back (smallest, x=0), depth 2 = front (largest, x=80)
     var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
@@ -774,13 +790,11 @@
       // Determine style based on hint state
       let style = 'filter: brightness(0) saturate(100%);';
       if (hintState === 'active') {
-        style = 'filter: brightness(0) saturate(100%) hue-rotate(0deg) brightness(1.2);'; // Reddish tint
+        style = 'filter: brightness(0) saturate(100%) hue-rotate(0deg) brightness(1.2);';
       } else if (hintState === 'hint') {
-        // For pulsing effect, we'll animate via CSS class or opacity cycling
-        // For now, use a bright state - animation would require CSS keyframes
-        style = 'filter: brightness(0) saturate(150%) hue-rotate(300deg);'; // Pink/purple for hint
+        style = 'filter: brightness(0) saturate(150%) hue-rotate(300deg);';
       }
-      
+
       image(card.iconPath, {
         x: 18,
         y: 16,
@@ -790,20 +804,58 @@
         opacity: 1,
         style: style
       }, parent);
+
+      // Hint mode: add pulsing red dot on the icon (SVG animate — survives render cycles)
+      if (hintState === 'hint' || hintState === 'active') {
+        const pulseCircle = mk('circle', {
+          cx: 42,
+          cy: 18,
+          r: hintState === 'active' ? 8 : 6,
+          fill: card.id === 'show' ? 'rgba(119,213,255,0.9)' : 'rgba(146,255,157,0.9)'
+        }, parent);
+        if (hintState === 'hint') {
+          const animR = mk('animate', {
+            attributeName: 'r',
+            values: '6;10;6',
+            dur: '0.8s',
+            repeatCount: 'indefinite'
+          }, pulseCircle);
+          const animOpacity = mk('animate', {
+            attributeName: 'opacity',
+            values: '0.5;1;0.5',
+            dur: '0.8s',
+            repeatCount: 'indefinite'
+          }, pulseCircle);
+        }
+      }
       return;
     }
     // Fallback to text icon with color based on hint state
     let fill = 'rgba(10,10,10,0.88)';
     if (hintState === 'active') {
-      fill = 'rgba(255,0,0,0.9)'; // Red
+      fill = 'rgba(255,0,0,0.9)';
     } else if (hintState === 'hint') {
-      fill = 'rgba(255,105,180,0.9)'; // Hot pink for hint
+      fill = 'rgba(255,105,180,0.9)';
     }
     text(18, 40, card.iconFallback || '•', {
       fill: fill,
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '28'
     }, parent);
+
+    // Pulse dot for fallback icon too
+    if (hintState === 'hint' || hintState === 'active') {
+      const pulseCircle = mk('circle', {
+        cx: 42,
+        cy: 18,
+        r: hintState === 'active' ? 8 : 6,
+        fill: card.id === 'show' ? 'rgba(119,213,255,0.9)' : 'rgba(146,255,157,0.9)'
+      }, parent);
+      if (hintState === 'hint') {
+        mk('animate', { attributeName: 'r', values: '6;10;6', dur: '0.8s', repeatCount: 'indefinite' }, pulseCircle);
+        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '0.8s', repeatCount: 'indefinite' }, pulseCircle);
+      }
+    }
   }
 
   function drawWordmark() {
@@ -883,7 +935,11 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '22'
       }, group);
-      const words = lower(card.roleShort || card.role).split(/\s+/);
+      // C2: In hint mode, replace roleShort with actionable hint text
+      const displayRole = (hintMode && hintTarget === card.id)
+        ? (card.id === 'show' ? 'hold to shoot' : 'hold to say')
+        : lower(card.roleShort || card.role);
+      const words = displayRole.split(/\s+/);
       const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
       const secondLine = words.slice(Math.ceil(words.length / 2)).join(' ');
       text(18, 101, firstLine, {
@@ -1067,15 +1123,18 @@
     wrapText(undefined, lower(item.next), 14, 262, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }
 
+  // L1: Cache canvas context for text measurement — avoid creating new canvas every wrapText call
+  const _measureCanvas = document.createElement('canvas');
+  const _measureCtx = _measureCanvas.getContext('2d');
+
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {
     const words = lower(content).split(/\s+/);
     let line = '';
     let row = 0;
-    const measure = document.createElement('canvas').getContext('2d');
-    measure.font = `${fontSize}px PowerGrotesk-Regular`;
+    _measureCtx.font = `${fontSize}px PowerGrotesk-Regular`;
     words.forEach(word => {
       const test = line ? `${line} ${word}` : word;
-      if (measure.measureText(test).width > width && line) {
+      if (_measureCtx.measureText(test).width > width && line) {
         text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': fontSize }, parent);
         line = word;
         row += 1;
@@ -1116,6 +1175,13 @@
   }
 
   function handleNativeBack(event) {
+    // Back button exits hint mode first
+    if (hintMode) {
+      exitHintMode();
+      render();
+      if (event) event.preventDefault?.();
+      return;
+    }
     if (activeSurface !== 'home' || logOpen) {
       if (event) event.preventDefault?.();
       backHome();
@@ -1208,7 +1274,7 @@
     if (cameraPrimed) return;
     cameraPrimed = true;
     if (navigator.mediaDevices?.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { max: 640 }, height: { max: 480 } } })
         .then(stream => {
           window.__STRUCTA_PRIMED_STREAM__ = stream;
           pushLog('camera ready', 'focus');

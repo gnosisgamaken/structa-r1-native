@@ -596,16 +596,16 @@
   }
 
   function cardLayout(index) {
-    // Hero card — large, anchored left
-    if (index === selectedIndex) return { x: 4, y: 24, scale: 1.30, opacity: 1, depth: -1 };
-    // Stack — each card's right edge peeks past the hero
-    // Centers aligned vertically with the hero center (y=121.5)
+    // Hero — big card on the left
+    if (index === selectedIndex) return { x: 4, y: 20, scale: 1.32, opacity: 1, depth: -1 };
+    // Stack — RIGHT of hero, visible peeks
+    // Each card: +22px right, +18px down, 18% smaller
+    // Stack[0] starts at hero's right edge (199) + 6px gap = 205
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    const heroCenterY = 24 + (150 * 1.30) / 2; // 121.5
     const stack = [
-      { x: 28, y: heroCenterY - (150 * 0.98) / 2, scale: 0.98, opacity: 1, depth: 0 },
-      { x: 52, y: heroCenterY - (150 * 0.74) / 2, scale: 0.74, opacity: 0.98, depth: 1 },
-      { x: 74, y: heroCenterY - (150 * 0.54) / 2, scale: 0.54, opacity: 0.96, depth: 2 }
+      { x: 154, y: 36, scale: 0.82, opacity: 1, depth: 0 },
+      { x: 178, y: 58, scale: 0.66, opacity: 0.98, depth: 1 },
+      { x: 198, y: 80, scale: 0.52, opacity: 0.96, depth: 2 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }

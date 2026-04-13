@@ -164,11 +164,20 @@
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
     window.StructaVoice?.close?.();
 
-    // openFromGesture calls getUserMedia SYNCHRONOUSLY from within this
-    // event handler chain. This is the ONLY safe way to acquire the camera
-    // on R1 where getUserMedia requires a trusted user gesture.
+    if (source === 'ptt') {
+      // PTT on show: show "touch" prompt overlay — camera needs trusted touch to activate
+      document.getElementById('app')?.classList.add('overlay-active');
+      var overlay = document.getElementById('camera-overlay');
+      overlay?.classList.add('open');
+      overlay?.setAttribute('aria-hidden', 'false');
+      overlay?.classList.add('touch-activate');
+      pushLog('show: touch to activate', 'focus');
+      return;
+    }
+
+    // Direct touch: activate camera immediately
     window.StructaCamera?.openFromGesture?.();
-    pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
+    pushLog('show ready', 'focus');
   }
 
   function openVoiceSurface(source = 'touch') {
@@ -190,6 +199,14 @@
     native?.setActiveNode?.(card.id);
     native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
     pushLog(`${card.title} ready`, 'focus');
+    if (card.surface === 'camera') {
+      openCameraSurface('touch');
+      return;
+    }
+    if (card.surface === 'voice') {
+      openVoiceSurface('touch');
+      return;
+    }
     if (card.surface === 'insight') {
       activeSurface = 'insight';
       knowLaneIndex = 0;
@@ -283,13 +300,8 @@
       setLogDrawer(false);
       return;
     }
-    // Side button on home: open know/now surfaces, but NOT show/tell (PTT handles those)
-    const card = currentCard();
-    if (card.surface === 'camera' || card.surface === 'voice') {
-      selectIndex(selectedIndex); // just select, don't open
-    } else {
-      openCard(card);
-    }
+    // Side button on home: open the current card's surface
+    openCard(currentCard());
   }
 
   function handleLongPressStart() {
@@ -612,13 +624,13 @@
 
   function cardLayout(index) {
     // Hero — left edge at viewport center (x=120), extends past right edge
-    if (index === selectedIndex) return { x: 120, y: 36, scale: 1.5, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 120, y: 52, scale: 1.5, opacity: 1, depth: -1 };
     // Stack — 3 cards in left half (x=0 to x=120), equal 40px zones
     // Left half = 120px / 3 cards = 40px zone per card
     // Front (closest to hero): largest scale, peeks least (40px zone)
     // Back (furthest from hero): smallest scale, peeks most (full 120px visible)
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 36 + (150 * 1.5) / 2; // 148.5 — viewport center of 292
+    var heroCenterY = 52 + (150 * 1.5) / 2; // 164.5 — centered below title
     // depth 0 = back (smallest, x=0), depth 2 = front (largest, x=80)
     var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
@@ -677,14 +689,14 @@
     if (activeSurface !== 'home') return;
     image('assets/icons/png/5.png', {
       x: 11,
-      y: 30,
+      y: -14,
       width: 24,
       height: 24,
       preserveAspectRatio: 'xMidYMid meet',
       opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(42, 52, 'structa', {
+    text(42, 10, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '35',
@@ -696,7 +708,7 @@
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11,
-        y: 30,
+        y: -14,
         width: 24,
         height: 24,
         preserveAspectRatio: 'xMidYMid meet',
@@ -704,7 +716,7 @@
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
-    text(42, 52, card.title, {
+    text(42, 10, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '40',
@@ -782,16 +794,8 @@
 
     const activate = event => {
       event.preventDefault();
-      if (selected) {
-        // Hero card tap: open know/now surfaces, but NOT show/tell (PTT handles those)
-        if (card.surface === 'camera' || card.surface === 'voice') {
-          selectIndex(index);
-        } else {
-          openCard(card);
-        }
-      } else {
-        selectIndex(index);
-      }
+      if (selected) openCard(card);
+      else selectIndex(index);
     };
 
     group.addEventListener('pointerup', activate);
@@ -819,16 +823,16 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
     // Project subtitle
-    text(14, 76, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+    text(14, 38, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
     // Since last time
-    drawSectionLabel(undefined, 14, 94, 'since last time');
-    wrapText(undefined, lower(data.changed), 14, 110, 212, 14, 'rgba(8,8,8,0.92)', '14');
+    drawSectionLabel(undefined, 14, 56, 'since last time');
+    wrapText(undefined, lower(data.changed), 14, 66, 212, 14, 'rgba(8,8,8,0.92)', '14');
     // Latest capture
-    drawSectionLabel(undefined, 14, 158, 'latest useful capture');
-    wrapText(undefined, lower(data.capture), 14, 174, 212, 14, 'rgba(8,8,8,0.72)', '13');
+    drawSectionLabel(undefined, 14, 130, 'latest useful capture');
+    wrapText(undefined, lower(data.capture), 14, 140, 212, 14, 'rgba(8,8,8,0.72)', '13');
     // Next move
-    drawSectionLabel(undefined, 14, 218, 'next move');
-    wrapText(undefined, lower(data.next), 14, 234, 212, 14, 'rgba(8,8,8,0.96)', '14');
+    drawSectionLabel(undefined, 14, 200, 'next move');
+    wrapText(undefined, lower(data.next), 14, 210, 212, 14, 'rgba(8,8,8,0.96)', '14');
     // Footer stats
     text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
   }
@@ -887,19 +891,19 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
 
-    // Lane tabs — squared corners, close to title
-    drawSquaredPill(14, 66, 60, 20, 'signals', lane.id === 'signals', 'dark');
-    drawSquaredPill(79, 66, 64, 20, 'decide', lane.id === 'decisions', 'dark');
-    drawSquaredPill(148, 66, 62, 20, 'loops', lane.id === 'open loops', 'dark');
+    // Lane tabs — squared corners, close below title
+    drawSquaredPill(14, 36, 60, 20, 'signals', lane.id === 'signals', 'dark');
+    drawSquaredPill(79, 36, 64, 20, 'decide', lane.id === 'decisions', 'dark');
+    drawSquaredPill(148, 36, 62, 20, 'loops', lane.id === 'open loops', 'dark');
 
     // Filter row
-    text(14, 101, 'filter', {
+    text(14, 71, 'filter', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
     });
-    drawSquaredPill(46, 91, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 103, `${items.length} results`, {
+    drawSquaredPill(46, 61, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(220, 73, `${items.length} results`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
@@ -907,24 +911,24 @@
     });
 
     if (!knowDetail) {
-      text(14, 131, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
-      wrapText(undefined, lower(lane.summary), 14, 151, 212, 14, 'rgba(8,8,8,0.64)', '13');
-      drawSectionLabel(undefined, 14, 210, 'best match now');
-      wrapText(undefined, lower(item.title), 14, 228, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      text(14, 96, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
+      wrapText(undefined, lower(lane.summary), 14, 114, 212, 14, 'rgba(8,8,8,0.64)', '13');
+      drawSectionLabel(undefined, 14, 180, 'best match now');
+      wrapText(undefined, lower(item.title), 14, 196, 212, 14, 'rgba(8,8,8,0.96)', '14');
       return;
     }
 
-    text(14, 131, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
-    text(220, 131, formatTimeLabel(item.created_at), {
+    text(14, 96, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
+    text(220, 96, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
     });
-    drawSectionLabel(undefined, 14, 154, item.source === 'question' ? 'open ask' : 'what it says');
-    wrapText(undefined, lower(item.body), 14, 172, 212, 14, 'rgba(8,8,8,0.90)', '13');
-    drawSectionLabel(undefined, 14, 256, 'next move');
-    wrapText(undefined, lower(item.next), 14, 272, 212, 13, 'rgba(8,8,8,0.96)', '13');
+    drawSectionLabel(undefined, 14, 116, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(undefined, lower(item.body), 14, 132, 212, 14, 'rgba(8,8,8,0.90)', '13');
+    drawSectionLabel(undefined, 14, 230, 'next move');
+    wrapText(undefined, lower(item.next), 14, 246, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {

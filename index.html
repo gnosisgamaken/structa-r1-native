@@ -229,6 +229,45 @@
       background: #000;
     }
 
+    #camera-overlay.touch-activate {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #camera-overlay.touch-activate #camera-preview {
+      display: none;
+    }
+
+    .touch-prompt {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    #camera-overlay.touch-activate .touch-prompt {
+      display: flex;
+    }
+
+    .touch-prompt-icon {
+      width: 48px;
+      height: 48px;
+      opacity: 0.8;
+      filter: brightness(0) invert(0.96);
+    }
+
+    .touch-prompt-text {
+      font-family: 'PowerGrotesk-Regular', sans-serif;
+      font-size: 28px;
+      color: rgba(244, 239, 228, 0.8);
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+    }
+
     #camera-preview {
       position: absolute;
       inset: 0;
@@ -347,6 +386,10 @@
     <section id="camera-overlay" class="overlay" aria-hidden="true">
       <video id="camera-preview" autoplay playsinline muted></video>
       <canvas id="camera-canvas"></canvas>
+      <div class="touch-prompt" id="touch-prompt">
+        <img class="touch-prompt-icon" src="assets/icons/svg/touch.svg" alt="touch" />
+        <span class="touch-prompt-text">touch</span>
+      </div>
       <div class="capture-center">
         <div class="capture-glyph" id="camera-glyph" aria-hidden="true"></div>
       </div>

@@ -250,6 +250,13 @@
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
     event.stopPropagation();
+    // Touch activation mode: PTT pressed on "show" card, camera needs trusted touch
+    if (overlay.classList.contains('touch-activate')) {
+      overlay.classList.remove('touch-activate');
+      openFromGesture();
+      return;
+    }
+    // Normal mode: capture image
     capture();
   });
 

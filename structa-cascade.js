@@ -596,17 +596,19 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 86, y: 18, scale: 1.34, opacity: 1, depth: -1 };
-    // Stack — all centers aligned with hero center (y=118.5)
-    // Equal 60px steps. Last card left edge at x=0.
+    // Hero — left edge at viewport center (x=120), extends past right edge
+    if (index === selectedIndex) return { x: 120, y: 18, scale: 1.34, opacity: 1, depth: -1 };
+    // Stack — 3 cards in left half (x=0 to x=120), concentric centers
+    // Progressive peek: stack[2] peeks most, stack[0] peeks least
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 18 + (150 * 1.34) / 2;
-    var scales = [0.88, 0.74, 0.62];
-    var step = 60;
+    var heroCenterY = 18 + (150 * 1.34) / 2; // 119
+    // Right edges at 131, 139, 148. Peeks: 11, 19, 28.
+    var scales = [0.68, 0.58, 0.48];
+    var xPositions = [29, 52, 76];
     var stack = scales.map(function(s, i) {
       var cardH = 150 * s;
       return {
-        x: 86 - step * (i + 1),
+        x: xPositions[i],
         y: heroCenterY - cardH / 2,
         scale: s,
         opacity: 1 - i * 0.02,

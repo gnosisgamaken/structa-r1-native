@@ -189,6 +189,16 @@
       fallback: 'store-only',
       payload: bundle
     });
+    // Send capture context to LLM for structured insight
+    window.StructaLLM?.processImage?.(
+      `User captured a ${facingMode} photo`,
+      { facingMode, width: w, height: h }
+    ).then(result => {
+      if (result?.ok) {
+        window.StructaLLM?.storeAsInsight?.(result, 'camera');
+        native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+      }
+    }).catch(() => {});
     hideOverlay();
     return bundle;
   }

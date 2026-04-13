@@ -88,6 +88,13 @@
           source_type: 'voice',
           meta: { entry_mode: 'auto' }
         });
+        // Send voice transcript to LLM for structured response
+        window.StructaLLM?.processVoice?.(text).then(result => {
+          if (result?.ok) {
+            window.StructaLLM?.storeAsInsight?.(result, 'voice');
+            native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+          }
+        }).catch(() => {});
       } else if (pendingAudioAsset) {
         native?.writeJournalEntry?.({
           title: 'voice note',

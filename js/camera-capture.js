@@ -193,16 +193,28 @@
     var imageDesc = `User captured a ${facingMode} photo (${w}x${h})`;
     native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
 
-    // Send image to R1 LLM via PluginMessageHandler (Magic Kamera pattern)
+    // Send image to R1 for analysis (Magic Kamera pattern)
+    // Magic Kamera sends: { pluginId: "com.r1.pixelart", imageBase64: base64, message: prompt }
+    // NO useLLM flag — image analysis is a separate pipeline
+    var analysisPrompt = 'Analyze the image in detail. Identify people, objects, environment, actions, expressions, and context. Provide a comprehensive, factual description.';
     if (typeof PluginMessageHandler !== 'undefined') {
       try {
+        // Method 1: Magic Kamera pattern (no useLLM)
         PluginMessageHandler.postMessage(JSON.stringify({
-          message: imageDesc,
+          pluginId: 'com.r1.pixelart',
+          imageBase64: dataUrl,
+          message: analysisPrompt
+        }));
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image sent (pixelart format)' });
+
+        // Method 2: Standard LLM format (with useLLM)
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: analysisPrompt,
           imageBase64: dataUrl,
           useLLM: true,
           wantsR1Response: false
         }));
-        native?.appendLogEntry?.({ kind: 'llm', message: 'image sent to r1 llm' });
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image sent (llm format)' });
       } catch (err) {
         native?.appendLogEntry?.({ kind: 'llm', message: 'image send err: ' + (err?.message || 'failed') });
       }

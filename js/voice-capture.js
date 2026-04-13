@@ -69,6 +69,14 @@
     if (!text || !text.trim()) return;
     text = text.trim();
 
+    // Clean up STT artifacts — spoken punctuation → actual punctuation
+    text = text.replace(/\bquestion mark\b/gi, '?');
+    text = text.replace(/\bperiod\b/gi, '.');
+    text = text.replace(/\bcomma\b/gi, ',');
+    text = text.replace(/\bexclamation mark\b/gi, '!');
+    text = text.replace(/\bexclamation point\b/gi, '!');
+    text = text.replace(/\s+/g, ' ').trim();
+
     // === Question answering mode ===
     if (activeQuestion) {
       var question = activeQuestion;

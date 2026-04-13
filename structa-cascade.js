@@ -1121,7 +1121,7 @@
       'font-size': '9'
     });
     drawSquaredPill(46, 81, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 93, `${items.length} results`, {
+    text(220, 93, `${items.length} result${items.length !== 1 ? 's' : ''}`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',

@@ -9,6 +9,8 @@
   let facingMode = 'environment';
   let lastBundle = null;
   let flipLocked = false;
+  let cameraPrimed = false;
+  let warmupPromise = null;
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -37,6 +39,34 @@
     setStatus('idle');
   }
 
+  async function warmup(mode = facingMode) {
+    if (cameraPrimed) return { ok: true, primed: true, facingMode };
+    if (warmupPromise) return warmupPromise;
+    const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+    if (!navigator.mediaDevices?.getUserMedia) return { ok: false };
+    warmupPromise = (async () => {
+      facingMode = nextMode;
+      stopStream();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+        if (preview) {
+          preview.srcObject = stream;
+          await preview.play().catch(() => {});
+        }
+        cameraPrimed = true;
+        native?.setCameraFacing?.(facingMode);
+        stopStream();
+        return { ok: true, primed: true, facingMode };
+      } catch (error) {
+        stopStream();
+        return { ok: false, error };
+      } finally {
+        warmupPromise = null;
+      }
+    })();
+    return warmupPromise;
+  }
+
   async function open(mode = facingMode) {
     showOverlay();
     const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
@@ -46,6 +76,7 @@
       setStatus('camera unavailable');
       return { ok: false };
     }
+    if (!cameraPrimed) await warmup(facingMode);
     stopStream();
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
@@ -53,6 +84,7 @@
         preview.srcObject = stream;
         await preview.play().catch(() => {});
       }
+      cameraPrimed = true;
       native?.setCameraFacing?.(facingMode);
       setStatus('ready');
       return { ok: true, facingMode };
@@ -142,12 +174,18 @@
 
   window.StructaCamera = Object.freeze({
     open,
+    warmup,
     capture,
     flip,
     close,
     stop: close,
     teardown: close,
     get facingMode() { return facingMode; },
-    get lastBundle() { return lastBundle; }
+    get lastBundle() { return lastBundle; },
+    get primed() { return cameraPrimed; }
   });
+
+  setTimeout(() => {
+    void warmup().catch(() => {});
+  }, 180);
 })();

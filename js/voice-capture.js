@@ -103,6 +103,11 @@
 
   async function startListening() {
     if (listening) return;
+    if (window.__STRUCTA_PTT_TARGET__ === 'camera') {
+      hideOverlay();
+      setStatus('idle');
+      return;
+    }
     showOverlay();
     overlay?.classList.add('listening');
     if (wave) wave.hidden = false;

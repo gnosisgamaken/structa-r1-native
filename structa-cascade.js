@@ -16,6 +16,7 @@
   ];
 
   const initialState = native?.getUIState?.() || {};
+  window.__STRUCTA_PTT_TARGET__ = window.__STRUCTA_PTT_TARGET__ || null;
   let selectedIndex = Math.max(0, cards.findIndex(card => card.id === (initialState.selected_card_id || 'now')));
   if (selectedIndex < 0) selectedIndex = 3;
   let logOpen = false;
@@ -144,6 +145,7 @@
   function openCameraSurface(source = 'touch') {
     queuedIndex = null;
     queuedDirection = 0;
+    window.__STRUCTA_PTT_TARGET__ = source === 'ptt' ? 'camera' : null;
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
     activeSurface = 'camera';
@@ -173,6 +175,7 @@
   function openVoiceSurface(source = 'touch') {
     queuedIndex = null;
     queuedDirection = 0;
+    window.__STRUCTA_PTT_TARGET__ = 'voice';
     native?.setActiveNode?.('tell');
     native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'voice' });
     activeSurface = 'voice';
@@ -326,6 +329,7 @@
       exportLogsFromHardware();
       return;
     }
+    window.__STRUCTA_PTT_TARGET__ = null;
     if (activeSurface === 'voice' && window.StructaVoice?.listening) {
       window.StructaVoice?.stopListening?.(true);
       return;

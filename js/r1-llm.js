@@ -26,7 +26,9 @@
       var d=await r.json();var raw=(d.choices&&d.choices[0]&&d.choices[0].message)?d.choices[0].message.content:'';var c=clean(raw);if(!c)return{ok:false,err:'drift',raw:raw};
       if(opts.hist!==false){hist.push({role:'user',content:msg});hist.push({role:'assistant',content:c});while(hist.length>HMAX)hist.shift();}
       return{ok:true,raw:raw,clean:c,fields:fields(c),usage:d.usage};
-    }catch(e){return{ok:false,err:e.message||'fail'};}
+    }catch(e){var errMsg = e.message || 'fail';
+      if(n && n.appendLogEntry) n.appendLogEntry({kind:'llm',message:'llm err: '+errMsg.slice(0,60)});
+      return{ok:false,err:errMsg};}
   }
 
   async function voice(t){var p=n&&n.getProjectMemory?n.getProjectMemory():{};var s=['Project: '+(p.name||'untitled')];if(p.backlog&&p.backlog.length)s.push('Tasks: '+p.backlog[0].title);if(p.decisions&&p.decisions.length)s.push('Decision: '+p.decisions[0].title);s.push('','Voice: "'+t+'"','','One next action.');return ask(s.filter(Boolean).join('\n'),{tok:120});}

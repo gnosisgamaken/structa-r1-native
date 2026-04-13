@@ -1,3 +1,14 @@
+/**
+ * voice-capture.js — Voice capture for Structa on R1.
+ *
+ * Two paths:
+ * 1. R1 native STT: PTT starts capture via CreationVoiceHandler.postMessage("start"),
+ *    R1 OS processes audio, sends back sttEnded via onPluginMessage.
+ *    This is the PRIMARY path on R1 hardware.
+ *
+ * 2. Browser fallback: SpeechRecognition or MediaRecorder.
+ *    Only used if on desktop/browser (not on R1).
+ */
 (() => {
   const native = window.StructaNative;
   const overlay = document.getElementById('voice-overlay');
@@ -12,44 +23,10 @@
   let audioStream = null;
   let audioChunks = [];
   let pendingAudioAsset = null;
+  let voiceTarget = null; // 'tell' or null
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
-  }
-
-  function blobToDataURL(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error || new Error('failed to read blob'));
-      reader.readAsDataURL(blob);
-    });
-  }
-
-  function stopAudioStream() {
-    if (audioStream) {
-      try { audioStream.getTracks().forEach(track => track.stop()); } catch (_) {}
-      audioStream = null;
-    }
-  }
-
-  async function finalizeAudioCapture() {
-    if (!audioChunks.length) return null;
-    const blob = new Blob(audioChunks, { type: audioRecorder?.mimeType || 'audio/webm' });
-    const dataUrl = await blobToDataURL(blob).catch(() => '');
-    if (!dataUrl) return null;
-    pendingAudioAsset = {
-      kind: 'asset',
-      name: `voice-${Date.now()}.webm`,
-      mime_type: blob.type || 'audio/webm',
-      data: dataUrl,
-      meta: {
-        captured_at: new Date().toISOString(),
-        mode: 'ptt'
-      }
-    };
-    native?.storeAsset?.(pendingAudioAsset);
-    return pendingAudioAsset;
   }
 
   function showOverlay() {
@@ -67,7 +44,53 @@
     window.dispatchEvent(new CustomEvent('structa-voice-close'));
   }
 
-  async function stopListening(emit = true) {
+  function stopAudioStream() {
+    if (audioStream) {
+      try { audioStream.getTracks().forEach(track => track.stop()); } catch (_) {}
+      audioStream = null;
+    }
+  }
+
+  // Process a transcript — send to LLM and store as insight
+  function handleTranscript(text) {
+    if (!text || !text.trim()) return;
+    text = text.trim();
+
+    // Log the transcript
+    native?.appendLogEntry?.({ kind: 'voice', message: 'voice: ' + text.slice(0, 60) });
+
+    // Write journal entry
+    native?.writeJournalEntry?.({
+      title: text.slice(0, 42) || 'voice note',
+      body: text,
+      source_type: 'voice',
+      meta: { entry_mode: 'auto' }
+    });
+
+    // Send to LLM
+    if (window.StructaLLM) {
+      native?.appendLogEntry?.({ kind: 'llm', message: 'thinking...' });
+      window.StructaLLM.processVoice(text).then(result => {
+        if (result && result.ok) {
+          window.StructaLLM.storeAsInsight(result, 'voice');
+          native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+          // Trigger UI update
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        } else {
+          native?.appendLogEntry?.({ kind: 'llm', message: 'llm: ' + (result && result.error || 'no response') });
+        }
+      }).catch(err => {
+        native?.appendLogEntry?.({ kind: 'llm', message: 'llm error: ' + (err && err.message || 'failed') });
+      });
+    }
+  }
+
+  function stopListening(emit) {
+    emit = emit !== false;
+    listening = false;
+    voiceTarget = null;
+
+    // Stop browser recognition
     if (recognition) {
       try { recognition.stop(); } catch (_) {}
     }
@@ -77,24 +100,15 @@
     stopAudioStream();
     overlay?.classList.remove('listening');
     if (wave) wave.hidden = true;
-    listening = false;
-    const text = (transcript?.textContent || '').trim();
+
+    const text = (transcript && transcript.textContent || '').trim();
+
     if (emit) {
-      if (text) native?.stopPTT?.(text);
+      // Tell the R1 OS we stopped talking
+      native?.stopPTT?.(text || '');
+      // Process the transcript
       if (text) {
-        native?.writeJournalEntry?.({
-          title: text.slice(0, 42) || 'voice note',
-          body: text,
-          source_type: 'voice',
-          meta: { entry_mode: 'auto' }
-        });
-        // Send voice transcript to LLM for structured response
-        window.StructaLLM?.processVoice?.(text).then(result => {
-          if (result?.ok) {
-            window.StructaLLM?.storeAsInsight?.(result, 'voice');
-            native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
-          }
-        }).catch(() => {});
+        handleTranscript(text);
       } else if (pendingAudioAsset) {
         native?.writeJournalEntry?.({
           title: 'voice note',
@@ -104,17 +118,21 @@
         });
       }
     }
+
     setStatus('idle');
     close();
   }
 
-  async function startListening() {
+  function startListening() {
     if (listening) return;
+
+    // Don't interfere with camera PTT
     if (window.__STRUCTA_PTT_TARGET__ === 'camera') {
       hideOverlay();
       setStatus('idle');
       return;
     }
+
     showOverlay();
     overlay?.classList.add('listening');
     if (wave) wave.hidden = false;
@@ -122,9 +140,24 @@
     audioChunks = [];
     pendingAudioAsset = null;
     listening = true;
+    voiceTarget = 'tell';
     setStatus('listening');
+
+    // Tell R1 OS we started talking
     native?.startPTT?.();
 
+    // === R1 path: Use CreationVoiceHandler for native STT ===
+    // The R1 OS will process audio and send sttEnded via onPluginMessage.
+    // We don't need browser SpeechRecognition on R1.
+    if (window.CreationVoiceHandler) {
+      try {
+        window.CreationVoiceHandler.postMessage('start');
+        // The R1 will handle STT and send back transcript via onPluginMessage
+        return;
+      } catch (_) {}
+    }
+
+    // === Browser fallback path ===
     if (!SR) {
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
         setStatus('mic unavailable');
@@ -133,18 +166,18 @@
       }
       try {
         audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const preferredMime = [
+        var preferredMime = [
           'audio/webm;codecs=opus',
           'audio/webm',
           'audio/ogg;codecs=opus',
           'audio/ogg'
-        ].find(type => MediaRecorder.isTypeSupported?.(type));
+        ].find(function(type) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type); });
         audioRecorder = preferredMime ? new MediaRecorder(audioStream, { mimeType: preferredMime }) : new MediaRecorder(audioStream);
-        audioRecorder.ondataavailable = event => {
+        audioRecorder.ondataavailable = function(event) {
           if (event.data && event.data.size) audioChunks.push(event.data);
         };
-        audioRecorder.onstop = () => {
-          finalizeAudioCapture().catch(() => {});
+        audioRecorder.onstop = function() {
+          finalizeAudioCapture().catch(function() {});
           audioRecorder = null;
         };
         audioRecorder.start();
@@ -158,37 +191,54 @@
       }
     }
 
+    // === Desktop browser: SpeechRecognition ===
     if (!recognition) {
       recognition = new SR();
       recognition.lang = 'en-US';
       recognition.interimResults = true;
       recognition.continuous = false;
-      recognition.onresult = event => {
-        let finalText = '';
-        for (let i = event.resultIndex; i < event.results.length; i += 1) {
-          const part = event.results[i][0]?.transcript || '';
+      recognition.onresult = function(event) {
+        var finalText = '';
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          var part = (event.results[i][0] && event.results[i][0].transcript) || '';
           if (event.results[i].isFinal) finalText += part;
           else if (transcript && !transcript.textContent) transcript.textContent = part;
         }
-        if (finalText && transcript) transcript.textContent = `${transcript.textContent || ''} ${finalText}`.trim();
+        if (finalText && transcript) transcript.textContent = ((transcript.textContent || '') + ' ' + finalText).trim();
       };
-      recognition.onerror = () => {
-        setStatus('mic error');
-      };
-      recognition.onend = () => {
-        if (listening && !(transcript?.textContent || '').trim()) setStatus('ready');
+      recognition.onerror = function() { setStatus('mic error'); };
+      recognition.onend = function() {
+        if (listening && !(transcript && transcript.textContent && transcript.textContent.trim())) setStatus('ready');
       };
     }
 
-    try {
-      recognition.start();
-    } catch (_) {
+    try { recognition.start(); } catch (_) {
       setStatus('mic unavailable');
       listening = false;
       overlay?.classList.remove('listening');
       if (wave) wave.hidden = true;
     }
   }
+
+  // R1 native STT callback — THIS IS THE KEY
+  // The R1 OS sends sttEnded when it finishes processing voice audio.
+  window.onPluginMessage = function(data) {
+    if (data && data.type === 'sttEnded' && data.transcript) {
+      if (transcript) transcript.textContent = data.transcript;
+      handleTranscript(data.transcript);
+      stopListening(false);
+    }
+  };
+
+  // Also listen via addEventListener in case onPluginMessage isn't the right hook
+  window.addEventListener('pluginmessage', function(event) {
+    var data = event && event.detail;
+    if (data && data.type === 'sttEnded' && data.transcript) {
+      if (transcript) transcript.textContent = data.transcript;
+      handleTranscript(data.transcript);
+      stopListening(false);
+    }
+  });
 
   function open() {
     showOverlay();
@@ -197,25 +247,25 @@
 
   function close() {
     if (listening) {
-      stopListening(false).catch?.(() => {});
+      stopListening(false);
     }
     hideOverlay();
   }
 
-  overlay?.addEventListener('pointerup', event => {
+  overlay?.addEventListener('pointerup', function(event) {
     event.preventDefault();
     if (listening) {
-      stopListening(true).catch(() => {});
+      stopListening(true);
       return;
     }
     close();
   });
 
-  overlay?.addEventListener('pointercancel', () => {
-    if (listening) stopListening(false).catch(() => {});
+  overlay?.addEventListener('pointercancel', function() {
+    if (listening) stopListening(false);
   });
 
-  const cleanupOnHide = () => {
+  var cleanupOnHide = function() {
     if (document.hidden || overlay?.classList.contains('open')) close();
   };
 
@@ -223,10 +273,10 @@
   document.addEventListener('visibilitychange', cleanupOnHide);
 
   window.StructaVoice = Object.freeze({
-    open,
-    close,
-    startListening,
-    stopListening,
+    open: open,
+    close: close,
+    startListening: startListening,
+    stopListening: stopListening,
     get listening() { return listening; }
   });
 })();

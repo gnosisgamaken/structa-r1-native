@@ -613,7 +613,7 @@
         x: xPositions[i],
         y: heroCenterY - cardH / 2,
         scale: s,
-        opacity: 1 - i * 0.02,
+        opacity: 1,
         depth: i
       };
     });
@@ -646,7 +646,7 @@
         width: 30,
         height: 30,
         preserveAspectRatio: 'xMidYMid meet',
-        opacity: 0.92,
+        opacity: 1,
         style: 'filter: brightness(0) saturate(100%);'
       }, parent);
       return;
@@ -733,7 +733,7 @@
           width: 30,
           height: 30,
           preserveAspectRatio: 'xMidYMid meet',
-          opacity: 0.92,
+          opacity: 1,
           style: 'filter: brightness(0) saturate(100%);'
         }, group);
       } else {

@@ -123,11 +123,14 @@
     // Try to detect a decision and add it as pending
     var decisionMatch = text.match(/^(?:we |i |let.s |i.ll |we.ve )?(decided|agreed|chose|will|plan to|going to|should)\b(.{5,80})/i);
     if (decisionMatch) {
-      var decisionText = text.slice(0, 120);
+      var decisionText = text.slice(0, 120).trim();
+      var decisionNorm = decisionText.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
       native?.touchProjectMemory?.(function(project) {
         project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+        // Fuzzy dedup: normalize and compare first 30 chars
         var exists = project.pending_decisions.some(function(d) {
-          return (d.text || d) === decisionText;
+          var existing = ((d.text || d) || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+          return existing === decisionNorm || (existing.length > 20 && decisionNorm.length > 20 && (existing.startsWith(decisionNorm.slice(0, 30)) || decisionNorm.startsWith(existing.slice(0, 30))));
         });
         if (!exists) {
           project.pending_decisions.unshift({

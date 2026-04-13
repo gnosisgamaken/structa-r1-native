@@ -254,6 +254,12 @@
     if (message === 'no creationvoicehandler') return false;
     if (message.startsWith('camera ready') || message === 'camera frame captured') return false;
 
+    // Suppress heartbeat start/stop messages from visible log (keep in memory)
+    if (kind === 'system' && (message.includes('heartbeat started') || message.includes('heartbeat stopped'))) return false;
+
+    // Suppress R1 hardware bridge noise
+    if (message.includes('inspect camera') || message.includes('environment facing')) return false;
+
     // Suppress heartbeat beat messages (only show suggestions and start/stop)
     if (kind === 'heartbeat' && message.startsWith('beat ')) return false;
 
@@ -310,10 +316,15 @@
       };
     }
     var llmMessage = buildLLMMessage(envelope);
+    // Camera operations must NOT trigger R1 voice assistant
+    // Setting useLLM=false + wantsR1Response=false prevents the R1 from speaking
+    var isCameraOp = envelope.source_type === 'camera' ||
+                     envelope.input_type?.includes('camera') ||
+                     envelope.verb === 'inspect';
     var sdkPayload = {
       message: llmMessage,
-      useLLM: true,
-      wantsR1Response: envelope.wantsR1Response !== false,
+      useLLM: isCameraOp ? false : true,
+      wantsR1Response: isCameraOp ? false : (envelope.wantsR1Response !== false),
       wantsJournalEntry: envelope.wantsJournalEntry === true
     };
     const result = postPayload(sdkPayload);
@@ -625,6 +636,7 @@
     stopPTT,
     appendLogEntry,
     getRecentLogEntries,
+    isVisibleLogEntry,
     exportLatestLogs,
     getProjectMemory,
     getMemory,

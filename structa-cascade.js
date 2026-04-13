@@ -89,6 +89,13 @@
   }
 
   function pushLog(text, strong = '') {
+    // Check if this would be visible — skip DOM noise
+    const wouldBeVisible = native?.isVisibleLogEntry?.({ kind: lower(strong || 'ui'), message: lower(`${strong ? `${strong} ` : ''}${text}`) });
+    if (wouldBeVisible === false) {
+      // Store in memory but don't show in DOM
+      native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
+      return;
+    }
     const row = document.createElement('div');
     row.className = 'entry';
     const time = document.createElement('span');
@@ -213,22 +220,18 @@
 
   /**
    * openVoiceForAnswer -- opens voice to answer a specific question from KNOW card.
+   * Uses the SAME green tell overlay as normal voice — no special yellow mode.
+   * PTT hold/release works identical to tell card.
    */
   function openVoiceForAnswer(questionIndex, questionText) {
     answeringQuestion = { index: questionIndex, text: questionText };
-    // Set answer context on voice module
+    // Set answer context on voice module so handleTranscript routes correctly
     if (window.StructaVoice?.setQuestionContext) {
       window.StructaVoice.setQuestionContext(questionIndex, questionText);
     }
-    // Set visual answer mode on voice overlay
-    var voiceOverlay = document.getElementById('voice-overlay');
-    var contextLabel = document.getElementById('voice-context-label');
-    if (voiceOverlay) voiceOverlay.classList.add('answer-mode');
-    if (contextLabel) contextLabel.textContent = 'answering...';
     native?.appendLogEntry?.({ kind: 'voice', message: 'answering: ' + questionText.slice(0, 40) });
-    document.getElementById('app')?.classList.add('overlay-active');
-    window.__STRUCTA_PTT_TARGET__ = 'voice';
-    window.StructaVoice?.startListening?.();
+    // Use the same voice surface as tell card — same overlay, same PTT flow
+    openVoiceSurface('touch');
   }
 
   function openCard(card) {
@@ -410,17 +413,8 @@
       window.StructaVoice?.startListening?.();
       return;
     }
-    if (activeSurface === 'insight') {
-      const model = buildKnowModel();
-      if (!model.chips.length) return;
-      const lane = model.lanes[knowLaneIndex] || model.lanes[0];
-      const available = lane?.availableChipIndexes?.length ? lane.availableChipIndexes : [0];
-      const currentPos = Math.max(0, available.indexOf(knowChipIndex));
-      knowChipIndex = available[(currentPos + 1) % available.length];
-      knowItemIndex = 0;
-      render();
-      return;
-    }
+    // KNOW card long press = cycle filter chips, NOT open voice
+    // This prevents the confusing auto-voice overlay on the insight surface
     const card = currentCard();
     if (card.id === 'tell') {
       openVoiceSurface('ptt');
@@ -505,7 +499,7 @@
       changed: ui.last_event_summary || 'ready to resume',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || 'no capture yet'),
       insight: ui.last_insight_summary || (insights[0]?.body || 'no insight yet'),
-      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : 'capture the next concrete update'),
+      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : 'use tell to add the next update'),
       openQuestions: openQuestions.length,
       captures: captures.length,
       insights: insights.length,
@@ -909,29 +903,20 @@
         }, group);
       }
 
-      // Show notification badges for pending decisions and open questions
+      // Pulsing dot indicator for pending decisions and open questions
+      // Subtle, discreet — not a bold badge
       const project = getProjectMemory();
       const pendingCount = (project?.pending_decisions || []).length;
       const questionCount = (project?.open_questions || []).length;
       if (pendingCount > 0 && card.id === 'now') {
-        mk('circle', { cx: 140, cy: 16, r: 10, fill: 'rgba(8,8,8,0.88)' }, group);
-        text(140, 20, String(pendingCount), {
-          fill: '#ff8a65',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '11',
-          'text-anchor': 'middle',
-          'font-weight': 'bold'
-        }, group);
+        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#ff8a65', opacity: '0.9' }, group);
+        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
       }
       if (questionCount > 0 && card.id === 'know') {
-        mk('circle', { cx: 140, cy: 16, r: 10, fill: 'rgba(8,8,8,0.88)' }, group);
-        text(140, 20, String(questionCount), {
-          fill: '#f8c15d',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '11',
-          'text-anchor': 'middle',
-          'font-weight': 'bold'
-        }, group);
+        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#f8c15d', opacity: '0.9' }, group);
+        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
       }
     } else if (showStackIcon) {
       if (card.iconPath) {
@@ -948,25 +933,15 @@
         }, group);
       }
 
-      // Notification badges on stack cards too
+      // Pulsing dots on stack cards too
       const project = getProjectMemory();
       if (card.id === 'now' && (project?.pending_decisions || []).length > 0) {
-        mk('circle', { cx: 130, cy: 16, r: 8, fill: 'rgba(8,8,8,0.88)' }, group);
-        text(130, 19.5, String((project?.pending_decisions || []).length), {
-          fill: '#ff8a65',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9',
-          'text-anchor': 'middle'
-        }, group);
+        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.8' }, group);
+        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
       }
       if (card.id === 'know' && (project?.open_questions || []).length > 0) {
-        mk('circle', { cx: 130, cy: 16, r: 8, fill: 'rgba(8,8,8,0.88)' }, group);
-        text(130, 19.5, String((project?.open_questions || []).length), {
-          fill: '#f8c15d',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9',
-          'text-anchor': 'middle'
-        }, group);
+        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.8' }, group);
+        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
       }
     }
 
@@ -1244,20 +1219,22 @@
   }
 
   function handleNativeBack(event) {
-    // Back button on NOW card = dismiss pending decision
+    // Back button on NOW card = dismiss pending decision first, then go home
     if (activeSurface === 'project') {
       const project = getProjectMemory();
       const pending = project?.pending_decisions || [];
       if (pending.length && decisionIndex < pending.length) {
         native?.dismissPendingDecision?.(decisionIndex);
         pushLog('decision skipped', 'decision');
-        if (pending.length <= 1) {
-          decisionIndex = 0;
-        }
+        decisionIndex = 0;
         render();
         if (event) event.preventDefault?.();
         return;
       }
+      // No more decisions — go home, NOT close app
+      if (event) event.preventDefault?.();
+      backHome();
+      return;
     }
 
     // Back button in hint mode
@@ -1267,10 +1244,29 @@
       if (event) event.preventDefault?.();
       return;
     }
-    if (activeSurface !== 'home' || logOpen) {
+
+    // Back button on insight surface = go home
+    if (activeSurface === 'insight') {
       if (event) event.preventDefault?.();
       backHome();
+      return;
     }
+
+    // Back button on home with log open = close log
+    if (activeSurface === 'home' && logOpen) {
+      if (event) event.preventDefault?.();
+      setLogDrawer(false);
+      return;
+    }
+
+    // Back button on home without log = let it pass through (close app)
+    if (activeSurface === 'home') {
+      return; // Don't preventDefault — let R1 close the app
+    }
+
+    // Any other surface = go home
+    if (event) event.preventDefault?.();
+    backHome();
   }
 
   // === Heartbeat auto-start ===
@@ -1351,7 +1347,7 @@
   // Auto-start heartbeat if project already has content
   maybeStartHeartbeat();
 
-  // === R1 API REVERSE ENGINEERING PROBE ===
+  // === R1 API REVERSE ENGINEERING PROBE (silent — does not log to user) ===
   (function probeR1APIs() {
     const bridges = ['PluginMessageHandler', 'onPluginMessage', 'Android', 'rabbit', 'Rabbit',
       'creationStorage', '__RABBIT_DEVICE_ID__'];
@@ -1364,13 +1360,14 @@
         try { Object.getOwnPropertyNames(val).forEach(k => {
           try { (typeof val[k] === 'function' ? methods : props).push(k); } catch(e) {}
         }); } catch(e) {}
-        pushLog(`${name}: m=[${methods.slice(0,6).join(',')}] p=[${props.slice(0,4).join(',')}]`, 'probe');
+        // Store silently — no pushLog, goes to memory only
+        native?.appendLogEntry?.({ kind: 'probe', message: `${name}: m=[${methods.slice(0,6).join(',')}] p=[${props.slice(0,4).join(',')}]` });
       } else {
-        pushLog(`${name}: ${typeof val}`, 'probe');
+        native?.appendLogEntry?.({ kind: 'probe', message: `${name}: ${typeof val}` });
       }
     });
-    pushLog(`viewport: ${window.innerWidth}x${window.innerHeight}`, 'probe');
-    pushLog(`screen: ${screen.width}x${screen.height}`, 'probe');
+    native?.appendLogEntry?.({ kind: 'probe', message: `viewport: ${window.innerWidth}x${window.innerHeight}` });
+    native?.appendLogEntry?.({ kind: 'probe', message: `screen: ${screen.width}x${screen.height}` });
   })();
 
   // Prime camera on first touch

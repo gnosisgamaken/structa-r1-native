@@ -148,25 +148,20 @@
     window.__STRUCTA_PTT_TARGET__ = source === 'ptt' ? 'camera' : null;
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
-    // Do NOT set activeSurface = 'camera' or call render() here.
-    // The camera-open event from showOverlay() inside StructaCamera.open()
-    // will set activeSurface and trigger render() when the stream is confirmed live.
-    // Setting it early causes a flash of the home stack underneath the grey overlay.
+    // activeSurface and render() are driven by the 'structa-camera-open' event
+    // that fires inside StructaCamera.open() → showOverlay(). Never set early.
     window.StructaVoice?.close?.();
 
-    const openCamera = async () => {
-      const result = await window.StructaCamera?.open?.();
+    // Fire async but do not await — overlay appears as soon as stream is ready.
+    // On PTT: stream was pre-acquired at startup, so open() resolves instantly.
+    // On touch: same path, zero difference.
+    void window.StructaCamera?.open?.().then(result => {
       if (!result?.ok) {
         pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');
-        return;
+      } else {
+        pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
       }
-      pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
-    };
-
-    // Always use requestAnimationFrame — gives user-gesture budget for getUserMedia
-    // on both touch and PTT paths. PTT fires longPressStart synchronously inside
-    // a user-gesture, so rAF here still qualifies and keeps both paths identical.
-    requestAnimationFrame(() => void openCamera());
+    });
   }
 
   function openVoiceSurface(source = 'touch') {

@@ -1,3 +1,17 @@
+/**
+ * camera-capture.js
+ *
+ * Strategy:
+ * - On app load, acquire the camera stream immediately via getUserMedia
+ *   (this is inside the page load, which counts as a trusted context on Rabbit).
+ * - Keep the stream ALIVE in the background. Never stop it between opens.
+ * - When PTT fires, just show the overlay on top of the already-live preview.
+ *   No getUserMedia call needed at PTT time — the stream is already there.
+ * - On close, hide the overlay but keep the stream running.
+ * - Only stop the stream on page hide / app teardown.
+ *
+ * This eliminates the getUserMedia-on-PTT race entirely.
+ */
 (() => {
   const native = window.StructaNative;
   const overlay = document.getElementById('camera-overlay');
@@ -9,8 +23,8 @@
   let facingMode = 'environment';
   let lastBundle = null;
   let flipLocked = false;
-  let cameraPrimed = false;
-  let openInFlight = false;
+  let streamReady = false;    // stream is live and preview is playing
+  let streamPending = null;   // promise while acquiring
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -30,102 +44,117 @@
     window.dispatchEvent(new CustomEvent('structa-camera-close'));
   }
 
-  function stopStream() {
+  // Hard stop — only call on app teardown or page hide.
+  function killStream() {
+    streamReady = false;
+    streamPending = null;
     if (stream) {
-      try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
+      try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
       stream = null;
     }
     if (preview) preview.srcObject = null;
     setStatus('idle');
   }
 
-  async function waitForPreviewReady(timeout = 1200) {
+  async function waitForPreviewReady(timeout = 2000) {
     if (!preview) return true;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < timeout) {
-      if (preview.readyState >= 2 && preview.videoWidth > 0 && preview.videoHeight > 0) return true;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      if (preview.readyState >= 2 && preview.videoWidth > 0) return true;
       if (!preview.paused) return true;
       await preview.play().catch(() => {});
-      await new Promise(resolve => setTimeout(resolve, 80));
+      await new Promise(r => setTimeout(r, 60));
     }
-    // Last chance: accept if paused but has dimensions
     return preview.videoWidth > 0 || preview.readyState >= 2;
   }
 
-  // Core getUserMedia acquisition — called only when we have a user-gesture budget.
-  async function acquireStream(mode) {
-    if (!navigator.mediaDevices?.getUserMedia) return { ok: false, error: new Error('no getUserMedia') };
-    stopStream();
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: false });
-      if (preview) {
-        preview.srcObject = stream;
-        await preview.play().catch(() => {});
-      }
-      const ready = await waitForPreviewReady();
-      if (!ready) {
-        stopStream();
-        return { ok: false, error: new Error('preview not ready') };
-      }
-      return { ok: true };
-    } catch (error) {
-      stopStream();
-      return { ok: false, error };
+  // Acquire stream and attach to preview. Returns promise<bool>.
+  // Safe to call multiple times — deduped via streamPending.
+  function ensureStream(mode) {
+    const targetMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+
+    // Already live on right mode
+    if (streamReady && stream && facingMode === targetMode && preview?.srcObject) {
+      return Promise.resolve(true);
     }
-  }
 
-  // open() — always called from a user-gesture context (touch or rAF from PTT handler).
-  // Does NOT show overlay until stream is confirmed live.
-  async function open(mode = facingMode) {
-    if (openInFlight) return { ok: false, busy: true };
-    openInFlight = true;
-    try {
-      const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
+    // Acquisition already in flight
+    if (streamPending) return streamPending;
 
-      // Already have a live stream on the right facing mode — just show overlay.
-      if (stream && nextMode === facingMode && preview?.srcObject) {
-        await preview.play().catch(() => {});
-        showOverlay();
-        cameraPrimed = true;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus('camera unavailable');
+      return Promise.resolve(false);
+    }
+
+    streamPending = (async () => {
+      try {
+        // Stop old stream if switching modes
+        if (stream && facingMode !== targetMode) {
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+          if (preview) preview.srcObject = null;
+        }
+        facingMode = targetMode;
+        setStatus('starting');
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        if (preview) {
+          preview.srcObject = stream;
+          await preview.play().catch(() => {});
+        }
+        const ready = await waitForPreviewReady();
+        if (!ready) {
+          killStream();
+          setStatus('not ready');
+          return false;
+        }
+        streamReady = true;
         native?.setCameraFacing?.(facingMode);
         setStatus('ready');
-        return { ok: true, facingMode };
-      }
-
-      facingMode = nextMode;
-      setStatus('starting');
-
-      const result = await acquireStream(facingMode);
-      if (!result.ok) {
+        return true;
+      } catch (err) {
+        killStream();
         setStatus('blocked');
-        return { ok: false, error: result.error };
+        return false;
+      } finally {
+        streamPending = null;
       }
+    })();
 
-      cameraPrimed = true;
-      native?.setCameraFacing?.(facingMode);
-      setStatus('ready');
-      // Only show overlay once stream is confirmed live — eliminates grey screen.
-      showOverlay();
-      return { ok: true, facingMode };
-    } finally {
-      openInFlight = false;
+    return streamPending;
+  }
+
+  // open() — show camera overlay.
+  // If stream is already live, shows instantly (zero latency on PTT).
+  // If not yet acquired, acquires first then shows.
+  async function open(mode = facingMode) {
+    const ok = await ensureStream(mode);
+    if (!ok) {
+      setStatus('blocked');
+      return { ok: false };
     }
+    showOverlay();
+    return { ok: true, facingMode };
   }
 
   async function flip() {
-    if (flipLocked) return { ok: false, locked: true, facingMode };
+    if (flipLocked) return { ok: false, locked: true };
     flipLocked = true;
     try {
       const nextMode = facingMode === 'user' ? 'environment' : 'user';
-      facingMode = nextMode;
-      const result = await acquireStream(facingMode);
-      if (result.ok) {
-        native?.setCameraFacing?.(facingMode);
-        setStatus('ready');
+      // Kill current stream so ensureStream acquires fresh one
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        streamReady = false;
+        if (preview) preview.srcObject = null;
       }
-      return result.ok ? { ok: true, facingMode } : result;
+      const ok = await ensureStream(nextMode);
+      return { ok, facingMode };
     } finally {
-      setTimeout(() => { flipLocked = false; }, 180);
+      setTimeout(() => { flipLocked = false; }, 200);
     }
   }
 
@@ -169,27 +198,25 @@
       fallback: 'store-only',
       payload: bundle
     });
-    close();
+    // Hide overlay but KEEP stream alive for next open
+    hideOverlay();
     return bundle;
   }
 
+  // close() — hides overlay, keeps stream alive for instant re-open on next PTT.
   function close() {
-    stopStream();
-    cameraPrimed = false;
-    openInFlight = false;
     hideOverlay();
+    // Do NOT kill stream — keep it ready for next PTT press.
   }
 
-  // Overlay scroll = flip camera.
+  // Overlay scroll = flip
   overlay?.addEventListener('wheel', event => {
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
     flip();
   }, { passive: false });
 
-  // Overlay tap = capture (not close).
-  // PTT is handled by sideClick / longPressStart at the app level.
-  // Tapping the live overlay should capture, not dismiss.
+  // Overlay tap = capture
   overlay?.addEventListener('pointerup', event => {
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
@@ -197,12 +224,14 @@
     capture();
   });
 
-  const cleanupOnHide = () => {
-    if (document.hidden) close();
-  };
-
-  window.addEventListener('pagehide', cleanupOnHide);
-  document.addEventListener('visibilitychange', cleanupOnHide);
+  // Kill stream only on actual app hide
+  window.addEventListener('pagehide', killStream);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      hideOverlay();
+      // Keep stream alive — R1 often hides/shows quickly
+    }
+  });
 
   window.StructaCamera = Object.freeze({
     open,
@@ -210,22 +239,28 @@
     flip,
     close,
     stop: close,
-    teardown: close,
+    teardown: killStream,
     get facingMode() { return facingMode; },
     get lastBundle() { return lastBundle; },
-    get primed() { return cameraPrimed; }
+    get primed() { return streamReady; }
   });
 
-  // Pre-warm: silently acquire + immediately release stream on app load.
-  // This grants getUserMedia permission context so PTT can reuse it instantly.
-  window.addEventListener('load', () => {
-    setTimeout(async () => {
-      if (!navigator.mediaDevices?.getUserMedia) return;
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-        s.getTracks().forEach(t => t.stop());
-        cameraPrimed = true;
-      } catch (_) {}
-    }, 120);
-  });
+  // CRITICAL: Acquire stream immediately on page load while we still have
+  // a trusted browser context. This is the ONLY place we call getUserMedia.
+  // PTT presses later just call showOverlay() on the already-live stream.
+  const startupAcquire = () => {
+    ensureStream('environment').then(ok => {
+      if (ok) {
+        // Stream is live and hidden in background — PTT will be instant
+        setStatus('ready');
+      }
+    });
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startupAcquire);
+  } else {
+    // Already loaded
+    setTimeout(startupAcquire, 0);
+  }
 })();

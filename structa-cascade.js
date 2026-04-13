@@ -681,7 +681,7 @@
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
     const stackDepth = layout.depth ?? -1;
-    const showStackIcon = !selected && stackDepth === 0;
+    const showStackIcon = !selected;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(layout.opacity),

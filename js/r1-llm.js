@@ -173,8 +173,9 @@
   // === Specialized entry points ===
 
   function processVoice(transcript) {
-    // Concise prompt — R1 LLM should respond with 1-2 words max
-    var prompt = transcript + '\n\nnext action (3 words max):';
+    // Guard rails per community guide + concise prompt
+    var prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+      'Process this and respond with 3 words max:\n\n' + transcript;
     return sendToLLM(prompt, { speak: false, journal: false });
   }
 

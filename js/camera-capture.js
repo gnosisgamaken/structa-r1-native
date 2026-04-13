@@ -194,15 +194,18 @@
     native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
 
     // Send image to R1 LLM for analysis
-    // Official SDK format: { message, imageBase64, useLLM, wantsR1Response }
-    var analysisPrompt = 'what do you see? 5 words max.';
+    // Guide format: { message, imageBase64: BASE64_ONLY, useLLM }
+    // imageBase64 must be raw base64, NOT a data URL
+    var rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+    var analysisPrompt = 'Describe what you see in 10 words or fewer.';
     if (typeof PluginMessageHandler !== 'undefined') {
       try {
         PluginMessageHandler.postMessage(JSON.stringify({
           message: analysisPrompt,
-          imageBase64: dataUrl,
+          imageBase64: rawBase64,
           useLLM: true,
-          wantsR1Response: false
+          wantsR1Response: false,
+          wantsJournalEntry: false
         }));
         native?.appendLogEntry?.({ kind: 'llm', message: 'image sent to r1 llm' });
       } catch (err) {

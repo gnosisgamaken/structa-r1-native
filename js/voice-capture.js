@@ -152,9 +152,25 @@
     if (window.CreationVoiceHandler) {
       try {
         window.CreationVoiceHandler.postMessage('start');
+        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt started' });
         // The R1 will handle STT and send back transcript via onPluginMessage
         return;
-      } catch (_) {}
+      } catch (err) {
+        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt error: ' + (err?.message || 'failed') });
+      }
+    } else {
+      native?.appendLogEntry?.({ kind: 'voice', message: 'no CreationVoiceHandler — trying PluginMessageHandler' });
+      // Fallback: send a "start listening" message via the standard bridge
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify({
+          type: 'sttStart',
+          message: 'start listening'
+        }));
+        native?.appendLogEntry?.({ kind: 'voice', message: 'sttStart sent via PluginMessageHandler' });
+        return;
+      } catch (err) {
+        native?.appendLogEntry?.({ kind: 'voice', message: 'PluginMessageHandler stt error: ' + (err?.message || 'failed') });
+      }
     }
 
     // === Browser fallback path ===

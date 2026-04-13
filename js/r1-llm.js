@@ -82,6 +82,11 @@
   var previousHandler = window.onPluginMessage;
 
   window.onPluginMessage = function(data) {
+    // Log all incoming messages for debugging
+    var debugKeys = data ? Object.keys(data).join(',') : 'null';
+    var native = window.StructaNative;
+    native?.appendLogEntry?.({ kind: 'r1', message: 'r1 msg: ' + debugKeys + ' type=' + (data?.type || '?') });
+
     // Try to extract the LLM response text
     var responseText = '';
     var responseType = '';
@@ -89,12 +94,12 @@
     if (data) {
       responseType = data.type || '';
       // The LLM response can be in several places:
-      responseText = data.message || data.content || data.response || '';
+      responseText = data.message || data.content || data.response || data.transcript || '';
       // Try parsing data.data if it's a JSON string
       if (!responseText && data.data) {
         try {
           var parsed = JSON.parse(data.data);
-          responseText = parsed.message || parsed.content || parsed.response || '';
+          responseText = parsed.message || parsed.content || parsed.response || parsed.transcript || '';
           responseType = responseType || parsed.type || '';
         } catch (e) {
           responseText = data.data;
@@ -103,14 +108,16 @@
     }
 
     // If this is an STT response, let voice-capture handle it
-    if (responseType === 'sttEnded' && data.transcript) {
+    if ((responseType === 'sttEnded' || responseType === 'stt' || responseType === 'transcript') && (data.transcript || responseText)) {
+      var transcript = data.transcript || responseText;
+      native?.appendLogEntry?.({ kind: 'voice', message: 'stt received: ' + transcript.slice(0, 60) });
       // Let other handlers process STT
       if (previousHandler) {
         try { previousHandler(data); } catch (e) {}
       }
       // Also dispatch custom event for voice-capture.js
       window.dispatchEvent(new CustomEvent('structa-stt-ended', {
-        detail: { transcript: data.transcript }
+        detail: { transcript: transcript }
       }));
       return;
     }

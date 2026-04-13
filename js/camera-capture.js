@@ -190,15 +190,22 @@
       payload: bundle
     });
     // Send capture context to LLM for structured insight
-    window.StructaLLM?.processImage?.(
-      `User captured a ${facingMode} photo`,
-      { facingMode, width: w, height: h }
-    ).then(result => {
-      if (result?.ok) {
-        window.StructaLLM?.storeAsInsight?.(result, 'camera');
-        native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
-      }
-    }).catch(() => {});
+    // Note: R1 on-device LLM is text-only. We send a description, not the image.
+    // The LLM can reason about the capture context but can't see the actual image.
+    var imageDesc = `User captured a ${facingMode} photo (${w}x${h})`;
+    native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
+    window.StructaLLM?.processImage?.(imageDesc, { facingMode, width: w, height: h })
+      .then(function(result) {
+        if (result?.ok) {
+          window.StructaLLM?.storeAsInsight?.(result, 'camera');
+          native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+        } else {
+          native?.appendLogEntry?.({ kind: 'llm', message: 'image insight: ' + (result?.error || 'text-only llm, no visual analysis') });
+        }
+      })
+      .catch(function(err) {
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image llm error: ' + (err?.message || 'failed') });
+      });
     hideOverlay();
     return bundle;
   }

@@ -27,6 +27,11 @@
   let knowDetail = false;
   let queuedIndex = null;
   let queuedDirection = 0;
+  
+  // Hint mode state for instant PTT activation
+  let hintMode = false;      // true when in hint mode (single tap on show/tell)
+  let hintTarget = null;     // 'show' or 'tell' - which card we're hinting for
+  let pttActive = false;     // true when PTT is physically held down
 
   function stamp() {
     return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toLowerCase();
@@ -34,6 +39,43 @@
 
   function lower(text = '') {
     return String(text || '').toLowerCase();
+  }
+
+  // Hint mode management
+  function enterHintMode(target) {
+    hintMode = true;
+    hintTarget = target;
+    pushLog(`hint mode: ${target}`, 'focus');
+    updateHintUI(target, false); // Show hint, not active yet
+  }
+
+  function exitHintMode() {
+    if (!hintMode) return;
+    pushLog('hint mode exit', 'focus');
+    hintMode = false;
+    hintTarget = null;
+    updateHintUI(null, false); // Clear hint UI
+  }
+
+  function updateHintUI(target, isActive) {
+    // Update the icon to show hint (pulsing) or active (solid red)
+    const card = cards.find(c => c.id === target);
+    if (!card) return;
+    
+    // Find the card's visual representation and update it
+    // We'll trigger a re-render to update the icon styling
+    render();
+    
+    // Also log for debugging
+    if (isActive) {
+      pushLog(`${target} active`, 'focus');
+    } else if (hintMode) {
+      pushLog(`${target} hint`, 'focus');
+    }
+  }
+
+  function isHintModeActive() {
+    return hintMode && pttActive;
   }
 
   function currentCard() {
@@ -196,6 +238,19 @@
   function openCard(card) {
     queuedIndex = null;
     queuedDirection = 0;
+    
+    // If we're in hint mode and opening a non-show/tell card, exit hint mode
+    if (hintMode && !(card.id === 'show' || card.id === 'tell')) {
+      exitHintMode();
+    }
+    
+    // For show/tell cards on home surface, enter hint mode instead of opening surface
+    if (activeSurface === 'home' && (card.id === 'show' || card.id === 'tell')) {
+      enterHintMode(card.id);
+      return;
+    }
+    
+    // Default behavior: open the surface
     native?.setActiveNode?.(card.id);
     native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
     pushLog(`${card.title} ready`, 'focus');
@@ -270,6 +325,10 @@
   }
 
   function handleSideClick() {
+    // Disable side button when PTT is active during hint mode
+    if (pttActive && hintMode) {
+      return;
+    }
     queuedIndex = null;
     queuedDirection = 0;
     if (activeSurface === 'camera') {
@@ -306,6 +365,30 @@
 
   function handleLongPressStart() {
     if (logOpen) return;
+    
+    // If in hint mode, PTT hold should activate instantly
+    if (isHintModeActive()) {
+      if (hintTarget === 'show') {
+        // Instant camera activation from hint mode
+        window.__STRUCTA_PTT_TARGET__ = 'camera';
+        window.StructaCamera?.openFromGesture?.('environment');
+        pttActive = true;
+        updateHintUI('show', true); // Show active state
+        pushLog('show: instant capture', 'focus');
+        return;
+      }
+      if (hintTarget === 'tell') {
+        // Instant voice activation from hint mode
+        window.__STRUCTA_PTT_TARGET__ = 'voice';
+        window.StructaVoice?.startListening?.();
+        pttActive = true;
+        updateHintUI('tell', true); // Show active state
+        pushLog('tell: instant listening', 'focus');
+        return;
+      }
+    }
+    
+    // Existing behavior when not in hint mode active
     if (activeSurface === 'camera') {
       window.StructaCamera?.capture?.();
       return;
@@ -341,6 +424,26 @@
       exportLogsFromHardware();
       return;
     }
+    
+    // If PTT was active during hint mode, complete the action and exit hint mode
+    if (pttActive && hintMode) {
+      pttActive = false;
+      if (hintTarget === 'show') {
+        // Camera capture was active, now complete it
+        window.StructaCamera?.capture?.();
+        pushLog('show: capture complete', 'focus');
+      }
+      if (hintTarget === 'tell') {
+        // Voice listening was active, now stop and process
+        window.StructaVoice?.stopListening?.(true);
+        pushLog('tell: listening complete', 'focus');
+      }
+      exitHintMode();
+      window.__STRUCTA_PTT_TARGET__ = null;
+      return;
+    }
+    
+    // Existing behavior
     window.__STRUCTA_PTT_TARGET__ = null;
     if (activeSurface === 'voice' && window.StructaVoice?.listening) {
       window.StructaVoice?.stopListening?.(true);
@@ -664,9 +767,20 @@
     return mk('image', { href, ...attrs }, parent);
   }
 
-  function drawCardIcon(card, selected, parent) {
+  function drawCardIcon(card, selected, parent, hintState = null) {
+    // hintState: null (normal), 'hint' (pulsing), 'active' (solid red)
     if (!selected) return;
     if (card.iconPath) {
+      // Determine style based on hint state
+      let style = 'filter: brightness(0) saturate(100%);';
+      if (hintState === 'active') {
+        style = 'filter: brightness(0) saturate(100%) hue-rotate(0deg) brightness(1.2);'; // Reddish tint
+      } else if (hintState === 'hint') {
+        // For pulsing effect, we'll animate via CSS class or opacity cycling
+        // For now, use a bright state - animation would require CSS keyframes
+        style = 'filter: brightness(0) saturate(150%) hue-rotate(300deg);'; // Pink/purple for hint
+      }
+      
       image(card.iconPath, {
         x: 18,
         y: 16,
@@ -674,12 +788,19 @@
         height: 30,
         preserveAspectRatio: 'xMidYMid meet',
         opacity: 1,
-        style: 'filter: brightness(0) saturate(100%);'
+        style: style
       }, parent);
       return;
     }
+    // Fallback to text icon with color based on hint state
+    let fill = 'rgba(10,10,10,0.88)';
+    if (hintState === 'active') {
+      fill = 'rgba(255,0,0,0.9)'; // Red
+    } else if (hintState === 'hint') {
+      fill = 'rgba(255,105,180,0.9)'; // Hot pink for hint
+    }
     text(18, 40, card.iconFallback || '•', {
-      fill: 'rgba(10,10,10,0.88)',
+      fill: fill,
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '28'
     }, parent);
@@ -751,7 +872,12 @@
     }, group);
 
     if (selected) {
-      drawCardIcon(card, true, group);
+      // Determine hint state for selected card
+      let hintState = null;
+      if (hintMode && hintTarget === card.id) {
+        hintState = pttActive ? 'active' : 'hint';
+      }
+      drawCardIcon(card, true, group, hintState);
       text(18, 78, card.title, {
         fill: 'rgba(8,8,8,0.98)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -793,6 +919,11 @@
     }
 
     const activate = event => {
+      // Disable activation if PTT is active during hint mode (to prevent conflicts)
+      if (pttActive && hintMode) {
+        event.preventDefault();
+        return;
+      }
       event.preventDefault();
       if (selected) openCard(card);
       else selectIndex(index);
@@ -800,6 +931,11 @@
 
     group.addEventListener('pointerup', activate);
     group.addEventListener('keydown', event => {
+      // Disable activation if PTT is active during hint mode
+      if (pttActive && hintMode) {
+        event.preventDefault();
+        return;
+      }
       if (event.key === 'Enter' || event.key === ' ') activate(event);
     });
 
@@ -970,6 +1106,11 @@
   }
 
   function onWheel(event) {
+    // Disable scroll when PTT is active during hint mode
+    if (pttActive && hintMode) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     handleScrollDirection(event.deltaY > 0 ? 1 : -1);
   }
@@ -994,6 +1135,11 @@
 
   svg.addEventListener('wheel', onWheel, { passive: false });
   log.addEventListener('wheel', event => {
+    // Disable log scroll when PTT is active during hint mode
+    if (pttActive && hintMode) {
+      event.preventDefault();
+      return;
+    }
     if (!logOpen) event.preventDefault();
   }, { passive: false });
   logHandle.addEventListener('click', event => {

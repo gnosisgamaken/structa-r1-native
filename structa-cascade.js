@@ -150,9 +150,23 @@
     window.StructaVoice?.close?.();
     window.StructaCamera?.close?.();
     render();
-    requestAnimationFrame(() => {
-      window.StructaCamera?.open?.();
+
+    const openCamera = async () => {
+      const result = await window.StructaCamera?.open?.();
+      if (result?.ok === false) {
+        pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');
+        return;
+      }
       pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
+    };
+
+    if (source === 'ptt') {
+      void openCamera();
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      void openCamera();
     });
   }
 
@@ -923,6 +937,8 @@
   window.addEventListener('sideClick', event => { event.preventDefault?.(); handleSideClick(); });
   window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
   window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
+  window.addEventListener('pttStart', event => { event.preventDefault?.(); handleLongPressStart(); });
+  window.addEventListener('pttEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
   window.addEventListener('backbutton', handleNativeBack);
   window.addEventListener('popstate', handleNativeBack);
   document.addEventListener('keydown', event => {

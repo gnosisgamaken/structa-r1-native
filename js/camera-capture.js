@@ -1,14 +1,10 @@
 /**
  * camera-capture.js — Camera for R1 with user-gesture acquisition.
  *
- * getUserMedia MUST be called synchronously from within a trusted event handler.
- * All previous attempts failed because getUserMedia was called from async callbacks.
- *
- * Strategy:
- * - expose openFromGesture() — called directly from pointerup/pttStart handler.
- *   This calls getUserMedia SYNCHRONOUSLY (no await before it).
- * - If stream is already live, openFromGesture() just shows the overlay.
- * - Stream is never stopped between opens (persistent).
+ * Changes (2026-04-13):
+ * - capture() now uses StructaLLM.processImage() for analysis (no longer fire-and-forget)
+ * - Image analysis result is stored as project insight
+ * - Removed raw PluginMessageHandler call — all LLM queries go through r1-llm.js
  */
 (() => {
   const native = window.StructaNative;
@@ -66,9 +62,6 @@
 
   /**
    * openFromGesture — MUST be called synchronously from a pointerup handler.
-   * This is the entry point. getUserMedia is called here, not in any callback.
-   *
-   * Returns: nothing. The overlay is shown when the stream becomes ready.
    */
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
@@ -106,7 +99,6 @@
     setStatus('acquiring');
 
     // 3. getUserMedia called NOW — still inside the synchronous event handler chain.
-    // Cap at 640×480 for Rabbithole sync compatibility
     navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { max: 640 }, height: { max: 480 } } })
       .then(async (mediaStream) => {
         stream = mediaStream;
@@ -133,8 +125,6 @@
     try {
       const nextMode = facingMode === 'user' ? 'environment' : 'user';
       killStream();
-      // Flip is triggered from scroll which is a trusted gesture
-      // Cap at 640×480 for Rabbithole sync compatibility
       navigator.mediaDevices.getUserMedia({ video: { facingMode: nextMode, width: { max: 640 }, height: { max: 480 } } })
         .then(async (mediaStream) => {
           stream = mediaStream;
@@ -159,6 +149,8 @@
     const ctx = canvas.getContext('2d');
     ctx.drawImage(preview, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/png');
+    const rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+
     const imageAsset = {
       kind: 'capture',
       name: `camera-${Date.now()}.png`,
@@ -166,17 +158,19 @@
       data: dataUrl,
       meta: { facingMode, width: w, height: h, captured_at: new Date().toISOString() }
     };
+
     const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
       input_type: 'image',
       image_asset: imageAsset,
       prompt_text: facingMode === 'user' ? 'selfie capture' : 'camera capture',
-      summary: facingMode === 'user' ? 'selfie captured' : 'camera frame captured',
+      summary: 'analyzing...',
       approval_state: 'draft',
       tags: [facingMode, 'capture'],
       links: [],
       meta: { facingMode, width: w, height: h }
     });
+
     lastBundle = bundle;
     native?.storeCaptureBundle?.(bundle);
     native?.sendStructuredMessage?.({
@@ -190,33 +184,43 @@
       fallback: 'store-only',
       payload: bundle
     });
-    // Send capture context to LLM for structured insight
-    // Magic Kamera pattern: send imageBase64 via PluginMessageHandler
-    var imageDesc = `User captured a ${facingMode} photo (${w}x${h})`;
+
     native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
 
-    // Send image to R1 LLM for analysis
-    // Guide format: { message, imageBase64: BASE64_ONLY, useLLM }
-    // imageBase64 must be raw base64, NOT a data URL
-    var rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-    var analysisPrompt = 'Describe what you see in 10 words or fewer.';
-    if (typeof PluginMessageHandler !== 'undefined') {
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          message: analysisPrompt,
-          imageBase64: rawBase64,
-          useLLM: true,
-          wantsR1Response: false,
-          wantsJournalEntry: false
-        }));
-        native?.appendLogEntry?.({ kind: 'llm', message: 'image sent to r1 llm' });
-      } catch (err) {
-        native?.appendLogEntry?.({ kind: 'llm', message: 'image send err: ' + (err?.message || 'failed') });
-      }
+    // Send image to R1 LLM via StructaLLM (no longer fire-and-forget)
+    hideOverlay();
+
+    if (window.StructaLLM) {
+      var desc = `User captured a ${facingMode} photo (${w}x${h})`;
+      window.StructaLLM.processImage(rawBase64, desc, { facingMode: facingMode })
+        .then(function(result) {
+          if (result && result.ok && result.clean) {
+            // Store as insight
+            window.StructaLLM.storeAsInsight(result, 'capture');
+            native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+            // Update the bundle's summary with the analysis
+            native?.touchProjectMemory?.(function(project) {
+              var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
+              if (cap) {
+                cap.summary = result.clean;
+                cap.ai_analysis = result.clean;
+              }
+              // Also update uiState
+              native?.updateUIState?.({
+                last_capture_summary: result.clean,
+                last_insight_summary: result.clean
+              });
+            });
+            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          } else {
+            native?.appendLogEntry?.({ kind: 'camera', message: 'image analysis: no response' });
+          }
+        })
+        .catch(function() {
+          native?.appendLogEntry?.({ kind: 'camera', message: 'image analysis failed' });
+        });
     }
 
-    // R1 LLM handles the analysis above — no local LLM path needed
-    hideOverlay();
     return bundle;
   }
 

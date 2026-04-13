@@ -4,7 +4,13 @@
  * Uses PluginMessageHandler.postMessage() to send messages to the R1's
  * on-device LLM. Responses come back via window.onPluginMessage().
  *
- * This is the CORRECT way to access the R1 LLM — not HTTP.
+ * Changes (2026-04-13):
+ * - processVoice() now injects project context + conversation history
+ * - conversationHistory[] is populated on every exchange
+ * - sendToLLM() supports imageBase64 for camera analysis
+ * - extractFields() now pulls out decision text
+ * - storeAsInsight() auto-creates pending_decisions from LLM decisions
+ * - Removed noisy debug logging (thinking..., r1 msg...)
  */
 (function() {
   var native = window.StructaNative;
@@ -23,7 +29,8 @@
   /**
    * sendToLLM -- core function.
    * Sends a message to the R1's on-device LLM via PluginMessageHandler.
-   * Returns a promise that resolves with { ok, text } when the response arrives.
+   * Returns a promise that resolves with { ok, text, clean, structured }.
+   * Supports optional imageBase64 for multimodal queries.
    */
   function sendToLLM(message, options) {
     var opts = options || {};
@@ -47,7 +54,7 @@
           }, opts.timeout || 30000)
         };
 
-        // Build payload — this is the R1 Create SDK format
+        // Build payload — R1 Create SDK format
         var payload = {
           message: message,
           useLLM: true,
@@ -55,15 +62,14 @@
           wantsJournalEntry: opts.journal || false
         };
 
+        // Multimodal: attach raw base64 image
+        if (opts.imageBase64) payload.imageBase64 = opts.imageBase64;
         if (opts.pluginId) payload.pluginId = opts.pluginId;
 
         // Send via native bridge
         if (typeof PluginMessageHandler !== 'undefined') {
           try {
             PluginMessageHandler.postMessage(JSON.stringify(payload));
-            if (native && native.appendLogEntry) {
-              native.appendLogEntry({ kind: 'llm', message: 'llm: thinking...' });
-            }
           } catch (err) {
             delete pendingCallbacks[id];
             resolve({ ok: false, error: 'postMessage failed: ' + err.message });
@@ -77,36 +83,11 @@
   }
 
   // === Response handler ===
-  // The R1 OS sends LLM responses back via onPluginMessage.
-  // We intercept all responses and route to the correct pending callback.
   var previousHandler = window.onPluginMessage;
 
   window.onPluginMessage = function(data) {
-    // Log all incoming messages for debugging
-    var debugKeys = data ? Object.keys(data).join(',') : 'null';
-    var native = window.StructaNative;
-    native?.appendLogEntry?.({ kind: 'r1', message: 'r1 msg: ' + debugKeys + ' t=' + (data?.type || '?') });
-
-    // Try to extract the LLM response text
-    var responseText = '';
-    var responseType = '';
-
-    if (data) {
-      responseType = data.type || '';
-      responseText = data.message || data.content || data.response || data.transcript || '';
-      if (!responseText && data.data) {
-        try {
-          var parsed = JSON.parse(data.data);
-          responseText = parsed.message || parsed.content || parsed.response || parsed.transcript || '';
-          responseType = responseType || parsed.type || '';
-        } catch (e) {
-          responseText = data.data;
-        }
-      }
-    }
-
-    // STT handling — match exact R1 format from timer SDK: { type: 'sttEnded', transcript: '...' }
-    if (responseType === 'sttEnded' && data.transcript) {
+    // STT handling — match exact R1 format: { type: 'sttEnded', transcript: '...' }
+    if (data && data.type === 'sttEnded' && data.transcript) {
       native?.appendLogEntry?.({ kind: 'voice', message: 'stt: ' + data.transcript.slice(0, 60) });
       if (previousHandler) {
         try { previousHandler(data); } catch (e) {}
@@ -115,6 +96,20 @@
         detail: { transcript: data.transcript }
       }));
       return;
+    }
+
+    // Try to extract the LLM response text
+    var responseText = '';
+    if (data) {
+      responseText = data.message || data.content || data.response || data.transcript || '';
+      if (!responseText && data.data) {
+        try {
+          var parsed = JSON.parse(data.data);
+          responseText = parsed.message || parsed.content || parsed.response || parsed.transcript || '';
+        } catch (e) {
+          responseText = data.data;
+        }
+      }
     }
 
     // Route LLM response to the most recent pending callback
@@ -162,56 +157,169 @@
   }
 
   function extractFields(text) {
-    var result = { raw: text, insight: text, next: '', conf: 'med' };
+    var result = { raw: text, insight: text, next: '', decision: '', conf: 'med' };
+
+    // Extract decision — LLM prefixes decisions with "DECISION:"
+    var dMatch = text.match(/(?:^|\s)DECISION:\s*(.{10,120})/i);
+    if (dMatch) {
+      result.decision = dMatch[1].trim().replace(/^["']|["']$/g, '');
+    } else {
+      // Also detect decision language
+      var dm = text.match(/(?:we (?:decided|agreed|chose|should|will|plan to))[:\s]*(.{10,100})/i);
+      if (dm) result.decision = dm[0].trim();
+    }
+
+    // Extract next step
     var m = text.match(/(?:next step|suggest|recommend|you should|start by|try)[:\s]*(.{10,100})/i);
     if (m) result.next = m[1].trim();
+
     if (/definitely|clearly/i.test(text)) result.conf = 'high';
     if (/maybe|perhaps|might/i.test(text)) result.conf = 'low';
+
     return result;
+  }
+
+  // === Context builder ===
+
+  function buildProjectContext() {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var parts = [];
+    if (project.name && project.name !== 'untitled project') {
+      parts.push('Project: ' + project.name);
+    }
+    var backlog = project.backlog || [];
+    if (backlog.length) {
+      parts.push('Backlog (' + backlog.length + '): ' + backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
+    }
+    var questions = project.open_questions || [];
+    if (questions.length) {
+      parts.push('Open questions (' + questions.length + '): ' + questions.slice(0, 2).map(function(q) {
+        return q.length > 40 ? q.slice(0, 40) + '...' : q;
+      }).join('; '));
+    }
+    var pending = project.pending_decisions || [];
+    if (pending.length) {
+      var pd = typeof pending[0] === 'string' ? pending[0] : pending[0].text;
+      parts.push('Pending decision: ' + (pd || '').slice(0, 60));
+    }
+    return parts.join('\n');
+  }
+
+  function buildHistoryContext() {
+    if (!conversationHistory.length) return '';
+    return '\nRecent:\n' + conversationHistory.slice(-4).map(function(h) {
+      return (h.role === 'user' ? 'User: ' : 'AI: ') + h.text.slice(0, 60);
+    }).join('\n');
   }
 
   // === Specialized entry points ===
 
-  function processVoice(transcript) {
-    // Guard rails per community guide + concise prompt
-    var prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-      'Process this and respond with 3 words max:\n\n' + transcript;
-    return sendToLLM(prompt, { speak: false, journal: false });
+  /**
+   * processVoice -- main voice handler.
+   * Now injects project context and conversation history for grounded responses.
+   * options.answeringQuestion + options.questionText = answer mode (for know card)
+   */
+  function processVoice(transcript, options) {
+    var opts = options || {};
+    var context = buildProjectContext();
+    var historyCtx = buildHistoryContext();
+
+    var prompt;
+    if (opts.answeringQuestion) {
+      // Answering a specific question from the know card
+      prompt = 'Context:\n' + (context || 'no project context') + '\n\n' +
+        'Question: "' + (opts.questionText || '') + '"\n' +
+        'Answer: "' + transcript + '"\n\n' +
+        'Extract the answer in 5 words max. No preamble.';
+    } else {
+      // Normal voice input with full project context
+      prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n';
+      if (context) prompt += 'Context:\n' + context + '\n\n';
+      if (historyCtx) prompt += historyCtx + '\n\n';
+      prompt += 'User said: "' + transcript + '"\n\n' +
+        'Respond with:\n' +
+        '- Insight: 3 words max about what this means\n' +
+        '- Next: 1 suggested action (5 words max)\n' +
+        '- If this is a decision, prefix with DECISION:';
+    }
+
+    // Track in conversation history
+    conversationHistory.push({ role: 'user', text: transcript, time: Date.now() });
+    if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
+
+    return sendToLLM(prompt, { speak: false, journal: false }).then(function(result) {
+      // Track LLM response in history
+      if (result && result.ok && result.clean) {
+        conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now() });
+        if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
+      }
+      return result;
+    });
   }
 
-  function processImage(desc, meta) {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var parts = ['Project: ' + (project.name || 'untitled'),
-      'Camera: ' + (meta && meta.facingMode || 'environment'), '',
-      'Image captured: "' + (desc || 'no description') + '"', '',
-      'What does this tell us? 1-2 key elements.'];
-    return sendToLLM(parts.join('\n'));
+  /**
+   * processImage -- sends image to R1 LLM with project context.
+   * Returns a promise with { ok, clean, structured }.
+   */
+  function processImage(rawBase64, description, meta) {
+    var context = buildProjectContext();
+    var prompt = (context ? context + '\n\n' : '') +
+      'Image: ' + (description || 'camera capture') + '\n' +
+      'Camera: ' + (meta && meta.facingMode || 'environment') + '\n\n' +
+      'What does this tell us? 1-2 key elements. 8 words max.';
+
+    return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false });
   }
 
   function query(question) {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var parts = ['Project: ' + (project.name || 'untitled')];
-    if (project.backlog && project.backlog.length) {
-      parts.push('Open: ' + project.backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
-    }
-    parts.push('', question);
-    return sendToLLM(parts.filter(Boolean).join('\n'));
+    var context = buildProjectContext();
+    var parts = context ? [context, '', question] : [question];
+    return sendToLLM(parts.join('\n'));
   }
 
+  /**
+   * storeAsInsight -- stores LLM result as project insight.
+   * Auto-extracts decisions and creates pending_decisions.
+   */
   function storeAsInsight(result, sourceType) {
     if (!result || !result.ok || !result.clean) return null;
     if (!native || !native.touchProjectMemory) return null;
-    return native.touchProjectMemory(function(project) {
+
+    var insight = {
+      title: (sourceType || 'llm') + ' insight',
+      body: result.clean,
+      next: result.structured ? result.structured.next : '',
+      confidence: result.structured ? result.structured.conf : 'med',
+      created_at: new Date().toISOString()
+    };
+
+    var decisionText = result.structured && result.structured.decision;
+
+    native.touchProjectMemory(function(project) {
       project.insights = Array.isArray(project.insights) ? project.insights : [];
-      project.insights.unshift({
-        title: (sourceType || 'llm') + ' insight',
-        body: result.clean,
-        next: result.structured ? result.structured.next : '',
-        confidence: result.structured ? result.structured.conf : 'med',
-        created_at: new Date().toISOString()
-      });
+      project.insights.unshift(insight);
       project.insights = project.insights.slice(0, 16);
+
+      // Auto-create pending decision if LLM identified one
+      if (decisionText) {
+        project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+        // Dedup: don't add if same text already exists
+        var exists = project.pending_decisions.some(function(d) {
+          return (d.text || d) === decisionText;
+        });
+        if (!exists) {
+          project.pending_decisions.unshift({
+            text: decisionText,
+            source: sourceType || 'voice',
+            insight_body: result.clean,
+            created_at: new Date().toISOString()
+          });
+          project.pending_decisions = project.pending_decisions.slice(0, 8);
+        }
+      }
     });
+
+    return insight;
   }
 
   function resetHistory() { conversationHistory = []; }
@@ -223,6 +331,7 @@
     query: query,
     storeAsInsight: storeAsInsight,
     resetHistory: resetHistory,
-    get pendingCount() { return Object.keys(pendingCallbacks).length; }
+    get pendingCount() { return Object.keys(pendingCallbacks).length; },
+    get historyLength() { return conversationHistory.length; }
   });
 })();

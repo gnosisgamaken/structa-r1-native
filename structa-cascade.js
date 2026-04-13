@@ -27,11 +27,17 @@
   let knowDetail = false;
   let queuedIndex = null;
   let queuedDirection = 0;
-  
+
   // Hint mode state for instant PTT activation
-  let hintMode = false;      // true when in hint mode (single tap on show/tell)
-  let hintTarget = null;     // 'show' or 'tell' - which card we're hinting for
-  let pttActive = false;     // true when PTT is physically held down
+  let hintMode = false;
+  let hintTarget = null;
+  let pttActive = false;
+
+  // Decision navigation in NOW card
+  let decisionIndex = 0;
+
+  // Question answering mode (from KNOW card)
+  let answeringQuestion = null; // { index, text } when actively answering
 
   function stamp() {
     return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toLowerCase();
@@ -45,44 +51,20 @@
   function enterHintMode(target) {
     hintMode = true;
     hintTarget = target;
-    pushLog(`hint mode: ${target}`, 'focus');
-    updateHintUI(target, false); // Show hint, not active yet
+    render();
   }
 
   function exitHintMode() {
     if (!hintMode) return;
-    // Clean up camera if it was opened for hint mode
     if (hintTarget === 'show' && window.StructaCamera?.primed) {
       window.StructaCamera?.close?.();
     }
-    pushLog('hint mode exit', 'focus');
     hintMode = false;
     hintTarget = null;
     pttActive = false;
     window.__STRUCTA_PTT_TARGET__ = null;
     document.body.classList.remove('input-locked');
-    updateHintUI(null, false); // Clear hint UI
-  }
-
-  function updateHintUI(target, isActive) {
-    // Update the icon to show hint (pulsing) or active (solid red)
-    const card = cards.find(c => c.id === target);
-    if (!card) return;
-    
-    // Find the card's visual representation and update it
-    // We'll trigger a re-render to update the icon styling
     render();
-    
-    // Also log for debugging
-    if (isActive) {
-      pushLog(`${target} active`, 'focus');
-    } else if (hintMode) {
-      pushLog(`${target} hint`, 'focus');
-    }
-  }
-
-  function isHintModeActive() {
-    return hintMode;
   }
 
   function currentCard() {
@@ -99,11 +81,6 @@
 
   function getUIState() {
     return native?.getUIState?.() || getMemory().uiState || {};
-  }
-
-  function lastCapture() {
-    const captures = getMemory().captures || [];
-    return captures[captures.length - 1] || null;
   }
 
   function latestLogText() {
@@ -189,8 +166,6 @@
   function enterSurface(surface) {
     activeSurface = surface;
     setLogDrawer(false);
-    // Attempt to set back button text via document.title
-    // R1 journal app shows "journal" as back text inside entries — likely reads from document.title
     if (surface === 'home') {
       document.title = 'structa';
     } else if (surface === 'project') {
@@ -202,7 +177,6 @@
     } else if (surface === 'voice') {
       document.title = 'tell';
     }
-    pushLog(`surface: ${surface}, title: "${document.title}"`, 'probe');
   }
 
   function openCameraSurface(source = 'touch') {
@@ -214,22 +188,18 @@
     window.StructaVoice?.close?.();
 
     if (source === 'ptt') {
-      // PTT on show: show "touch" prompt overlay — camera needs trusted touch to activate
       document.getElementById('app')?.classList.add('overlay-active');
       var overlay = document.getElementById('camera-overlay');
       overlay?.classList.add('open');
       overlay?.setAttribute('aria-hidden', 'false');
       overlay?.classList.add('touch-activate');
-      pushLog('show: touch to activate', 'focus');
       return;
     }
 
-    // Direct touch: activate camera immediately
     window.StructaCamera?.openFromGesture?.();
-    pushLog('show ready', 'focus');
   }
 
-  function openVoiceSurface(source = 'touch') {
+  function openVoiceSurface(source = 'touch', questionContext) {
     queuedIndex = null;
     queuedDirection = 0;
     window.__STRUCTA_PTT_TARGET__ = 'voice';
@@ -239,25 +209,41 @@
     render();
     if (source === 'ptt') window.StructaVoice?.startListening?.();
     else window.StructaVoice?.open?.();
-    pushLog(source === 'ptt' ? 'tell ready from ptt' : 'tell ready', 'focus');
+  }
+
+  /**
+   * openVoiceForAnswer -- opens voice to answer a specific question from KNOW card.
+   */
+  function openVoiceForAnswer(questionIndex, questionText) {
+    answeringQuestion = { index: questionIndex, text: questionText };
+    // Set answer context on voice module
+    if (window.StructaVoice?.setQuestionContext) {
+      window.StructaVoice.setQuestionContext(questionIndex, questionText);
+    }
+    // Set visual answer mode on voice overlay
+    var voiceOverlay = document.getElementById('voice-overlay');
+    var contextLabel = document.getElementById('voice-context-label');
+    if (voiceOverlay) voiceOverlay.classList.add('answer-mode');
+    if (contextLabel) contextLabel.textContent = 'answering...';
+    native?.appendLogEntry?.({ kind: 'voice', message: 'answering: ' + questionText.slice(0, 40) });
+    document.getElementById('app')?.classList.add('overlay-active');
+    window.__STRUCTA_PTT_TARGET__ = 'voice';
+    window.StructaVoice?.startListening?.();
   }
 
   function openCard(card) {
     queuedIndex = null;
     queuedDirection = 0;
-    
-    // If we're in hint mode and opening a non-show/tell card, exit hint mode
+
     if (hintMode && !(card.id === 'show' || card.id === 'tell')) {
       exitHintMode();
     }
-    
-    // For show/tell cards on home surface, enter hint mode instead of opening surface
+
     if (activeSurface === 'home' && (card.id === 'show' || card.id === 'tell')) {
       enterHintMode(card.id);
       return;
     }
-    
-    // Default behavior: open the surface
+
     native?.setActiveNode?.(card.id);
     native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
     pushLog(`${card.title} ready`, 'focus');
@@ -280,6 +266,7 @@
     }
     if (card.surface === 'project') {
       activeSurface = 'project';
+      decisionIndex = 0;
       render();
       return;
     }
@@ -294,7 +281,6 @@
   function handleScrollDirection(direction) {
     if (activeSurface === 'camera') {
       window.StructaCamera?.flip?.();
-      pushLog('camera angle changed', 'show');
       return;
     }
     if (activeSurface === 'voice') {
@@ -320,7 +306,15 @@
       return;
     }
     if (activeSurface === 'project') {
-      backHome();
+      // Cycle through pending decisions on NOW card
+      const project = getProjectMemory();
+      const pending = project?.pending_decisions || [];
+      if (pending.length > 1) {
+        decisionIndex = (decisionIndex + (direction > 0 ? 1 : -1) + pending.length) % pending.length;
+        render();
+      } else {
+        backHome();
+      }
       return;
     }
     if (logOpen) {
@@ -332,7 +326,6 @@
   }
 
   function handleSideClick() {
-    // Disable side button when PTT is active during hint mode
     if (pttActive && hintMode) {
       return;
     }
@@ -346,14 +339,18 @@
       if (!window.StructaVoice?.listening) backHome();
       return;
     }
-    if (activeSurface === 'project') {
-      backHome();
-      return;
-    }
     if (activeSurface === 'insight') {
       const model = buildKnowModel();
       if (!model.lanes.length) return;
+
+      // If viewing a question, side button = answer it
       if (knowDetail) {
+        const items = getKnowVisibleItems(model);
+        const item = items[knowItemIndex];
+        if (item && item.source === 'question') {
+          openVoiceForAnswer(item.questionIndex, item.body);
+          return;
+        }
         knowDetail = false;
       } else {
         knowDetail = true;
@@ -362,41 +359,48 @@
       render();
       return;
     }
+    if (activeSurface === 'project') {
+      // Side button on NOW card = approve pending decision
+      const project = getProjectMemory();
+      const pending = project?.pending_decisions || [];
+      if (pending.length && decisionIndex < pending.length) {
+        native?.approvePendingDecision?.(decisionIndex);
+        pushLog('decision approved', 'decision');
+        decisionIndex = 0;
+        render();
+        return;
+      }
+      backHome();
+      return;
+    }
     if (logOpen) {
       setLogDrawer(false);
       return;
     }
-    // Side button on home: open the current card's surface
     openCard(currentCard());
   }
 
   function handleLongPressStart() {
     if (logOpen) return;
 
-    // If in hint mode, PTT hold activates the target surface instantly
     if (hintMode) {
       if (hintTarget === 'show') {
-        // C1 fix: Open camera preview only — do NOT capture on release
         window.__STRUCTA_PTT_TARGET__ = 'camera';
         window.StructaCamera?.openFromGesture?.('environment');
         pttActive = true;
-        updateHintUI('show', true);
-        pushLog('show: camera aiming', 'focus');
+        render();
         return;
       }
       if (hintTarget === 'tell') {
-        // Instant voice activation from hint mode
         window.__STRUCTA_PTT_TARGET__ = 'voice';
         document.body.classList.add('input-locked');
         window.StructaVoice?.startListening?.();
         pttActive = true;
-        updateHintUI('tell', true);
-        pushLog('tell: instant listening', 'focus');
+        render();
         return;
       }
     }
 
-    // Not in hint mode — existing behavior
     if (activeSurface === 'camera') {
       window.StructaCamera?.capture?.();
       return;
@@ -423,7 +427,6 @@
       return;
     }
     if (card.id === 'show') {
-      // C1 fix: Open camera preview (touch-activate) — user taps to open, aims, then captures
       openCameraSurface('ptt');
       return;
     }
@@ -437,27 +440,20 @@
 
     document.body.classList.remove('input-locked');
 
-    // If PTT was active during hint mode, handle completion
     if (pttActive && hintMode) {
       pttActive = false;
       if (hintTarget === 'show') {
-        // C1 fix: Do NOT capture on release — camera stays open for aiming.
-        // User captures via side button or tap on camera overlay.
-        pushLog('show: release — aim and press side to shoot', 'focus');
-        // Don't exit hint mode — camera is still active
+        // Camera stays open for aiming
         return;
       }
       if (hintTarget === 'tell') {
-        // Voice listening was active, stop and process transcript
         window.StructaVoice?.stopListening?.(true);
-        pushLog('tell: listening complete', 'focus');
       }
       exitHintMode();
       window.__STRUCTA_PTT_TARGET__ = null;
       return;
     }
 
-    // Existing behavior
     window.__STRUCTA_PTT_TARGET__ = null;
     if (activeSurface === 'voice' && window.StructaVoice?.listening) {
       window.StructaVoice?.stopListening?.(true);
@@ -469,6 +465,7 @@
     const leavingSurface = activeSurface;
     queuedIndex = null;
     queuedDirection = 0;
+    answeringQuestion = null;
     if (logOpen) {
       setLogDrawer(false);
       if (leavingSurface === 'home') return;
@@ -491,6 +488,8 @@
     render();
   }
 
+  // === NOW card builder (project surface) ===
+
   function buildNowSummary() {
     const memory = getMemory();
     const project = getProjectMemory();
@@ -499,17 +498,25 @@
     const insights = project?.insights || [];
     const openQuestions = project?.open_questions || [];
     const backlog = project?.backlog || [];
+    const decisions = project?.decisions || [];
+    const pendingDecisions = project?.pending_decisions || [];
     return {
       title: project?.name || 'untitled project',
       changed: ui.last_event_summary || 'ready to resume',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || 'no capture yet'),
       insight: ui.last_insight_summary || (insights[0]?.body || 'no insight yet'),
-      next: backlog[0]?.title || (openQuestions[0] ? `answer ${openQuestions[0]}` : 'capture the next concrete update'),
+      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : 'capture the next concrete update'),
       openQuestions: openQuestions.length,
       captures: captures.length,
-      insights: insights.length
+      insights: insights.length,
+      decisions: decisions.length,
+      pendingDecisions: pendingDecisions,
+      pendingDecisionText: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? pendingDecisions[0] : pendingDecisions[0].text) : null,
+      pendingDecisionIndex: decisionIndex
     };
   }
+
+  // === KNOW card builder (insight surface) ===
 
   function textHasAny(text = '', terms = []) {
     const value = lower(text);
@@ -530,7 +537,6 @@
     const chips = [
       { id: 'latest', label: 'latest' },
       { id: 'next', label: 'next' },
-      { id: 'blocked', label: 'blocked' },
       { id: 'asks', label: 'asks' },
       { id: 'assets', label: 'assets' }
     ];
@@ -539,23 +545,24 @@
       const text = lower(`${item.title} ${item.body} ${item.next}`);
       const bucket = new Set(item.chips || []);
       if (item.source === 'question') bucket.add('asks');
-      if (item.source === 'asset' || item.source === 'capture-image' || item.source === 'capture-vision') bucket.add('assets');
-      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act', 'follow', 'move'])) bucket.add('next');
-      if (text.includes('?') || textHasAny(text, ['blocked', 'waiting', 'stuck', 'missing', 'need', 'pending', 'unknown'])) bucket.add('blocked');
+      if (item.source === 'asset' || item.source === 'capture-image') bucket.add('assets');
+      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act'])) bucket.add('next');
       item.chips = Array.from(bucket);
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [] }) => classify({
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex }) => classify({
       lane,
       title: lower(title || lane),
       body: lower(body || 'no detail yet'),
       next: lower(next || 'capture the next useful update'),
       created_at: created_at || new Date().toISOString(),
       source: source || lane,
-      chips: chipHints.slice()
+      chips: chipHints.slice(),
+      questionIndex: questionIndex
     });
 
+    const questions = [];
     const signals = [];
     const decisionsLane = [];
     const loops = [];
@@ -565,9 +572,34 @@
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const openQuestions = project?.open_questions || [];
-    const assets = memory?.assets || [];
-    const logs = native?.getRecentLogEntries?.(8, { visible_only: true }) || [];
 
+    // Questions lane — PROMINENT, always first
+    openQuestions.slice(0, 5).forEach((question, index) => {
+      questions.push(makeItem({
+        lane: 'questions',
+        title: `question ${index + 1}`,
+        body: question,
+        next: 'side = answer this now',
+        created_at: new Date().toISOString(),
+        source: 'question',
+        chips: ['asks'],
+        questionIndex: index
+      }));
+    });
+
+    if (!questions.length) {
+      questions.push(makeItem({
+        lane: 'questions',
+        title: 'all clear',
+        body: 'no open questions right now',
+        next: 'use tell to add something that needs an answer',
+        created_at: new Date().toISOString(),
+        source: 'empty',
+        chips: ['latest']
+      }));
+    }
+
+    // Signals
     if (ui.last_insight_summary || ui.last_capture_summary) {
       signals.push(makeItem({
         lane: 'signals',
@@ -604,45 +636,34 @@
       }));
     });
 
-    logs.slice(-3).reverse().forEach(entry => {
-      signals.push(makeItem({
-        lane: 'signals',
-        title: 'recent event',
-        body: entry.message || 'recent activity',
-        next: 'open the matching surface if this changed the plan',
-        created_at: entry.created_at,
-        source: 'log',
-        chips: ['latest']
-      }));
-    });
-
+    // Decisions
     decisions.slice(0, 5).forEach((decision, index) => {
-      const decisionTitle = typeof decision === 'string' ? decision : (decision.title || decision.summary || `decision ${index + 1}`);
-      const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || decision.summary || 'decision recorded');
-      const decisionNext = typeof decision === 'string' ? backlog[0]?.title || 'act on the decision' : (decision.next || backlog[0]?.title || 'act on the decision');
+      const decisionTitle = typeof decision === 'string' ? decision : (decision.title || `decision ${index + 1}`);
+      const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'decision recorded');
       decisionsLane.push(makeItem({
         lane: 'decisions',
         title: decisionTitle,
         body: decisionBody,
-        next: decisionNext,
+        next: backlog[0]?.title || 'act on the decision',
         created_at: decision.created_at,
         source: 'decision',
-        chips: index === 0 ? ['latest', 'next'] : []
+        chips: index === 0 ? ['latest'] : []
       }));
     });
 
     if (!decisionsLane.length) {
       decisionsLane.push(makeItem({
         lane: 'decisions',
-        title: 'no locked decision',
-        body: ui.last_event_summary || 'the project still needs one explicit choice',
-        next: backlog[0]?.title || 'use tell to lock the next decision',
+        title: 'no locked decisions',
+        body: 'use tell to state a decision — it will appear here once approved',
+        next: backlog[0]?.title || 'speak a clear decision with tell',
         created_at: new Date().toISOString(),
         source: 'decision-gap',
-        chips: ['next', 'blocked']
+        chips: []
       }));
     }
 
+    // Loops (backlog only — questions moved to their own lane)
     backlog.slice(0, 5).forEach((item, index) => {
       loops.push(makeItem({
         lane: 'open loops',
@@ -651,81 +672,63 @@
         next: item.title || 'move this loop forward with tell',
         created_at: item.created_at,
         source: 'backlog',
-        chips: ['next', item.state === 'blocked' ? 'blocked' : '']
-      }));
-    });
-
-    openQuestions.slice(0, 5).forEach((question, index) => {
-      loops.push(makeItem({
-        lane: 'open loops',
-        title: `question ${index + 1}`,
-        body: question,
-        next: 'answer this with tell or capture evidence with show',
-        created_at: new Date().toISOString(),
-        source: 'question',
-        chips: ['asks', 'blocked']
-      }));
-    });
-
-    assets.slice(-4).reverse().forEach((asset, index) => {
-      loops.push(makeItem({
-        lane: 'open loops',
-        title: asset.title || asset.name || `asset ${index + 1}`,
-        body: asset.body || asset.summary || asset.kind || 'saved asset',
-        next: 'open the related work and decide if this asset matters now',
-        created_at: asset.created_at,
-        source: 'asset',
-        chips: ['assets', index === 0 ? 'latest' : '']
+        chips: ['next']
       }));
     });
 
     const lanes = [
       {
+        id: 'questions',
+        label: 'asks',
+        summary: 'questions waiting for an answer',
+        emptyTitle: 'all clear',
+        emptyBody: 'no open questions',
+        emptyNext: 'use tell to add something that needs an answer',
+        items: questions
+      },
+      {
         id: 'signals',
         label: 'signals',
         summary: 'what changed and why it matters',
         emptyTitle: 'no signals yet',
-        emptyBody: 'capture something with show or tell to create signal',
-        emptyNext: 'use tell to add one concrete update',
-        items: signals
+        emptyBody: 'capture something with show or tell',
+        emptyNext: 'use tell to add one update',
+        items: signals.length ? signals : [makeItem({
+          lane: 'signals', title: 'no signals yet', body: 'capture something with show or tell',
+          next: 'use tell to add one update', created_at: new Date().toISOString(), source: 'empty', chips: ['latest']
+        })]
       },
       {
         id: 'decisions',
-        label: 'decisions',
-        summary: 'what is decided and ready to act on',
+        label: 'decided',
+        summary: 'what is locked and ready to act on',
         emptyTitle: 'no decisions yet',
-        emptyBody: 'nothing has been locked in this project yet',
-        emptyNext: 'use tell to make one decision explicit',
+        emptyBody: 'speak a decision with tell — approve it in now',
+        emptyNext: 'use tell to state a decision',
         items: decisionsLane
       },
       {
         id: 'open loops',
-        label: 'open loops',
-        summary: 'what is unresolved or waiting',
+        label: 'loops',
+        summary: 'unresolved tasks and items',
         emptyTitle: 'no open loops',
-        emptyBody: 'this project has no open loops right now',
-        emptyNext: 'capture the next question or task when it appears',
-        items: loops
+        emptyBody: 'this project has no open loops',
+        emptyNext: 'capture the next question or task',
+        items: loops.length ? loops : [makeItem({
+          lane: 'open loops', title: 'no open loops', body: 'clean slate',
+          next: 'capture the next task', created_at: new Date().toISOString(), source: 'empty', chips: []
+        })]
       }
     ].map(lane => {
-      const laneItems = lane.items.length ? lane.items : [makeItem({
-        lane: lane.id,
-        title: lane.emptyTitle,
-        body: lane.emptyBody,
-        next: lane.emptyNext,
-        created_at: new Date().toISOString(),
-        source: 'empty',
-        chips: ['latest']
-      })];
-      laneItems
+      lane.items
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
         .forEach((item, index) => {
           if (index < 2 && !item.chips.includes('latest')) item.chips.push('latest');
         });
       const availableChipIndexes = chips
-        .map((chip, index) => laneItems.some(item => item.chips.includes(chip.id)) ? index : -1)
+        .map((chip, index) => lane.items.some(item => item.chips.includes(chip.id)) ? index : -1)
         .filter(index => index >= 0);
-      return { ...lane, items: laneItems, availableChipIndexes: availableChipIndexes.length ? availableChipIndexes : [0] };
+      return { ...lane, availableChipIndexes: availableChipIndexes.length ? availableChipIndexes : [0] };
     });
 
     return { chips, lanes };
@@ -739,18 +742,12 @@
     return filtered.length ? filtered : lane.items;
   }
 
+  // === SVG rendering ===
+
   function cardLayout(index) {
-    // Hero — left edge at viewport center (x=120), extends past right edge
-    // Y=48 to avoid clipping into log drawer (bottom 18px at 274-292)
-    // Card bottom = 48 + 150*1.5 = 273, just above drawer at 274
     if (index === selectedIndex) return { x: 120, y: 48, scale: 1.5, opacity: 1, depth: -1 };
-    // Stack — 3 cards in left half (x=0 to x=120), equal 40px zones
-    // Left half = 120px / 3 cards = 40px zone per card
-    // Front (closest to hero): largest scale, peeks least (40px zone)
-    // Back (furthest from hero): smallest scale, peeks most (full 120px visible)
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 48 + (150 * 1.5) / 2; // 160.5 — centered below title
-    // depth 0 = back (smallest, x=0), depth 2 = front (largest, x=80)
+    var heroCenterY = 48 + (150 * 1.5) / 2;
     var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
     var stack = scales.map(function(s, i) {
@@ -784,10 +781,8 @@
   }
 
   function drawCardIcon(card, selected, parent, hintState = null) {
-    // hintState: null (normal), 'hint' (pulsing), 'active' (solid red)
     if (!selected) return;
     if (card.iconPath) {
-      // Determine style based on hint state
       let style = 'filter: brightness(0) saturate(100%);';
       if (hintState === 'active') {
         style = 'filter: brightness(0) saturate(100%) hue-rotate(0deg) brightness(1.2);';
@@ -796,58 +791,33 @@
       }
 
       image(card.iconPath, {
-        x: 18,
-        y: 16,
-        width: 30,
-        height: 30,
-        preserveAspectRatio: 'xMidYMid meet',
-        opacity: 1,
-        style: style
+        x: 18, y: 16, width: 30, height: 30,
+        preserveAspectRatio: 'xMidYMid meet', opacity: 1, style
       }, parent);
 
-      // Hint mode: add pulsing red dot on the icon (SVG animate — survives render cycles)
       if (hintState === 'hint' || hintState === 'active') {
         const pulseCircle = mk('circle', {
-          cx: 42,
-          cy: 18,
+          cx: 42, cy: 18,
           r: hintState === 'active' ? 8 : 6,
           fill: card.id === 'show' ? 'rgba(119,213,255,0.9)' : 'rgba(146,255,157,0.9)'
         }, parent);
         if (hintState === 'hint') {
-          const animR = mk('animate', {
-            attributeName: 'r',
-            values: '6;10;6',
-            dur: '0.8s',
-            repeatCount: 'indefinite'
-          }, pulseCircle);
-          const animOpacity = mk('animate', {
-            attributeName: 'opacity',
-            values: '0.5;1;0.5',
-            dur: '0.8s',
-            repeatCount: 'indefinite'
-          }, pulseCircle);
+          mk('animate', { attributeName: 'r', values: '6;10;6', dur: '0.8s', repeatCount: 'indefinite' }, pulseCircle);
+          mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '0.8s', repeatCount: 'indefinite' }, pulseCircle);
         }
       }
       return;
     }
-    // Fallback to text icon with color based on hint state
     let fill = 'rgba(10,10,10,0.88)';
-    if (hintState === 'active') {
-      fill = 'rgba(255,0,0,0.9)';
-    } else if (hintState === 'hint') {
-      fill = 'rgba(255,105,180,0.9)';
-    }
+    if (hintState === 'active') fill = 'rgba(255,0,0,0.9)';
+    else if (hintState === 'hint') fill = 'rgba(255,105,180,0.9)';
     text(18, 40, card.iconFallback || '•', {
-      fill: fill,
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '28'
+      fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '28'
     }, parent);
 
-    // Pulse dot for fallback icon too
     if (hintState === 'hint' || hintState === 'active') {
       const pulseCircle = mk('circle', {
-        cx: 42,
-        cy: 18,
+        cx: 42, cy: 18,
         r: hintState === 'active' ? 8 : 6,
         fill: card.id === 'show' ? 'rgba(119,213,255,0.9)' : 'rgba(146,255,157,0.9)'
       }, parent);
@@ -861,12 +831,8 @@
   function drawWordmark() {
     if (activeSurface !== 'home') return;
     image('assets/icons/png/5.png', {
-      x: 11,
-      y: 14,
-      width: 24,
-      height: 24,
-      preserveAspectRatio: 'xMidYMid meet',
-      opacity: 0.96,
+      x: 11, y: 14, width: 24, height: 24,
+      preserveAspectRatio: 'xMidYMid meet', opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
     text(42, 40, 'structa', {
@@ -880,12 +846,8 @@
   function drawSurfaceHeader(card) {
     if (card.iconPath) {
       image(card.iconPath, {
-        x: 11,
-        y: 14,
-        width: 24,
-        height: 24,
-        preserveAspectRatio: 'xMidYMid meet',
-        opacity: 1,
+        x: 11, y: 14, width: 24, height: 24,
+        preserveAspectRatio: 'xMidYMid meet', opacity: 1,
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
@@ -900,7 +862,6 @@
   function drawCard(card, index) {
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
-    const stackDepth = layout.depth ?? -1;
     const showStackIcon = !selected;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
@@ -911,12 +872,7 @@
     });
 
     const rect = mk('rect', {
-      x: 0,
-      y: 0,
-      width: 150,
-      height: 150,
-      rx: 20,
-      ry: 20,
+      x: 0, y: 0, width: 150, height: 150, rx: 20, ry: 20,
       fill: selected ? card.color : card.color,
       stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
       'stroke-width': selected ? 1 : 0.8,
@@ -924,7 +880,6 @@
     }, group);
 
     if (selected) {
-      // Determine hint state for selected card
       let hintState = null;
       if (hintMode && hintTarget === card.id) {
         hintState = pttActive ? 'active' : 'hint';
@@ -935,7 +890,6 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '22'
       }, group);
-      // C2: In hint mode, replace roleShort with actionable hint text
       const displayRole = (hintMode && hintTarget === card.id)
         ? (card.id === 'show' ? 'hold to shoot' : 'hold to say')
         : lower(card.roleShort || card.role);
@@ -943,7 +897,7 @@
       const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
       const secondLine = words.slice(Math.ceil(words.length / 2)).join(' ');
       text(18, 101, firstLine, {
-        fill: 'rgba(8,8,8,0.74)',
+        fill: 'rgba(8,8,0,0.74)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       }, group);
@@ -954,15 +908,36 @@
           'font-size': '12'
         }, group);
       }
+
+      // Show notification badges for pending decisions and open questions
+      const project = getProjectMemory();
+      const pendingCount = (project?.pending_decisions || []).length;
+      const questionCount = (project?.open_questions || []).length;
+      if (pendingCount > 0 && card.id === 'now') {
+        mk('circle', { cx: 140, cy: 16, r: 10, fill: 'rgba(8,8,8,0.88)' }, group);
+        text(140, 20, String(pendingCount), {
+          fill: '#ff8a65',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '11',
+          'text-anchor': 'middle',
+          'font-weight': 'bold'
+        }, group);
+      }
+      if (questionCount > 0 && card.id === 'know') {
+        mk('circle', { cx: 140, cy: 16, r: 10, fill: 'rgba(8,8,8,0.88)' }, group);
+        text(140, 20, String(questionCount), {
+          fill: '#f8c15d',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '11',
+          'text-anchor': 'middle',
+          'font-weight': 'bold'
+        }, group);
+      }
     } else if (showStackIcon) {
       if (card.iconPath) {
         image(card.iconPath, {
-          x: 18,
-          y: 18,
-          width: 30,
-          height: 30,
-          preserveAspectRatio: 'xMidYMid meet',
-          opacity: 1,
+          x: 18, y: 18, width: 30, height: 30,
+          preserveAspectRatio: 'xMidYMid meet', opacity: 1,
           style: 'filter: brightness(0) saturate(100%);'
         }, group);
       } else {
@@ -972,10 +947,30 @@
           'font-size': '28'
         }, group);
       }
+
+      // Notification badges on stack cards too
+      const project = getProjectMemory();
+      if (card.id === 'now' && (project?.pending_decisions || []).length > 0) {
+        mk('circle', { cx: 130, cy: 16, r: 8, fill: 'rgba(8,8,8,0.88)' }, group);
+        text(130, 19.5, String((project?.pending_decisions || []).length), {
+          fill: '#ff8a65',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9',
+          'text-anchor': 'middle'
+        }, group);
+      }
+      if (card.id === 'know' && (project?.open_questions || []).length > 0) {
+        mk('circle', { cx: 130, cy: 16, r: 8, fill: 'rgba(8,8,8,0.88)' }, group);
+        text(130, 19.5, String((project?.open_questions || []).length), {
+          fill: '#f8c15d',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9',
+          'text-anchor': 'middle'
+        }, group);
+      }
     }
 
     const activate = event => {
-      // Disable activation if PTT is active during hint mode (to prevent conflicts)
       if (pttActive && hintMode) {
         event.preventDefault();
         return;
@@ -987,11 +982,7 @@
 
     group.addEventListener('pointerup', activate);
     group.addEventListener('keydown', event => {
-      // Disable activation if PTT is active during hint mode
-      if (pttActive && hintMode) {
-        event.preventDefault();
-        return;
-      }
+      if (pttActive && hintMode) { event.preventDefault(); return; }
       if (event.key === 'Enter' || event.key === ' ') activate(event);
     });
 
@@ -1007,45 +998,90 @@
     }, group);
   }
 
+  /**
+   * drawNowPanel -- rebuilt NOW card.
+   * Shows: project name, last event, capture, PENDING DECISION (with approve/dismiss),
+   * next move, footer stats.
+   */
   function drawNowPanel() {
     if (activeSurface !== 'project') return;
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
+
     // Full-screen card color background
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    // Project subtitle
-    text(14, 62, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
-    // Since last time
-    drawSectionLabel(undefined, 14, 78, 'since last time');
-    wrapText(undefined, lower(data.changed), 14, 88, 212, 14, 'rgba(8,8,8,0.92)', '14');
-    // Latest capture
-    drawSectionLabel(undefined, 14, 148, 'latest useful capture');
-    wrapText(undefined, lower(data.capture), 14, 158, 212, 14, 'rgba(8,8,8,0.72)', '13');
-    // Next move
-    drawSectionLabel(undefined, 14, 214, 'next move');
-    wrapText(undefined, lower(data.next), 14, 224, 212, 14, 'rgba(8,8,8,0.96)', '14');
-    // Footer stats
-    text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
-  }
 
-  function drawPill(group, x, y, width, height, label, active, tone = 'dark') {
-    const activeFill = tone === 'dark' ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.18)';
-    const idleFill = tone === 'dark' ? 'rgba(8,8,8,0.10)' : 'rgba(255,255,255,0.12)';
-    const activeText = tone === 'dark' ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.98)';
-    const idleText = tone === 'dark' ? 'rgba(8,8,8,0.76)' : 'rgba(8,8,8,0.62)';
-    mk('rect', {
-      x, y, width, height, rx: height / 2, ry: height / 2,
-      fill: active ? activeFill : idleFill,
-      stroke: active ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
-      'stroke-width': 1
-    }, group);
-    text(x + width / 2, y + height / 2 + 3, lower(label), {
-      fill: active ? activeText : idleText,
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '9',
-      'text-anchor': 'middle'
-    }, group);
+    // Project subtitle
+    text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+
+    // Since last time
+    drawSectionLabel(undefined, 14, 74, 'since last time');
+    wrapText(undefined, lower(data.changed), 14, 84, 212, 14, 'rgba(8,8,8,0.92)', '14');
+
+    // Pending decision — the star of the NOW card
+    if (data.pendingDecisions.length > 0) {
+      const pd = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
+      const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
+      const pdCount = data.pendingDecisions.length;
+
+      // Decision box with dark background
+      const boxY = 108;
+      const boxH = 72;
+      mk('rect', {
+        x: 10, y: boxY, width: 220, height: boxH,
+        rx: 8, ry: 8,
+        fill: 'rgba(8,8,8,0.12)'
+      });
+
+      // Section label with count
+      drawSectionLabel(undefined, 18, boxY + 12, 'pending decision' + (pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : ''));
+
+      // Decision text (truncated to fit)
+      const maxChars = 58;
+      const displayText = pdText.length > maxChars ? pdText.slice(0, maxChars - 1) + '…' : pdText;
+      wrapText(undefined, lower(displayText), 18, boxY + 28, 195, 14, 'rgba(8,8,8,0.96)', '14');
+
+      // Action pills: ✓ approve  |  ✗ skip
+      const pillY = boxY + boxH - 18;
+      drawSquaredPill(18, pillY, 76, 14, 'side ✓ approve', true, 'light');
+      drawSquaredPill(146, pillY, 76, 14, 'back ✗ skip', false, 'light');
+
+      // Scroll hint for multiple decisions
+      if (pdCount > 1) {
+        text(120, pillY + 11, 'scroll', {
+          fill: 'rgba(8,8,8,0.40)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '8',
+          'text-anchor': 'middle'
+        });
+      }
+
+      // Next move (below decision box)
+      drawSectionLabel(undefined, 14, boxY + boxH + 12, 'next move');
+      wrapText(undefined, lower(data.next), 14, boxY + boxH + 22, 212, 14, 'rgba(8,8,8,0.72)', '13');
+
+      // Footer
+      text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} decided`, {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+    } else {
+      // No pending decisions — compact layout
+      drawSectionLabel(undefined, 14, 108, 'latest capture');
+      wrapText(undefined, lower(data.capture), 14, 118, 212, 14, 'rgba(8,8,8,0.72)', '13');
+
+      drawSectionLabel(undefined, 14, 172, 'next move');
+      wrapText(undefined, lower(data.next), 14, 182, 212, 14, 'rgba(8,8,8,0.96)', '14');
+
+      // Footer
+      text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} decided`, {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+    }
   }
 
   function drawSquaredPill(x, y, width, height, label, active, tone = 'dark') {
@@ -1067,6 +1103,11 @@
     });
   }
 
+  /**
+   * drawInsightSurface -- rebuilt KNOW card.
+   * 4 lanes: asks (questions), signals, decided, loops.
+   * Questions have "side = answer" action in detail view.
+   */
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
     const knowCard = cards.find(c => c.id === 'know');
@@ -1079,14 +1120,24 @@
     const items = getKnowVisibleItems(model);
     if (knowItemIndex >= items.length) knowItemIndex = 0;
     const item = items[knowItemIndex] || lane.items[0];
+
     // Full-screen card color background
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
 
-    // Lane tabs — squared corners, close below title
-    drawSquaredPill(14, 58, 60, 20, 'signals', lane.id === 'signals', 'dark');
-    drawSquaredPill(79, 58, 64, 20, 'decide', lane.id === 'decisions', 'dark');
-    drawSquaredPill(148, 58, 62, 20, 'loops', lane.id === 'open loops', 'dark');
+    // Lane tabs — 4 lanes for the new layout
+    const laneTabs = [
+      { id: 'questions', label: 'asks', width: 44 },
+      { id: 'signals', label: 'signals', width: 52 },
+      { id: 'decisions', label: 'decided', width: 52 },
+      { id: 'open loops', label: 'loops', width: 42 }
+    ];
+    let tabX = 14;
+    laneTabs.forEach(tab => {
+      const isActive = lane.id === tab.id;
+      drawSquaredPill(tabX, 58, tab.width, 20, tab.label, isActive, 'dark');
+      tabX += tab.width + 4;
+    });
 
     // Filter row
     text(14, 91, 'filter', {
@@ -1117,13 +1168,32 @@
       'font-size': '9',
       'text-anchor': 'end'
     });
-    drawSectionLabel(undefined, 14, 136, item.source === 'question' ? 'open ask' : 'what it says');
+
+    const sectionLabel = item.source === 'question' ? 'open ask' : 'what it says';
+    drawSectionLabel(undefined, 14, 136, sectionLabel);
     wrapText(undefined, lower(item.body), 14, 152, 212, 14, 'rgba(8,8,8,0.90)', '13');
-    drawSectionLabel(undefined, 14, 246, 'next move');
-    wrapText(undefined, lower(item.next), 14, 262, 212, 13, 'rgba(8,8,8,0.96)', '13');
+
+    // Question action: "side = answer this"
+    if (item.source === 'question') {
+      const actionY = 242;
+      mk('rect', {
+        x: 10, y: actionY - 6, width: 220, height: 26,
+        rx: 6, ry: 6,
+        fill: 'rgba(8,8,8,0.12)'
+      });
+      drawSquaredPill(18, actionY, 92, 14, 'side → answer', true, 'light');
+      text(132, actionY + 11, 'speak your answer', {
+        fill: 'rgba(8,8,8,0.50)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+    } else {
+      drawSectionLabel(undefined, 14, 246, 'next move');
+      wrapText(undefined, lower(item.next), 14, 262, 212, 13, 'rgba(8,8,8,0.96)', '13');
+    }
   }
 
-  // L1: Cache canvas context for text measurement — avoid creating new canvas every wrapText call
+  // L1: Cache canvas context
   const _measureCanvas = document.createElement('canvas');
   const _measureCtx = _measureCanvas.getContext('2d');
 
@@ -1165,7 +1235,6 @@
   }
 
   function onWheel(event) {
-    // Disable scroll when PTT is active during hint mode
     if (pttActive && hintMode) {
       event.preventDefault();
       return;
@@ -1175,7 +1244,23 @@
   }
 
   function handleNativeBack(event) {
-    // Back button exits hint mode first
+    // Back button on NOW card = dismiss pending decision
+    if (activeSurface === 'project') {
+      const project = getProjectMemory();
+      const pending = project?.pending_decisions || [];
+      if (pending.length && decisionIndex < pending.length) {
+        native?.dismissPendingDecision?.(decisionIndex);
+        pushLog('decision skipped', 'decision');
+        if (pending.length <= 1) {
+          decisionIndex = 0;
+        }
+        render();
+        if (event) event.preventDefault?.();
+        return;
+      }
+    }
+
+    // Back button in hint mode
     if (hintMode) {
       exitHintMode();
       render();
@@ -1185,6 +1270,18 @@
     if (activeSurface !== 'home' || logOpen) {
       if (event) event.preventDefault?.();
       backHome();
+    }
+  }
+
+  // === Heartbeat auto-start ===
+  function maybeStartHeartbeat() {
+    if (window.StructaHeartbeat && window.StructaHeartbeat.bpm === 0) {
+      const project = getProjectMemory();
+      const hasContent = (project?.backlog?.length || 0) + (project?.insights?.length || 0) + (project?.captures?.length || 0) + (project?.open_questions?.length || 0);
+      if (hasContent > 0) {
+        window.StructaHeartbeat.start(10); // 10 BPH = every 6 minutes, gentle
+        pushLog('heartbeat started', 'system');
+      }
     }
   }
 
@@ -1201,11 +1298,7 @@
 
   svg.addEventListener('wheel', onWheel, { passive: false });
   log.addEventListener('wheel', event => {
-    // Disable log scroll when PTT is active during hint mode
-    if (pttActive && hintMode) {
-      event.preventDefault();
-      return;
-    }
+    if (pttActive && hintMode) { event.preventDefault(); return; }
     if (!logOpen) event.preventDefault();
   }, { passive: false });
   logHandle.addEventListener('click', event => {
@@ -1217,8 +1310,22 @@
   window.addEventListener('structa-camera-open', () => { activeSurface = 'camera'; render(); });
   window.addEventListener('structa-camera-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
   window.addEventListener('structa-voice-open', () => { activeSurface = 'voice'; render(); });
-  window.addEventListener('structa-voice-close', () => { activeSurface = 'home'; render(); refreshLogFromMemory(); });
-  window.addEventListener('structa-memory-updated', () => { refreshLogFromMemory(); render(); });
+  window.addEventListener('structa-voice-close', () => {
+    activeSurface = 'home';
+    // Clean up answer mode styling
+    var voiceOverlay = document.getElementById('voice-overlay');
+    var contextLabel = document.getElementById('voice-context-label');
+    if (voiceOverlay) voiceOverlay.classList.remove('answer-mode');
+    if (contextLabel) contextLabel.textContent = '';
+    answeringQuestion = null;
+    render();
+    refreshLogFromMemory();
+  });
+  window.addEventListener('structa-memory-updated', () => {
+    refreshLogFromMemory();
+    render();
+    maybeStartHeartbeat();
+  });
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
   window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(-1); });
   window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(1); });
@@ -1239,10 +1346,10 @@
   native?.setActiveNode?.(currentCard().id);
   native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: 'home', resumed_at: new Date().toISOString() });
   refreshLogFromMemory();
-  if (native?.getCapabilities?.().probeMode) {
-    pushLog('probe mode active', 'probe');
-  }
   render();
+
+  // Auto-start heartbeat if project already has content
+  maybeStartHeartbeat();
 
   // === R1 API REVERSE ENGINEERING PROBE ===
   (function probeR1APIs() {
@@ -1266,9 +1373,7 @@
     pushLog(`screen: ${screen.width}x${screen.height}`, 'probe');
   })();
 
-  // Prime camera on first touch — getUserMedia needs a user gesture on R1.
-  // After this first touch, PTT camera works instantly because the stream
-  // is already live. camera-capture.js picks up __STRUCTA_PRIMED_STREAM__.
+  // Prime camera on first touch
   let cameraPrimed = false;
   function primeCameraOnFirstTouch() {
     if (cameraPrimed) return;
@@ -1277,7 +1382,6 @@
       navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { max: 640 }, height: { max: 480 } } })
         .then(stream => {
           window.__STRUCTA_PRIMED_STREAM__ = stream;
-          pushLog('camera ready', 'focus');
         })
         .catch(() => {});
     }

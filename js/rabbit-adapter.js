@@ -86,6 +86,7 @@
       structure: [],
       backlog: [],
       decisions: [],
+      pending_decisions: [],
       captures: [],
       insights: [],
       open_questions: [],
@@ -213,21 +214,49 @@
     return entry;
   }
 
+  /**
+   * isVisibleLogEntry -- aggressive noise suppression.
+   * Only shows content-creation actions: voice, camera, llm insights, journal, export, heartbeat.
+   */
   function isVisibleLogEntry(entry = {}) {
     const kind = lower(entry.kind || '');
     const message = lower(entry.message || '');
-    if (kind === 'probe' && (message.includes('document pointerdown') || message.includes('document pointerup'))) return false;
-    if (kind === 'probe' && message.includes('window structa-native-event')) return false;
-    if (kind === 'ui' && message.includes('probe probe mode active')) return false;
-    // Suppress noisy window/document events (kind is always 'ui' from pushLog)
-    if (message.startsWith('window ')) {
-      const noise = ['focus', 'blur', 'scrollup', 'scrolldown', 'beforeunload', 'pagehide', 'visibilitychange'];
-      if (noise.some(n => message.includes(n))) return false;
+
+    // Suppress ALL probe messages (hardware events, API probes)
+    if (kind === 'probe') return false;
+
+    // Suppress UI noise
+    if (kind === 'ui') {
+      const noisePatterns = [
+        'window focus', 'window blur', 'window scroll', 'window scrollup', 'window scrolldown',
+        'window beforeunload', 'window pagehide', 'window visibilitychange',
+        'document visibilitychange', 'document pointerdown', 'document pointerup',
+        'document keydown', 'document wheel',
+        'probe probe mode active',
+        'hint mode: show', 'hint mode exit', 'hint mode: tell',
+        'show hint', 'tell hint', 'show active', 'tell active',
+        'show ready', 'tell ready', 'tell ready from ptt',
+        'hint mode: show', 'hint mode exit',
+        'camera ready', 'camera frame captured',
+        'voice capture started', 'voice capture stopped'
+      ];
+      if (noisePatterns.some(p => message.includes(p))) return false;
+      // Show meaningful focus events only
+      if (message.includes('surface:')) return false;
+      if (message.includes('ready')) return false;
     }
-    if (message.startsWith('document ')) {
-      if (['visibilitychange', 'pointerdown', 'pointerup', 'keydown', 'wheel'].some(n => message.includes(n))) return false;
-    }
-    if (message === 'camera ready' || message === 'camera frame captured') return false;
+
+    // Suppress empty/meaningless messages
+    if (message === 'event' || message === 'no event') return false;
+    if (message.startsWith('r1 msg:')) return false;  // Debug bridge noise
+    if (message === 'llm: thinking...') return false;  // LLM noise
+    if (message === 'r1 stt: start') return false;     // STT internal
+    if (message === 'no creationvoicehandler') return false;
+    if (message.startsWith('camera ready') || message === 'camera frame captured') return false;
+
+    // Suppress heartbeat beat messages (only show suggestions and start/stop)
+    if (kind === 'heartbeat' && message.startsWith('beat ')) return false;
+
     return true;
   }
 
@@ -238,6 +267,7 @@
   function inferCaptureInsight(bundle) {
     if (!bundle) return '';
     if (bundle.ai_response) return lower(bundle.ai_response);
+    if (bundle.ai_analysis) return lower(bundle.ai_analysis);
     if (bundle.summary) return lower(bundle.summary);
     if (bundle.prompt_text) return lower(bundle.prompt_text);
     return 'new capture stored';
@@ -257,25 +287,12 @@
         { title: 'insights', count: (project.insights || []).length },
         { title: 'open items', count: (project.backlog || []).length }
       ];
-      if (bundle.summary) {
-        project.insights = Array.isArray(project.insights) ? project.insights : [];
-        project.insights.unshift({ title: 'capture insight', body: lower(bundle.summary), created_at: new Date().toISOString() });
-        project.insights = project.insights.slice(0, 16);
-      }
     });
     updateUIState({
-      last_capture_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored'),
-      last_insight_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored')
+      last_capture_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored')
     });
   }
 
-  /**
-   * sendStructuredMessage — sends a concise message to the R1 LLM.
-   *
-   * The envelope fields are for Structa's internal memory only.
-   * The R1 LLM receives ONLY: { message, useLLM, wantsR1Response, wantsJournalEntry }
-   * as per the official creations-sdk format.
-   */
   function sendStructuredMessage(raw = {}) {
     const routed = router?.routeAction?.(raw);
     const verdict = validation.validateEnvelope(raw);
@@ -292,8 +309,6 @@
         context_summary: router?.summarizeContext?.(routed.context_snapshot)
       };
     }
-    // Build a concise, clean message for the R1 LLM
-    // The R1 LLM expects: { message, useLLM, wantsR1Response, wantsJournalEntry }
     var llmMessage = buildLLMMessage(envelope);
     var sdkPayload = {
       message: llmMessage,
@@ -307,34 +322,23 @@
     return { ok: true, envelope, result };
   }
 
-  /**
-   * buildLLMMessage — turns a Structa envelope into a concise prompt for the R1 LLM.
-   * Keep it short. The R1 LLM should respond with 1-2 words max.
-   */
   function buildLLMMessage(envelope) {
     var verb = lower(envelope.verb || 'capture');
     var target = lower(envelope.target || 'item');
     var intent = lower(envelope.intent || '');
     var goal = lower(envelope.goal || '');
 
-    // Voice input: just pass the transcript directly
     if (envelope.input_type === 'ptt-stop' && envelope.payload?.transcript) {
       return envelope.payload.transcript;
     }
-
-    // Journal: concise entry
     if (envelope.input_type === 'journal') {
       var title = envelope.payload?.title || 'note';
       var body = envelope.payload?.body || '';
       return body || title;
     }
-
-    // Camera/image: describe what was captured
     if (envelope.source_type === 'camera' || envelope.input_type?.includes('capture')) {
       return goal || intent || `${verb} ${target}`;
     }
-
-    // Generic: use intent or goal
     return intent || goal || `${verb} ${target}`;
   }
 
@@ -356,8 +360,6 @@
       }
     });
     updateUIState({ last_event_summary: lower(payload.title), last_insight_summary: lower(payload.body.slice(0, 80)) });
-    // Store locally only — do NOT send to LLM here.
-    // Voice/camera handlers send to LLM separately via r1-llm.js (sendToLLM).
     persist();
     return { ok: true, payload };
   }
@@ -468,17 +470,11 @@
   }
 
   function startPTT() {
-    appendLogEntry({ kind: 'voice', message: 'voice capture started' });
     emit('ptt_started', { active: true });
-    // Local event only — do NOT send to LLM.
-    // voice-capture.js handles the LLM call after transcript arrives (r1-llm.js → processVoice).
   }
 
   function stopPTT(transcript = '') {
-    appendLogEntry({ kind: 'voice', message: transcript ? `voice ${lower(transcript).slice(0, 48)}` : 'voice capture stopped' });
     emit('ptt_stopped', { transcript });
-    // Local event only — do NOT send to LLM.
-    // voice-capture.js already sent transcript to LLM via r1-llm.js (handleTranscript → processVoice).
   }
 
   function getRecentLogEntries(limit = 5, options = {}) {
@@ -513,6 +509,103 @@
     emit('return_home', { surface: 'home' });
   }
 
+  // === Decision management ===
+
+  /**
+   * approvePendingDecision -- moves a pending decision to locked decisions.
+   * @param {number} index - index in pending_decisions array (default: 0 = most recent)
+   * @returns {{ ok: boolean, decision: object }}
+   */
+  function approvePendingDecision(index) {
+    var idx = index || 0;
+    return touchProjectMemory(function(project) {
+      project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+      project.decisions = Array.isArray(project.decisions) ? project.decisions : [];
+      if (idx >= project.pending_decisions.length) return;
+      var pending = project.pending_decisions.splice(idx, 1)[0];
+      var decision = {
+        text: typeof pending === 'string' ? pending : (pending.text || 'decision locked'),
+        source: (pending.source || 'voice') + ' → approved',
+        reason: pending.insight_body || pending.text || '',
+        created_at: pending.created_at || new Date().toISOString(),
+        approved_at: new Date().toISOString()
+      };
+      project.decisions.unshift(decision);
+      project.decisions = project.decisions.slice(0, 20);
+      project.structure = [
+        { title: 'captures', count: (project.captures || []).length },
+        { title: 'insights', count: (project.insights || []).length },
+        { title: 'decisions', count: project.decisions.length },
+        { title: 'open items', count: (project.backlog || []).length }
+      ];
+    });
+  }
+
+  /**
+   * dismissPendingDecision -- removes a pending decision (user skips it).
+   */
+  function dismissPendingDecision(index) {
+    var idx = index || 0;
+    return touchProjectMemory(function(project) {
+      project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+      if (idx >= project.pending_decisions.length) return;
+      project.pending_decisions.splice(idx, 1);
+    });
+  }
+
+  /**
+   * resolveQuestion -- marks an open question as answered.
+   * @param {number} index - index in open_questions array
+   * @param {string} answer - the user's answer
+   */
+  function resolveQuestion(index, answer) {
+    var idx = index || 0;
+    return touchProjectMemory(function(project) {
+      project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
+      if (idx >= project.open_questions.length) return;
+      var question = project.open_questions.splice(idx, 1)[0];
+      // Store as journal entry with the answer
+      pushLimited(memory.journals, {
+        project_code: contracts.baseProjectCode,
+        entry_id: contracts.makeEntryId('answer'),
+        source_type: 'voice',
+        title: 'answered: ' + (question || '').slice(0, 30),
+        body: 'Q: ' + (question || '') + '\nA: ' + (answer || ''),
+        created_at: new Date().toISOString(),
+        meta: { question_index: idx, answered: true }
+      });
+      appendLogEntry({ kind: 'journal', message: 'answered: ' + (question || '').slice(0, 40) });
+    });
+  }
+
+  /**
+   * addBacklogItem -- adds a task to the project backlog from voice.
+   */
+  function addBacklogItem(title, body) {
+    return touchProjectMemory(function(project) {
+      project.backlog = Array.isArray(project.backlog) ? project.backlog : [];
+      project.backlog.unshift({
+        title: title || 'new task',
+        body: body || '',
+        created_at: new Date().toISOString(),
+        state: 'open'
+      });
+      project.backlog = project.backlog.slice(0, 20);
+    });
+  }
+
+  /**
+   * setProjectName -- sets the project name (first meaningful voice input).
+   */
+  function setProjectName(name) {
+    if (!name || name === 'untitled project') return;
+    return touchProjectMemory(function(project) {
+      if (project.name === 'untitled project') {
+        project.name = name;
+      }
+    });
+  }
+
   persist();
 
   window.StructaNative = Object.freeze({
@@ -541,6 +634,12 @@
     appendProbeEvent,
     returnHome,
     emit,
+    touchProjectMemory,
+    approvePendingDecision,
+    dismissPendingDecision,
+    resolveQuestion,
+    addBacklogItem,
+    setProjectName,
     deviceId,
     deviceScopeKey,
     probeMode

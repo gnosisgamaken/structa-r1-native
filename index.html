@@ -372,6 +372,44 @@
       transition: none;
     }
 
+    /* Voice answer mode — different accent color when answering a question */
+    #voice-overlay.answer-mode {
+      background: #14100a;
+    }
+
+    #voice-overlay.answer-mode #voice-glyph {
+      background: rgba(248,193,93,0.88);
+      box-shadow: 0 0 18px rgba(248,193,93,0.20);
+    }
+
+    #voice-overlay.answer-mode #voice-wave .bar {
+      fill: rgba(248,193,93,0.9);
+    }
+
+    #voice-overlay.answer-mode .capture-glyph {
+      box-shadow: 0 0 0 10px rgba(248,193,93,0.06), 0 0 36px rgba(248,193,93,0.16);
+    }
+
+    /* Voice status label — visible context indicator */
+    #voice-context-label {
+      position: absolute;
+      bottom: 64px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-family: 'PowerGrotesk-Regular', sans-serif;
+      font-size: 13px;
+      color: rgba(244, 239, 228, 0.72);
+      letter-spacing: 0.01em;
+      pointer-events: none;
+      display: none;
+    }
+
+    #voice-overlay.answer-mode #voice-context-label {
+      display: block;
+      color: rgba(248, 193, 93, 0.88);
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -426,6 +464,7 @@
         <rect class="bar" x="76" y="4" width="10" height="20" rx="5" fill="rgba(146,255,157,0.9)"></rect>
         <rect class="bar" x="98" y="7" width="10" height="14" rx="5" fill="rgba(146,255,157,0.9)"></rect>
       </svg>
+      <div id="voice-context-label"></div>
       <div id="voice-transcript" class="sr-only" aria-live="polite"></div>
       <div id="voice-status" class="sr-only"></div>
     </section>

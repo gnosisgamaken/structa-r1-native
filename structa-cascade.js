@@ -597,15 +597,15 @@
 
   function cardLayout(index) {
     // Hero — left edge at viewport center (x=120), extends past right edge
-    if (index === selectedIndex) return { x: 120, y: 60, scale: 1.34, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 120, y: 52, scale: 1.5, opacity: 1, depth: -1 };
     // Stack — 3 cards in left half (x=0 to x=120), equal 40px zones
     // Left half = 120px / 3 cards = 40px zone per card
     // Front (closest to hero): largest scale, peeks least (40px zone)
     // Back (furthest from hero): smallest scale, peeks most (full 120px visible)
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 60 + (150 * 1.34) / 2; // 160.5 — viewport center
+    var heroCenterY = 52 + (150 * 1.5) / 2; // 164.5 — viewport center
     // depth 0 = back (smallest, x=0), depth 2 = front (largest, x=80)
-    var scales = [0.45, 0.62, 0.82];
+    var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
     var stack = scales.map(function(s, i) {
       var cardH = 150 * s;
@@ -864,19 +864,19 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 320, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
 
-    // Lane tabs — squared corners
-    drawSquaredPill(14, 68, 60, 20, 'signals', lane.id === 'signals', 'dark');
-    drawSquaredPill(79, 68, 64, 20, 'decide', lane.id === 'decisions', 'dark');
-    drawSquaredPill(148, 68, 62, 20, 'loops', lane.id === 'open loops', 'dark');
+    // Lane tabs — squared corners, close to title
+    drawSquaredPill(14, 50, 60, 20, 'signals', lane.id === 'signals', 'dark');
+    drawSquaredPill(79, 50, 64, 20, 'decide', lane.id === 'decisions', 'dark');
+    drawSquaredPill(148, 50, 62, 20, 'loops', lane.id === 'open loops', 'dark');
 
     // Filter row
-    text(14, 103, 'filter', {
+    text(14, 85, 'filter', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
     });
-    drawSquaredPill(46, 93, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 105, `${items.length} results`, {
+    drawSquaredPill(46, 75, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(220, 87, `${items.length} results`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
@@ -884,22 +884,22 @@
     });
 
     if (!knowDetail) {
-      text(14, 135, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
-      wrapText(undefined, lower(lane.summary), 14, 155, 212, 14, 'rgba(8,8,8,0.64)', '13');
-      drawSectionLabel(undefined, 14, 230, 'best match now');
-      wrapText(undefined, lower(item.title), 14, 248, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      text(14, 115, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
+      wrapText(undefined, lower(lane.summary), 14, 135, 212, 14, 'rgba(8,8,8,0.64)', '13');
+      drawSectionLabel(undefined, 14, 210, 'best match now');
+      wrapText(undefined, lower(item.title), 14, 228, 212, 14, 'rgba(8,8,8,0.96)', '14');
       return;
     }
 
-    text(14, 135, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
-    text(220, 135, formatTimeLabel(item.created_at), {
+    text(14, 115, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
+    text(220, 115, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
     });
-    drawSectionLabel(undefined, 14, 158, item.source === 'question' ? 'open ask' : 'what it says');
-    wrapText(undefined, lower(item.body), 14, 176, 212, 14, 'rgba(8,8,8,0.90)', '13');
+    drawSectionLabel(undefined, 14, 138, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(undefined, lower(item.body), 14, 156, 212, 14, 'rgba(8,8,8,0.90)', '13');
     drawSectionLabel(undefined, 14, 278, 'next move');
     wrapText(undefined, lower(item.next), 14, 294, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }

@@ -104,7 +104,10 @@
     const text = (transcript && transcript.textContent || '').trim();
 
     if (emit) {
-      // Tell the R1 OS we stopped talking
+      // Tell the R1 OS we stopped talking (timer SDK pattern)
+      if (typeof CreationVoiceHandler !== 'undefined') {
+        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
+      }
       native?.stopPTT?.(text || '');
       // Process the transcript
       if (text) {
@@ -147,30 +150,18 @@
     native?.startPTT?.();
 
     // === R1 path: Use CreationVoiceHandler for native STT ===
-    // The R1 OS will process audio and send sttEnded via onPluginMessage.
-    // We don't need browser SpeechRecognition on R1.
-    if (window.CreationVoiceHandler) {
+    // Timer SDK pattern: CreationVoiceHandler.postMessage('start')/'stop')
+    // R1 sends back { type: 'sttEnded', transcript: '...' } via onPluginMessage
+    if (typeof CreationVoiceHandler !== 'undefined') {
       try {
-        window.CreationVoiceHandler.postMessage('start');
-        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt started' });
-        // The R1 will handle STT and send back transcript via onPluginMessage
+        CreationVoiceHandler.postMessage('start');
+        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt: start' });
         return;
       } catch (err) {
-        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt error: ' + (err?.message || 'failed') });
+        native?.appendLogEntry?.({ kind: 'voice', message: 'r1 stt err: ' + (err?.message || 'failed') });
       }
     } else {
-      native?.appendLogEntry?.({ kind: 'voice', message: 'no CreationVoiceHandler — trying PluginMessageHandler' });
-      // Fallback: send a "start listening" message via the standard bridge
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          type: 'sttStart',
-          message: 'start listening'
-        }));
-        native?.appendLogEntry?.({ kind: 'voice', message: 'sttStart sent via PluginMessageHandler' });
-        return;
-      } catch (err) {
-        native?.appendLogEntry?.({ kind: 'voice', message: 'PluginMessageHandler stt error: ' + (err?.message || 'failed') });
-      }
+      native?.appendLogEntry?.({ kind: 'voice', message: 'no CreationVoiceHandler' });
     }
 
     // === Browser fallback path ===

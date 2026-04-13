@@ -85,7 +85,7 @@
     // Log all incoming messages for debugging
     var debugKeys = data ? Object.keys(data).join(',') : 'null';
     var native = window.StructaNative;
-    native?.appendLogEntry?.({ kind: 'r1', message: 'r1 msg: ' + debugKeys + ' type=' + (data?.type || '?') });
+    native?.appendLogEntry?.({ kind: 'r1', message: 'r1 msg: ' + debugKeys + ' t=' + (data?.type || '?') });
 
     // Try to extract the LLM response text
     var responseText = '';
@@ -93,9 +93,7 @@
 
     if (data) {
       responseType = data.type || '';
-      // The LLM response can be in several places:
       responseText = data.message || data.content || data.response || data.transcript || '';
-      // Try parsing data.data if it's a JSON string
       if (!responseText && data.data) {
         try {
           var parsed = JSON.parse(data.data);
@@ -107,17 +105,14 @@
       }
     }
 
-    // If this is an STT response, let voice-capture handle it
-    if ((responseType === 'sttEnded' || responseType === 'stt' || responseType === 'transcript') && (data.transcript || responseText)) {
-      var transcript = data.transcript || responseText;
-      native?.appendLogEntry?.({ kind: 'voice', message: 'stt received: ' + transcript.slice(0, 60) });
-      // Let other handlers process STT
+    // STT handling — match exact R1 format from timer SDK: { type: 'sttEnded', transcript: '...' }
+    if (responseType === 'sttEnded' && data.transcript) {
+      native?.appendLogEntry?.({ kind: 'voice', message: 'stt: ' + data.transcript.slice(0, 60) });
       if (previousHandler) {
         try { previousHandler(data); } catch (e) {}
       }
-      // Also dispatch custom event for voice-capture.js
       window.dispatchEvent(new CustomEvent('structa-stt-ended', {
-        detail: { transcript: transcript }
+        detail: { transcript: data.transcript }
       }));
       return;
     }

@@ -73,14 +73,15 @@
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
-    // 1. Stream already live — just show overlay
+    // Show overlay IMMEDIATELY — prevents black flash on PTT cold start
+    showOverlay();
+
+    // 1. Stream already live — just attach
     if (streamReady && stream) {
       if (target !== facingMode) {
-        // Need to switch — do it via getUserMedia (still in gesture context)
         flip();
         return;
       }
-      showOverlay();
       return;
     }
 
@@ -93,7 +94,6 @@
       if (preview) preview.srcObject = stream;
       native?.setCameraFacing?.(facingMode);
       setStatus('ready');
-      showOverlay();
       return;
     }
 
@@ -119,7 +119,6 @@
         streamReady = true;
         native?.setCameraFacing?.(facingMode);
         setStatus('ready');
-        showOverlay();
       })
       .catch(err => {
         killStream();
@@ -190,21 +189,35 @@
       payload: bundle
     });
     // Send capture context to LLM for structured insight
-    // Note: R1 on-device LLM is text-only. We send a description, not the image.
-    // The LLM can reason about the capture context but can't see the actual image.
+    // Magic Kamera pattern: send imageBase64 via PluginMessageHandler
     var imageDesc = `User captured a ${facingMode} photo (${w}x${h})`;
     native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
+
+    // Send image to R1 LLM via PluginMessageHandler (Magic Kamera pattern)
+    if (typeof PluginMessageHandler !== 'undefined') {
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: imageDesc,
+          imageBase64: dataUrl,
+          useLLM: true,
+          wantsR1Response: false
+        }));
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image sent to r1 llm' });
+      } catch (err) {
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image send err: ' + (err?.message || 'failed') });
+      }
+    }
+
+    // Also try local LLM path
     window.StructaLLM?.processImage?.(imageDesc, { facingMode, width: w, height: h })
       .then(function(result) {
         if (result?.ok) {
           window.StructaLLM?.storeAsInsight?.(result, 'camera');
           native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
-        } else {
-          native?.appendLogEntry?.({ kind: 'llm', message: 'image insight: ' + (result?.error || 'text-only llm, no visual analysis') });
         }
       })
       .catch(function(err) {
-        native?.appendLogEntry?.({ kind: 'llm', message: 'image llm error: ' + (err?.message || 'failed') });
+        native?.appendLogEntry?.({ kind: 'llm', message: 'image llm err: ' + (err?.message || 'failed') });
       });
     hideOverlay();
     return bundle;

@@ -154,6 +154,11 @@
     render();
 
     const openCamera = async () => {
+      if (source === 'ptt') {
+        try {
+          await native?.openCamera?.('environment');
+        } catch (_) {}
+      }
       const result = await window.StructaCamera?.open?.();
       if (result?.ok === false) {
         pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');

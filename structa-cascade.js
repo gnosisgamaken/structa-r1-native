@@ -139,7 +139,7 @@
 
   function enterSurface(surface) {
     activeSurface = surface;
-    if (surface !== 'log') setLogDrawer(false);
+    setLogDrawer(false);
   }
 
   function openCameraSurface(source = 'touch') {
@@ -659,7 +659,7 @@
   }
 
   function drawWordmark() {
-    if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
+    if (activeSurface !== 'home') return;
     image('assets/icons/png/5.png', {
       x: 11,
       y: -17,
@@ -671,6 +671,26 @@
     });
     text(36, 0, 'structa', {
       fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '35',
+      'letter-spacing': '0.0em'
+    });
+  }
+
+  function drawSurfaceHeader(card) {
+    if (card.iconPath) {
+      image(card.iconPath, {
+        x: 11,
+        y: -17,
+        width: 18,
+        height: 18,
+        preserveAspectRatio: 'xMidYMid meet',
+        opacity: 1,
+        style: 'filter: brightness(0) saturate(100%);'
+      });
+    }
+    text(36, 0, card.title, {
+      fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '35',
       'letter-spacing': '0.0em'
@@ -771,17 +791,19 @@
   function drawNowPanel() {
     if (activeSurface !== 'project') return;
     const data = buildNowSummary();
-    const group = mk('g', { transform: 'translate(8, 34)' });
-    mk('rect', { x: 0, y: 0, width: 224, height: 170, rx: 18, ry: 18, fill: '#ff8a65', stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 1.1 }, group);
-    text(14, 24, 'now', { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
-    text(14, 44, lower(data.title), { fill: 'rgba(8,8,8,0.72)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' }, group);
-    drawSectionLabel(group, 14, 63, 'since last time');
-    wrapText(group, lower(data.changed), 14, 80, 194, 12, 'rgba(8,8,8,0.92)', '12');
-    drawSectionLabel(group, 14, 106, 'latest useful capture');
-    wrapText(group, lower(data.capture), 14, 123, 194, 11, 'rgba(8,8,8,0.76)', '11');
-    drawSectionLabel(group, 14, 149, 'next move');
-    wrapText(group, lower(data.next), 14, 166, 194, 11, 'rgba(8,8,8,0.96)', '11');
-    text(14, 158, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.54)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+    const nowCard = cards.find(c => c.id === 'now');
+    // Full-screen card color background
+    mk('rect', { x: 0, y: 0, width: 240, height: 220, fill: nowCard.color });
+    drawSurfaceHeader(nowCard);
+    const group = mk('g', { transform: 'translate(0, 8)' });
+    text(14, 34, lower(data.title), { fill: 'rgba(8,8,8,0.60)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' }, group);
+    drawSectionLabel(group, 14, 52, 'since last time');
+    wrapText(group, lower(data.changed), 14, 68, 212, 13, 'rgba(8,8,8,0.92)', '13');
+    drawSectionLabel(group, 14, 98, 'latest useful capture');
+    wrapText(group, lower(data.capture), 14, 114, 212, 12, 'rgba(8,8,8,0.76)', '12');
+    drawSectionLabel(group, 14, 148, 'next move');
+    wrapText(group, lower(data.next), 14, 164, 212, 13, 'rgba(8,8,8,0.96)', '13');
+    text(14, 208, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.40)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
   }
 
   function drawPill(group, x, y, width, height, label, active, tone = 'dark') {
@@ -805,6 +827,7 @@
 
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
+    const knowCard = cards.find(c => c.id === 'know');
     const model = buildKnowModel();
     const lane = model.lanes[knowLaneIndex] || model.lanes[0];
     if (!lane) return;
@@ -814,50 +837,47 @@
     const items = getKnowVisibleItems(model);
     if (knowItemIndex >= items.length) knowItemIndex = 0;
     const item = items[knowItemIndex] || lane.items[0];
-    const group = mk('g', { transform: 'translate(8, 34)' });
-    mk('rect', {
-      x: 0, y: 0, width: 224, height: 170, rx: 18, ry: 18,
-      fill: '#f8c15d', stroke: 'rgba(255,255,255,0.14)', 'stroke-width': 1.1
-    }, group);
+    // Full-screen card color background
+    mk('rect', { x: 0, y: 0, width: 240, height: 220, fill: knowCard.color });
+    drawSurfaceHeader(knowCard);
+    const group = mk('g', { transform: 'translate(0, 8)' });
 
-    text(14, 24, 'know', { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
+    drawPill(group, 14, 24, 60, 20, 'signals', lane.id === 'signals', 'dark');
+    drawPill(group, 79, 24, 64, 20, 'decide', lane.id === 'decisions', 'dark');
+    drawPill(group, 148, 24, 62, 20, 'loops', lane.id === 'open loops', 'dark');
 
-    drawPill(group, 14, 34, 60, 20, 'signals', lane.id === 'signals', 'light');
-    drawPill(group, 79, 34, 64, 20, 'decide', lane.id === 'decisions', 'light');
-    drawPill(group, 148, 34, 62, 20, 'loops', lane.id === 'open loops', 'light');
-
-    text(14, 67, 'filter', {
-      fill: 'rgba(8,8,8,0.56)',
+    text(14, 57, 'filter', {
+      fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
     }, group);
-    drawPill(group, 46, 57, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(206, 69, `${items.length} results`, {
-      fill: 'rgba(8,8,8,0.56)',
+    drawPill(group, 46, 47, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(220, 59, `${items.length} results`, {
+      fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
     }, group);
 
     if (!knowDetail) {
-      text(14, 96, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
-      wrapText(group, lower(lane.summary), 14, 114, 194, 12, 'rgba(8,8,8,0.72)', '12');
+      text(14, 86, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
+      wrapText(group, lower(lane.summary), 14, 104, 212, 13, 'rgba(8,8,8,0.68)', '12');
       drawSectionLabel(group, 14, 140, 'best match now');
-      wrapText(group, lower(item.title), 14, 156, 194, 12, 'rgba(8,8,8,0.96)', '12');
+      wrapText(group, lower(item.title), 14, 156, 212, 13, 'rgba(8,8,8,0.96)', '13');
       return;
     }
 
-    text(14, 94, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '15' }, group);
-    text(206, 94, formatTimeLabel(item.created_at), {
-      fill: 'rgba(8,8,8,0.56)',
+    text(14, 84, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '15' }, group);
+    text(220, 84, formatTimeLabel(item.created_at), {
+      fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
     }, group);
-    drawSectionLabel(group, 14, 111, item.source === 'question' ? 'open ask' : 'what it says');
-    wrapText(group, lower(item.body), 14, 127, 194, 11, 'rgba(8,8,8,0.90)', '11');
-    drawSectionLabel(group, 14, 149, 'next move');
-    wrapText(group, lower(item.next), 14, 163, 194, 10, 'rgba(8,8,8,0.96)', '10');
+    drawSectionLabel(group, 14, 101, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(group, lower(item.body), 14, 117, 212, 12, 'rgba(8,8,8,0.90)', '12');
+    drawSectionLabel(group, 14, 169, 'next move');
+    wrapText(group, lower(item.next), 14, 183, 212, 12, 'rgba(8,8,8,0.96)', '12');
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {
@@ -894,6 +914,8 @@
     }
     drawNowPanel();
     drawInsightSurface();
+    const isContentSurface = activeSurface === 'project' || activeSurface === 'insight';
+    logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
   function onWheel(event) {

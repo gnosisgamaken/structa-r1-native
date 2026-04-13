@@ -888,7 +888,7 @@
         .sort((a, b) => {
           if (a.layout.depth === -1) return 1;
           if (b.layout.depth === -1) return -1;
-          return b.layout.depth - a.layout.depth;
+          return a.layout.depth - b.layout.depth;
         })
         .forEach(({ card, index }) => drawCard(card, index));
     }

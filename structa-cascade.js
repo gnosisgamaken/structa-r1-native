@@ -189,14 +189,6 @@
     queuedDirection = 0;
     native?.setActiveNode?.(card.id);
     native?.updateUIState?.({ selected_card_id: card.id, last_surface: card.surface || 'home' });
-    if (card.surface === 'camera') {
-      openCameraSurface('touch');
-      return;
-    }
-    if (card.surface === 'voice') {
-      openVoiceSurface('touch');
-      return;
-    }
     pushLog(`${card.title} ready`, 'focus');
     if (card.surface === 'insight') {
       activeSurface = 'insight';
@@ -207,8 +199,11 @@
       render();
       return;
     }
-    activeSurface = 'project';
-    render();
+    if (card.surface === 'project') {
+      activeSurface = 'project';
+      render();
+      return;
+    }
   }
 
   function exportLogsFromHardware() {
@@ -288,7 +283,13 @@
       setLogDrawer(false);
       return;
     }
-    openCard(currentCard());
+    // Side button on home: open know/now surfaces, but NOT show/tell (PTT handles those)
+    const card = currentCard();
+    if (card.surface === 'camera' || card.surface === 'voice') {
+      selectIndex(selectedIndex); // just select, don't open
+    } else {
+      openCard(card);
+    }
   }
 
   function handleLongPressStart() {
@@ -781,8 +782,16 @@
 
     const activate = event => {
       event.preventDefault();
-      if (selected) openCard(card);
-      else selectIndex(index);
+      if (selected) {
+        // Hero card tap: open know/now surfaces, but NOT show/tell (PTT handles those)
+        if (card.surface === 'camera' || card.surface === 'voice') {
+          selectIndex(index);
+        } else {
+          openCard(card);
+        }
+      } else {
+        selectIndex(index);
+      }
     };
 
     group.addEventListener('pointerup', activate);

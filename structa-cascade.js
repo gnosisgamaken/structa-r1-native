@@ -593,12 +593,12 @@
   }
 
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 120, y: 36, scale: 1.22, opacity: 1 };
+    if (index === selectedIndex) return { x: 100, y: 38, scale: 1.16, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 18, y: 74, scale: 0.64, opacity: 1 },
-      { x: 6, y: 74, scale: 0.56, opacity: 0.92 },
-      { x: -6, y: 74, scale: 0.48, opacity: 0.82 }
+      { x: 70, y: 84, scale: 0.58, opacity: 1, depth: 0 },
+      { x: 82, y: 98, scale: 0.29, opacity: 0.98, depth: 1 },
+      { x: 90, y: 105, scale: 0.145, opacity: 0.96, depth: 2 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }
@@ -644,18 +644,18 @@
   function drawWordmark() {
     if (activeSurface !== 'home' && activeSurface !== 'project' && activeSurface !== 'insight') return;
     image('assets/icons/png/7.png', {
-      x: 4,
-      y: 8,
-      width: 16,
-      height: 16,
+      x: 5,
+      y: -1,
+      width: 18,
+      height: 18,
       preserveAspectRatio: 'xMidYMid meet',
       opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(24, 22, 'structa', {
+    text(31, 16, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '30',
+      'font-size': '34',
       'letter-spacing': '0.00em'
     });
   }
@@ -663,6 +663,8 @@
   function drawCard(card, index) {
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
+    const stackDepth = layout.depth ?? -1;
+    const showStackIcon = !selected && stackDepth === 0;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(layout.opacity),
@@ -678,10 +680,10 @@
       height: 150,
       rx: 20,
       ry: 20,
-      fill: selected ? card.color : 'rgba(18,18,18,0.98)',
-      stroke: selected ? 'rgba(255,255,255,0.10)' : card.color,
-      'stroke-width': selected ? 1 : 0.6,
-      'stroke-opacity': selected ? 1 : 0.32
+      fill: selected ? card.color : card.color,
+      stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
+      'stroke-width': selected ? 1 : 0.8,
+      'stroke-opacity': selected ? 1 : 1
     }, group);
 
     if (selected) {
@@ -706,11 +708,7 @@
           'font-size': '12'
         }, group);
       }
-    } else {
-      rect.setAttribute('fill', card.color);
-      rect.setAttribute('stroke', 'rgba(255,255,255,0.04)');
-      rect.setAttribute('stroke-width', '0.8');
-      rect.setAttribute('opacity', '0.92');
+    } else if (showStackIcon) {
       if (card.iconPath) {
         image(card.iconPath, {
           x: 18,

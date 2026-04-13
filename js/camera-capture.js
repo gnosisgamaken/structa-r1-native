@@ -81,15 +81,20 @@
   }
 
   async function open(mode = facingMode) {
-    showOverlay();
     const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
-    if (stream && nextMode === facingMode) return { ok: true, facingMode };
+    if (stream && nextMode === facingMode) {
+      showOverlay();
+      return { ok: true, facingMode };
+    }
     facingMode = nextMode;
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus('camera unavailable');
       return { ok: false };
     }
-    if (!cameraPrimed) await warmup(facingMode);
+    // Do NOT show overlay until the stream is confirmed live.
+    // On cold start (especially via PTT on Rabbit hardware), showing the overlay
+    // before the stream is ready causes the permanent grey screen bug.
+    setStatus('starting');
     stopStream();
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
@@ -99,14 +104,17 @@
       }
       const ready = await waitForPreviewReady();
       if (!ready) {
+        stopStream();
         setStatus('warming');
         return { ok: false, error: new Error('camera preview not ready') };
       }
       cameraPrimed = true;
       native?.setCameraFacing?.(facingMode);
       setStatus('ready');
+      showOverlay(); // Only show overlay once stream is confirmed live
       return { ok: true, facingMode };
     } catch (error) {
+      stopStream();
       setStatus('blocked');
       return { ok: false, error };
     }

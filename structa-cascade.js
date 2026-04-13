@@ -945,6 +945,24 @@
   }
   render();
 
+  // Prime camera on first touch — getUserMedia needs a user gesture on R1.
+  // After this first touch, PTT camera works instantly because the stream
+  // is already live. camera-capture.js picks up __STRUCTA_PRIMED_STREAM__.
+  let cameraPrimed = false;
+  function primeCameraOnFirstTouch() {
+    if (cameraPrimed) return;
+    cameraPrimed = true;
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(stream => {
+          window.__STRUCTA_PRIMED_STREAM__ = stream;
+          pushLog('camera ready', 'focus');
+        })
+        .catch(() => {});
+    }
+  }
+  svg.addEventListener('pointerup', () => primeCameraOnFirstTouch(), { once: true });
+
   window.StructaPanel = Object.freeze({
     render,
     pushLog,

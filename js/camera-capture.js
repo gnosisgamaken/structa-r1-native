@@ -73,9 +73,26 @@
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
-    // Stream already live — just show overlay
+    // 1. Stream already live — just show overlay
     if (streamReady && stream) {
+      if (target !== facingMode) {
+        // Need to switch — do it via getUserMedia (still in gesture context)
+        flip();
+        return;
+      }
+      showOverlay();
+      return;
+    }
+
+    // 2. Check if cascade already primed a stream for us
+    const primed = window.__STRUCTA_PRIMED_STREAM__;
+    if (primed && primed.active) {
+      stream = primed;
       facingMode = target;
+      streamReady = true;
+      if (preview) preview.srcObject = stream;
+      native?.setCameraFacing?.(facingMode);
+      setStatus('ready');
       showOverlay();
       return;
     }
@@ -85,23 +102,14 @@
       return;
     }
 
-    // Switching facing mode — kill old stream
-    if (stream && facingMode !== target) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      streamReady = false;
-      if (preview) preview.srcObject = null;
-    }
-
     facingMode = target;
     setStatus('acquiring');
 
-    // getUserMedia called NOW — still inside the synchronous event handler chain.
-    // The permission check happens at .then() resolution but the gesture context
-    // was captured when getUserMedia was invoked.
+    // 3. getUserMedia called NOW — still inside the synchronous event handler chain.
     navigator.mediaDevices.getUserMedia({ video: { facingMode } })
       .then(async (mediaStream) => {
         stream = mediaStream;
+        window.__STRUCTA_PRIMED_STREAM__ = stream;
         const ready = await attachPreview();
         if (!ready) {
           killStream();

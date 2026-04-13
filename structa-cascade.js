@@ -611,13 +611,13 @@
 
   function cardLayout(index) {
     // Hero — left edge at viewport center (x=120), extends past right edge
-    if (index === selectedIndex) return { x: 120, y: 52, scale: 1.5, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 120, y: 36, scale: 1.5, opacity: 1, depth: -1 };
     // Stack — 3 cards in left half (x=0 to x=120), equal 40px zones
     // Left half = 120px / 3 cards = 40px zone per card
     // Front (closest to hero): largest scale, peeks least (40px zone)
     // Back (furthest from hero): smallest scale, peeks most (full 120px visible)
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 52 + (150 * 1.5) / 2; // 164.5 — viewport center
+    var heroCenterY = 36 + (150 * 1.5) / 2; // 148.5 — viewport center of 292
     // depth 0 = back (smallest, x=0), depth 2 = front (largest, x=80)
     var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
@@ -807,7 +807,7 @@
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
     // Full-screen card color background
-    mk('rect', { x: 0, y: 0, width: 240, height: 320, fill: nowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
     // Project subtitle
     text(14, 68, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
@@ -818,10 +818,10 @@
     drawSectionLabel(undefined, 14, 158, 'latest useful capture');
     wrapText(undefined, lower(data.capture), 14, 174, 212, 14, 'rgba(8,8,8,0.72)', '13');
     // Next move
-    drawSectionLabel(undefined, 14, 232, 'next move');
-    wrapText(undefined, lower(data.next), 14, 248, 212, 14, 'rgba(8,8,8,0.96)', '14');
+    drawSectionLabel(undefined, 14, 218, 'next move');
+    wrapText(undefined, lower(data.next), 14, 234, 212, 14, 'rgba(8,8,8,0.96)', '14');
     // Footer stats
-    text(14, 310, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
+    text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
   }
 
   function drawPill(group, x, y, width, height, label, active, tone = 'dark') {
@@ -875,7 +875,7 @@
     if (knowItemIndex >= items.length) knowItemIndex = 0;
     const item = items[knowItemIndex] || lane.items[0];
     // Full-screen card color background
-    mk('rect', { x: 0, y: 0, width: 240, height: 320, fill: knowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
 
     // Lane tabs — squared corners, close to title
@@ -914,8 +914,8 @@
     });
     drawSectionLabel(undefined, 14, 138, item.source === 'question' ? 'open ask' : 'what it says');
     wrapText(undefined, lower(item.body), 14, 156, 212, 14, 'rgba(8,8,8,0.90)', '13');
-    drawSectionLabel(undefined, 14, 278, 'next move');
-    wrapText(undefined, lower(item.next), 14, 294, 212, 13, 'rgba(8,8,8,0.96)', '13');
+    drawSectionLabel(undefined, 14, 256, 'next move');
+    wrapText(undefined, lower(item.next), 14, 272, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {
@@ -1035,7 +1035,7 @@
       'sharedStorage', 'fetchLater']);
     // Check known R1 bridge objects
     const bridges = ['PluginMessageHandler', 'Android', 'rabbit', 'Rabbit', 'webkit',
-      'creationStorage', '__RABBIT_DEVICE_ID__', 'onPluginMessage'];
+      'creationStorage', 'creationStorageHandler', 'accelerometerHandler', '__RABBIT_DEVICE_ID__', 'onPluginMessage'];
     bridges.forEach(name => {
       const val = window[name];
       if (val !== undefined) {

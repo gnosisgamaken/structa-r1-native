@@ -18,19 +18,34 @@
   let lastBundle = null;
   let flipLocked = false;
   let streamReady = false;
+  let overlayVisible = false;
+  let streamAcquiring = false;
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
   }
 
+  /**
+   * showOverlay — now shows a loading state until stream is ready.
+   * The overlay background stays transparent (showing the app bg) until
+   * the camera feed is actually flowing, preventing the black flash on cold start.
+   */
   function showOverlay() {
+    if (overlayVisible) return;
+    overlayVisible = true;
     document.getElementById('app')?.classList.add('overlay-active');
     overlay?.classList.add('open');
     overlay?.setAttribute('aria-hidden', 'false');
+    // Don't dispatch camera-open until stream is actually flowing
+  }
+
+  function showOverlayReady() {
     window.dispatchEvent(new CustomEvent('structa-camera-open'));
   }
 
   function hideOverlay() {
+    if (!overlayVisible) return;
+    overlayVisible = false;
     overlay?.classList.remove('open');
     overlay?.setAttribute('aria-hidden', 'true');
     document.getElementById('app')?.classList.remove('overlay-active');
@@ -39,6 +54,7 @@
 
   function killStream() {
     streamReady = false;
+    streamAcquiring = false;
     if (stream) {
       try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
       stream = null;
@@ -62,18 +78,18 @@
 
   /**
    * openFromGesture — MUST be called synchronously from a pointerup handler.
+   * Now defers overlay to when stream actually flows (for cold start).
+   * For warm start (stream already ready), shows overlay immediately.
    */
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
-    // Show overlay IMMEDIATELY — prevents black flash on PTT cold start
-    showOverlay();
-
-    // 1. Stream already live — just attach
+    // 1. Stream already live — show overlay and attach immediately
     if (streamReady && stream) {
+      showOverlay();
+      showOverlayReady();
       if (target !== facingMode) {
         flip();
-        return;
       }
       return;
     }
@@ -87,6 +103,8 @@
       if (preview) preview.srcObject = stream;
       native?.setCameraFacing?.(facingMode);
       setStatus('ready');
+      showOverlay();
+      showOverlayReady();
       return;
     }
 
@@ -95,12 +113,17 @@
       return;
     }
 
+    if (streamAcquiring) return; // already acquiring
+    streamAcquiring = true;
     facingMode = target;
     setStatus('acquiring');
 
-    // 3. getUserMedia called NOW — still inside the synchronous event handler chain.
+    // 3. Cold start — DON'T show overlay until stream flows.
+    //    This prevents the black screen flash.
+    //    The overlay will appear via showOverlayReady() once getUserMedia resolves.
     navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { max: 640 }, height: { max: 480 } } })
       .then(async (mediaStream) => {
+        streamAcquiring = false;
         stream = mediaStream;
         window.__STRUCTA_PRIMED_STREAM__ = stream;
         const ready = await attachPreview();
@@ -112,8 +135,12 @@
         streamReady = true;
         native?.setCameraFacing?.(facingMode);
         setStatus('ready');
+        // NOW show overlay — stream is flowing
+        showOverlay();
+        showOverlayReady();
       })
       .catch(err => {
+        streamAcquiring = false;
         killStream();
         setStatus(`gm: ${err?.name || err?.message || 'denied'}`);
       });

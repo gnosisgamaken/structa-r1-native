@@ -830,6 +830,7 @@
   }
 
   // === NOW panel render ===
+  // Clean hierarchy: project name -> latest change -> pending decision -> stats
   function drawNowPanel() {
     if (currentState !== STATES.NOW_BROWSE) return;
     const data = buildNowSummary();
@@ -841,9 +842,9 @@
     // Project subtitle
     text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
-    // Since last time
-    drawSectionLabel(undefined, 14, 74, 'since last time');
-    wrapText(undefined, lower(data.changed), 14, 84, 212, 14, 'rgba(8,8,8,0.92)', '14');
+    // Latest change — one line summary
+    drawSectionLabel(undefined, 14, 78, 'last change');
+    wrapText(undefined, lower(data.changed), 14, 92, 212, 14, 'rgba(8,8,8,0.88)', '13');
 
     // Pending decision
     if (data.pendingDecisions.length > 0) {
@@ -851,43 +852,45 @@
       const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
       const pdCount = data.pendingDecisions.length;
 
-      const boxY = 108;
-      const boxH = 72;
-      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.12)' });
+      const boxY = 118;
+      const boxH = 90;
 
-      drawSectionLabel(undefined, 18, boxY + 12, 'pending decision' + (pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : ''));
+      // Decision card background
+      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.08)' });
 
-      const maxChars = 58;
+      // Decision label with count
+      const countLabel = pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : '';
+      text(18, boxY + 14, 'needs your call' + countLabel, {
+        fill: 'rgba(8,8,8,0.50)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+
+      // Decision text - truncated cleanly
+      const maxChars = 52;
       const displayText = pdText.length > maxChars ? pdText.slice(0, maxChars - 1) + '…' : pdText;
-      wrapText(undefined, lower(displayText), 18, boxY + 28, 195, 14, 'rgba(8,8,8,0.96)', '14');
+      wrapText(undefined, lower(displayText), 18, boxY + 30, 195, 14, 'rgba(8,8,8,0.96)', '14');
 
-      const pillY = boxY + boxH - 18;
-      drawSquaredPill(18, pillY, 80, 14, 'side ✓ approve', true, 'light');
-      drawSquaredPill(146, pillY, 76, 14, 'back ✗ skip', false, 'light');
-
+      // Action pills - clean options
+      const pillY = boxY + boxH - 22;
+      drawSquaredPill(18, pillY, 74, 16, '✓ approve', true, 'light');
+      drawSquaredPill(100, pillY, 58, 16, '✗ skip', false, 'light');
       if (pdCount > 1) {
-        text(120, pillY + 11, 'scroll', {
-          fill: 'rgba(8,8,8,0.40)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10', 'text-anchor': 'middle'
-        });
+        drawSquaredPill(166, pillY, 58, 16, '↓ next', false, 'light');
       }
 
-      drawSectionLabel(undefined, 14, boxY + boxH + 12, 'next move');
-      wrapText(undefined, lower(data.next), 14, boxY + boxH + 22, 212, 14, 'rgba(8,8,8,0.72)', '13');
-
-      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} decided`, {
+      // Stats footer
+      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
       });
     } else {
-      drawSectionLabel(undefined, 14, 108, 'latest capture');
-      wrapText(undefined, lower(data.capture), 14, 118, 212, 14, 'rgba(8,8,8,0.72)', '13');
+      // No pending - show next move
+      drawSectionLabel(undefined, 14, 118, 'next move');
+      wrapText(undefined, lower(data.next), 14, 132, 212, 14, 'rgba(8,8,8,0.96)', '14');
 
-      drawSectionLabel(undefined, 14, 172, 'next move');
-      wrapText(undefined, lower(data.next), 14, 182, 212, 14, 'rgba(8,8,8,0.96)', '14');
-
-      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} decided`, {
+      // Stats footer
+      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
       });
@@ -895,6 +898,9 @@
   }
 
   // === KNOW insight surface render ===
+  // === KNOW insight surface render ===
+  // Redesigned: touchable lane tabs + filter chips, content directly visible below,
+  // scrollable with wheel. No PTT needed to browse content.
   function drawInsightSurface() {
     if (currentState !== STATES.KNOW_BROWSE && currentState !== STATES.KNOW_DETAIL) return;
     const knowCard = cards.find(c => c.id === 'know');
@@ -916,7 +922,7 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
 
-    // Lane tabs
+    // Touchable lane tabs
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 44 },
       { id: 'signals', label: 'signals', width: 52 },
@@ -924,41 +930,155 @@
       { id: 'open loops', label: 'loops', width: 42 }
     ];
     let tabX = 14;
-    laneTabs.forEach(tab => {
+    laneTabs.forEach((tab, i) => {
       const isActive = lane.id === tab.id;
-      drawSquaredPill(tabX, 58, tab.width, 20, tab.label, isActive, 'dark');
+      const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
+      mk('rect', {
+        x: tabX, y: 52, width: tab.width, height: 22, rx: 6, ry: 6,
+        fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
+        stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
+        'stroke-width': 1
+      }, pillGroup);
+      const tabText = mk('text', {
+        x: tabX + tab.width / 2, y: 52 + 22 / 2 + 4,
+        fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'middle'
+      }, pillGroup);
+      tabText.textContent = lower(tab.label);
+
+      pillGroup.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stateData.knowLaneIndex = i;
+        stateData.knowItemIndex = 0;
+        const newLane = model.lanes[i];
+        const activeChip = model.chips[stateData.knowChipIndex]?.id;
+        const hasChipItems = newLane?.items?.some(item => item.chips.includes(activeChip));
+        if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
+        render();
+      });
+
       tabX += tab.width + 4;
     });
 
-    // Filter row
-    text(14, 91, 'filter', {
-      fill: 'rgba(8,8,8,0.50)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12'
-    });
-    drawSquaredPill(46, 81, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 93, `${items.length} result${items.length !== 1 ? 's' : ''}`, {
-      fill: 'rgba(8,8,8,0.50)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'end'
+    // Filter chips row - touchable
+    const chipY = 80;
+    let chipX = 14;
+    const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
+    activeChips.forEach((c) => {
+      const realIndex = model.chips.indexOf(c);
+      const isActive = realIndex === safeChipIdx;
+      const chipWidth = Math.max(40, c.label.length * 7 + 16);
+      const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
+      mk('rect', {
+        x: chipX, y: chipY, width: chipWidth, height: 18, rx: 9, ry: 9,
+        fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
+        stroke: 'none', 'stroke-width': 0
+      }, chipGroup);
+      const chipText = mk('text', {
+        x: chipX + chipWidth / 2, y: chipY + 13,
+        fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
+      }, chipGroup);
+      chipText.textContent = lower(c.label);
+
+      chipGroup.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        stateData.knowChipIndex = realIndex;
+        stateData.knowItemIndex = 0;
+        render();
+      });
+
+      chipX += chipWidth + 4;
     });
 
+    // Result count
+    text(226, chipY + 13, String(items.length), {
+      fill: 'rgba(8,8,8,0.40)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10', 'text-anchor': 'end'
+    });
+
+    // Content area - directly below chips, no PTT needed
+    const contentY = 108;
+
     if (currentState === STATES.KNOW_BROWSE) {
-      text(14, 116, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '17' });
-      wrapText(undefined, lower(lane.summary), 14, 134, 212, 14, 'rgba(8,8,8,0.64)', '13');
-      drawSectionLabel(undefined, 14, 200, 'best match now');
-      wrapText(undefined, lower(item.title), 14, 216, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      // Item title
+      text(14, contentY, lower(item.title), {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+
+      // Date
+      text(226, contentY - 1, formatTimeLabel(item.created_at), {
+        fill: 'rgba(8,8,8,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10', 'text-anchor': 'end'
+      });
+
+      // Context label - source type
+      const contextLabel = item.source === 'question' ? 'open ask'
+        : item.source === 'insight' ? 'insight'
+        : item.source === 'capture-image' ? 'visual capture'
+        : item.source === 'decision' ? 'locked decision'
+        : item.source === 'backlog' ? 'open loop'
+        : lane.label;
+      text(14, contentY + 14, contextLabel, {
+        fill: 'rgba(8,8,8,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+
+      // Item body
+      wrapText(undefined, lower(item.body), 14, contentY + 32, 212, 13, 'rgba(8,8,8,0.85)', '12');
+
+      // Next move bar
+      const actionY = 240;
+      mk('rect', { x: 0, y: actionY - 8, width: 240, height: 44, fill: 'rgba(8,8,8,0.04)' });
+      text(14, actionY, '→', {
+        fill: 'rgba(8,8,8,0.50)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      wrapText(undefined, lower(item.next), 26, actionY, 200, 13, 'rgba(8,8,8,0.70)', '11');
+
+      // Scroll hint
+      if (items.length > 1) {
+        text(14, 280, (itemIdx + 1) + '/' + items.length + ' · scroll or tap detail', {
+          fill: 'rgba(8,8,8,0.32)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9'
+        });
+      }
+
+      // Touchable content area - tap opens detail
+      const contentGroup = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x: 0, y: contentY - 16, width: 240, height: 220, fill: 'transparent' }, contentGroup);
+      contentGroup.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        transition(STATES.KNOW_DETAIL);
+      });
       return;
     }
 
-    // KNOW_DETAIL
-    text(14, 116, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '17' });
-    text(220, 116, formatTimeLabel(item.created_at), {
+    // KNOW_DETAIL - expanded view
+    text(14, contentY, lower(item.title), {
+      fill: 'rgba(8,8,8,0.96)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '16'
+    });
+    text(226, contentY - 1, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10', 'text-anchor': 'end'
     });
 
-    const sectionLabel = item.source === 'question' ? 'open ask' : 'what it says';
-    drawSectionLabel(undefined, 14, 136, sectionLabel);
-    wrapText(undefined, lower(item.body), 14, 152, 212, 14, 'rgba(8,8,8,0.90)', '13');
+    const detailSection = item.source === 'question' ? 'the question' : 'detail';
+    drawSectionLabel(undefined, 14, contentY + 16, detailSection);
+    wrapText(undefined, lower(item.body), 14, contentY + 32, 212, 14, 'rgba(8,8,8,0.90)', '13');
 
     if (item.source === 'question') {
       const actionY = 242;
@@ -966,7 +1086,8 @@
       drawSquaredPill(18, actionY, 96, 14, 'side → answer', true, 'light');
       text(136, actionY + 11, 'speak your answer', {
         fill: 'rgba(8,8,8,0.50)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
       });
     } else {
       drawSectionLabel(undefined, 14, 246, 'next move');
@@ -1162,22 +1283,19 @@
 
     switch (currentState) {
       case STATES.SHOW_PRIMED:
-        // PTT released while priming = transition to camera and immediately capture
+        // PTT released while priming
         stateData.pttCapture = false;
-        // Camera should already be opening from SHOW_PRIMED enter
-        // Wait a tick for camera to be ready, then capture
-        setTimeout(() => {
-          if (currentState === STATES.SHOW_PRIMED || window.StructaCamera?.primed) {
-            // Camera is ready, go to camera open state
-            transition(STATES.CAMERA_OPEN);
-            // Then immediately capture
-            setTimeout(() => {
-              if (currentState === STATES.CAMERA_OPEN) {
-                transition(STATES.CAMERA_CAPTURE);
-              }
-            }, 100);
-          }
-        }, 150);
+        if (window.StructaCamera?.primed) {
+          // Camera stream ready — capture immediately
+          transition(STATES.CAMERA_OPEN);
+          setTimeout(() => {
+            if (currentState === STATES.CAMERA_OPEN) {
+              transition(STATES.CAMERA_CAPTURE);
+            }
+          }, 100);
+        }
+        // If stream not ready yet, camera overlay will auto-open when ready
+        // and user can tap to capture. No black flash.
         break;
 
       case STATES.CAMERA_OPEN:

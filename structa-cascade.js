@@ -676,14 +676,14 @@
     if (activeSurface !== 'home') return;
     image('assets/icons/png/5.png', {
       x: 11,
-      y: 32,
+      y: 30,
       width: 24,
       height: 24,
       preserveAspectRatio: 'xMidYMid meet',
       opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(42, 56, 'structa', {
+    text(42, 52, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '35',
@@ -695,7 +695,7 @@
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11,
-        y: 32,
+        y: 30,
         width: 24,
         height: 24,
         preserveAspectRatio: 'xMidYMid meet',
@@ -703,7 +703,7 @@
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
-    text(42, 56, card.title, {
+    text(42, 52, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '40',
@@ -810,16 +810,16 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
     // Project subtitle
-    text(14, 80, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+    text(14, 76, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
     // Since last time
-    drawSectionLabel(undefined, 14, 98, 'since last time');
-    wrapText(undefined, lower(data.changed), 14, 114, 212, 14, 'rgba(8,8,8,0.92)', '14');
+    drawSectionLabel(undefined, 14, 94, 'since last time');
+    wrapText(undefined, lower(data.changed), 14, 110, 212, 14, 'rgba(8,8,8,0.92)', '14');
     // Latest capture
-    drawSectionLabel(undefined, 14, 162, 'latest useful capture');
-    wrapText(undefined, lower(data.capture), 14, 178, 212, 14, 'rgba(8,8,8,0.72)', '13');
+    drawSectionLabel(undefined, 14, 158, 'latest useful capture');
+    wrapText(undefined, lower(data.capture), 14, 174, 212, 14, 'rgba(8,8,8,0.72)', '13');
     // Next move
-    drawSectionLabel(undefined, 14, 222, 'next move');
-    wrapText(undefined, lower(data.next), 14, 238, 212, 14, 'rgba(8,8,8,0.96)', '14');
+    drawSectionLabel(undefined, 14, 218, 'next move');
+    wrapText(undefined, lower(data.next), 14, 234, 212, 14, 'rgba(8,8,8,0.96)', '14');
     // Footer stats
     text(14, 282, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
   }
@@ -879,18 +879,18 @@
     drawSurfaceHeader(knowCard);
 
     // Lane tabs — squared corners, close to title
-    drawSquaredPill(14, 70, 60, 20, 'signals', lane.id === 'signals', 'dark');
-    drawSquaredPill(79, 70, 64, 20, 'decide', lane.id === 'decisions', 'dark');
-    drawSquaredPill(148, 70, 62, 20, 'loops', lane.id === 'open loops', 'dark');
+    drawSquaredPill(14, 66, 60, 20, 'signals', lane.id === 'signals', 'dark');
+    drawSquaredPill(79, 66, 64, 20, 'decide', lane.id === 'decisions', 'dark');
+    drawSquaredPill(148, 66, 62, 20, 'loops', lane.id === 'open loops', 'dark');
 
     // Filter row
-    text(14, 105, 'filter', {
+    text(14, 101, 'filter', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
     });
-    drawSquaredPill(46, 95, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 107, `${items.length} results`, {
+    drawSquaredPill(46, 91, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(220, 103, `${items.length} results`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
@@ -898,22 +898,22 @@
     });
 
     if (!knowDetail) {
-      text(14, 135, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
-      wrapText(undefined, lower(lane.summary), 14, 155, 212, 14, 'rgba(8,8,8,0.64)', '13');
+      text(14, 131, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
+      wrapText(undefined, lower(lane.summary), 14, 151, 212, 14, 'rgba(8,8,8,0.64)', '13');
       drawSectionLabel(undefined, 14, 210, 'best match now');
       wrapText(undefined, lower(item.title), 14, 228, 212, 14, 'rgba(8,8,8,0.96)', '14');
       return;
     }
 
-    text(14, 135, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
-    text(220, 135, formatTimeLabel(item.created_at), {
+    text(14, 131, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
+    text(220, 131, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
     });
-    drawSectionLabel(undefined, 14, 158, item.source === 'question' ? 'open ask' : 'what it says');
-    wrapText(undefined, lower(item.body), 14, 176, 212, 14, 'rgba(8,8,8,0.90)', '13');
+    drawSectionLabel(undefined, 14, 154, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(undefined, lower(item.body), 14, 172, 212, 14, 'rgba(8,8,8,0.90)', '13');
     drawSectionLabel(undefined, 14, 256, 'next move');
     wrapText(undefined, lower(item.next), 14, 272, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }

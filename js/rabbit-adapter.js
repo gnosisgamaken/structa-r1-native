@@ -269,6 +269,13 @@
     });
   }
 
+  /**
+   * sendStructuredMessage — sends a concise message to the R1 LLM.
+   *
+   * The envelope fields are for Structa's internal memory only.
+   * The R1 LLM receives ONLY: { message, useLLM, wantsR1Response, wantsJournalEntry }
+   * as per the official creations-sdk format.
+   */
   function sendStructuredMessage(raw = {}) {
     const routed = router?.routeAction?.(raw);
     const verdict = validation.validateEnvelope(raw);
@@ -276,24 +283,59 @@
       emit('validation_failed', { kind: 'message', errors: verdict.errors, raw });
       return { ok: false, error: validation.validationMessage('structured message', verdict.errors), payload: verdict.value };
     }
-    const payload = verdict.value;
+    const envelope = verdict.value;
     if (routed?.ok) {
-      payload.meta = {
-        ...(payload.meta || {}),
+      envelope.meta = {
+        ...(envelope.meta || {}),
         route: routed.route,
         context_snapshot: routed.context_snapshot,
         context_summary: router?.summarizeContext?.(routed.context_snapshot)
       };
     }
-    const result = postPayload({
-      ...payload,
+    // Build a concise, clean message for the R1 LLM
+    // The R1 LLM expects: { message, useLLM, wantsR1Response, wantsJournalEntry }
+    var llmMessage = buildLLMMessage(envelope);
+    var sdkPayload = {
+      message: llmMessage,
       useLLM: true,
-      wantsR1Response: payload.wantsR1Response !== false,
-      wantsJournalEntry: payload.wantsJournalEntry === true
-    });
-    appendLogEntry({ kind: payload.verb, message: `${payload.verb} ${payload.target}` });
-    emit('message_sent', { payload, result });
-    return { ok: true, payload, result };
+      wantsR1Response: envelope.wantsR1Response !== false,
+      wantsJournalEntry: envelope.wantsJournalEntry === true
+    };
+    const result = postPayload(sdkPayload);
+    appendLogEntry({ kind: envelope.verb, message: `${envelope.verb} ${envelope.target}` });
+    emit('message_sent', { envelope, result });
+    return { ok: true, envelope, result };
+  }
+
+  /**
+   * buildLLMMessage — turns a Structa envelope into a concise prompt for the R1 LLM.
+   * Keep it short. The R1 LLM should respond with 1-2 words max.
+   */
+  function buildLLMMessage(envelope) {
+    var verb = lower(envelope.verb || 'capture');
+    var target = lower(envelope.target || 'item');
+    var intent = lower(envelope.intent || '');
+    var goal = lower(envelope.goal || '');
+
+    // Voice input: just pass the transcript directly
+    if (envelope.input_type === 'ptt-stop' && envelope.payload?.transcript) {
+      return envelope.payload.transcript;
+    }
+
+    // Journal: concise entry
+    if (envelope.input_type === 'journal') {
+      var title = envelope.payload?.title || 'note';
+      var body = envelope.payload?.body || '';
+      return body || title;
+    }
+
+    // Camera/image: describe what was captured
+    if (envelope.source_type === 'camera' || envelope.input_type?.includes('capture')) {
+      return goal || intent || `${verb} ${target}`;
+    }
+
+    // Generic: use intent or goal
+    return intent || goal || `${verb} ${target}`;
   }
 
   function writeJournalEntry(raw = {}) {
@@ -314,19 +356,10 @@
       }
     });
     updateUIState({ last_event_summary: lower(payload.title), last_insight_summary: lower(payload.body.slice(0, 80)) });
-    return sendStructuredMessage({
-      project_code: payload.project_code,
-      entry_id: payload.entry_id,
-      source_type: payload.source_type,
-      input_type: 'journal',
-      target: 'journal',
-      verb: 'journal',
-      intent: `journal ${payload.title}`,
-      goal: payload.body,
-      approval_mode: 'human_required',
-      fallback: 'store-only',
-      payload
-    });
+    // Store locally only — do NOT send to LLM here.
+    // Voice/camera handlers send to LLM separately via r1-llm.js (sendToLLM).
+    persist();
+    return { ok: true, payload };
   }
 
   function storeAsset(raw = {}) {

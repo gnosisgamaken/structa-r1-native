@@ -173,12 +173,9 @@
   // === Specialized entry points ===
 
   function processVoice(transcript) {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var parts = ['Project: ' + (project.name || 'untitled')];
-    if (project.backlog && project.backlog.length) parts.push('Tasks: ' + project.backlog[0].title);
-    if (project.decisions && project.decisions.length) parts.push('Decision: ' + project.decisions[0].title);
-    parts.push('', 'Voice: "' + transcript + '"', '', 'One concrete next action.');
-    return sendToLLM(parts.filter(Boolean).join('\n'));
+    // Concise prompt — R1 LLM should respond with 1-2 words max
+    var prompt = transcript + '\n\nnext action (3 words max):';
+    return sendToLLM(prompt, { speak: false, journal: false });
   }
 
   function processImage(desc, meta) {

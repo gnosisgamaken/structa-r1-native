@@ -681,7 +681,7 @@
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11,
-        y: -17,
+        y: 4,
         width: 18,
         height: 18,
         preserveAspectRatio: 'xMidYMid meet',
@@ -689,10 +689,10 @@
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
-    text(36, 0, card.title, {
+    text(36, 22, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '35',
+      'font-size': '32',
       'letter-spacing': '0.0em'
     });
   }
@@ -793,17 +793,21 @@
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
     // Full-screen card color background
-    mk('rect', { x: 0, y: 0, width: 240, height: 220, fill: nowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 320, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    const group = mk('g', { transform: 'translate(0, 8)' });
-    text(14, 34, lower(data.title), { fill: 'rgba(8,8,8,0.60)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' }, group);
-    drawSectionLabel(group, 14, 52, 'since last time');
-    wrapText(group, lower(data.changed), 14, 68, 212, 13, 'rgba(8,8,8,0.92)', '13');
-    drawSectionLabel(group, 14, 98, 'latest useful capture');
-    wrapText(group, lower(data.capture), 14, 114, 212, 12, 'rgba(8,8,8,0.76)', '12');
-    drawSectionLabel(group, 14, 148, 'next move');
-    wrapText(group, lower(data.next), 14, 164, 212, 13, 'rgba(8,8,8,0.96)', '13');
-    text(14, 208, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.40)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' }, group);
+    // Project subtitle
+    text(14, 48, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+    // Since last time
+    drawSectionLabel(undefined, 14, 66, 'since last time');
+    wrapText(undefined, lower(data.changed), 14, 82, 212, 14, 'rgba(8,8,8,0.92)', '14');
+    // Latest capture
+    drawSectionLabel(undefined, 14, 126, 'latest useful capture');
+    wrapText(undefined, lower(data.capture), 14, 142, 212, 13, 'rgba(8,8,8,0.72)', '12');
+    // Next move
+    drawSectionLabel(undefined, 14, 186, 'next move');
+    wrapText(undefined, lower(data.next), 14, 202, 212, 14, 'rgba(8,8,8,0.96)', '14');
+    // Footer stats
+    text(14, 308, `${data.captures} captures · ${data.insights} insights · ${data.openQuestions} open`, { fill: 'rgba(8,8,8,0.36)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9' });
   }
 
   function drawPill(group, x, y, width, height, label, active, tone = 'dark') {
@@ -825,6 +829,25 @@
     }, group);
   }
 
+  function drawSquaredPill(x, y, width, height, label, active, tone = 'dark') {
+    const activeFill = tone === 'dark' ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.18)';
+    const idleFill = tone === 'dark' ? 'rgba(8,8,8,0.10)' : 'rgba(255,255,255,0.12)';
+    const activeText = tone === 'dark' ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.98)';
+    const idleText = tone === 'dark' ? 'rgba(8,8,8,0.76)' : 'rgba(8,8,8,0.62)';
+    mk('rect', {
+      x, y, width, height, rx: 4, ry: 4,
+      fill: active ? activeFill : idleFill,
+      stroke: active ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
+      'stroke-width': 1
+    });
+    text(x + width / 2, y + height / 2 + 3, lower(label), {
+      fill: active ? activeText : idleText,
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'middle'
+    });
+  }
+
   function drawInsightSurface() {
     if (activeSurface !== 'insight') return;
     const knowCard = cards.find(c => c.id === 'know');
@@ -838,46 +861,47 @@
     if (knowItemIndex >= items.length) knowItemIndex = 0;
     const item = items[knowItemIndex] || lane.items[0];
     // Full-screen card color background
-    mk('rect', { x: 0, y: 0, width: 240, height: 220, fill: knowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 320, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
-    const group = mk('g', { transform: 'translate(0, 8)' });
 
-    drawPill(group, 14, 24, 60, 20, 'signals', lane.id === 'signals', 'dark');
-    drawPill(group, 79, 24, 64, 20, 'decide', lane.id === 'decisions', 'dark');
-    drawPill(group, 148, 24, 62, 20, 'loops', lane.id === 'open loops', 'dark');
+    // Lane tabs — squared corners
+    drawSquaredPill(14, 32, 60, 20, 'signals', lane.id === 'signals', 'dark');
+    drawSquaredPill(79, 32, 64, 20, 'decide', lane.id === 'decisions', 'dark');
+    drawSquaredPill(148, 32, 62, 20, 'loops', lane.id === 'open loops', 'dark');
 
-    text(14, 57, 'filter', {
+    // Filter row
+    text(14, 67, 'filter', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
-    }, group);
-    drawPill(group, 46, 47, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
-    text(220, 59, `${items.length} results`, {
+    });
+    drawSquaredPill(46, 57, Math.max(44, chip.label.length * 7 + 18), 18, chip.label, true, 'dark');
+    text(220, 69, `${items.length} results`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
-    }, group);
+    });
 
     if (!knowDetail) {
-      text(14, 86, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' }, group);
-      wrapText(group, lower(lane.summary), 14, 104, 212, 13, 'rgba(8,8,8,0.68)', '12');
-      drawSectionLabel(group, 14, 140, 'best match now');
-      wrapText(group, lower(item.title), 14, 156, 212, 13, 'rgba(8,8,8,0.96)', '13');
+      text(14, 96, lower(lane.label), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '18' });
+      wrapText(undefined, lower(lane.summary), 14, 114, 212, 14, 'rgba(8,8,8,0.64)', '13');
+      drawSectionLabel(undefined, 14, 160, 'best match now');
+      wrapText(undefined, lower(item.title), 14, 176, 212, 14, 'rgba(8,8,8,0.96)', '14');
       return;
     }
 
-    text(14, 84, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '15' }, group);
-    text(220, 84, formatTimeLabel(item.created_at), {
+    text(14, 94, lower(item.title), { fill: 'rgba(8,8,8,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '16' });
+    text(220, 94, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9',
       'text-anchor': 'end'
-    }, group);
-    drawSectionLabel(group, 14, 101, item.source === 'question' ? 'open ask' : 'what it says');
-    wrapText(group, lower(item.body), 14, 117, 212, 12, 'rgba(8,8,8,0.90)', '12');
-    drawSectionLabel(group, 14, 169, 'next move');
-    wrapText(group, lower(item.next), 14, 183, 212, 12, 'rgba(8,8,8,0.96)', '12');
+    });
+    drawSectionLabel(undefined, 14, 114, item.source === 'question' ? 'open ask' : 'what it says');
+    wrapText(undefined, lower(item.body), 14, 130, 212, 13, 'rgba(8,8,8,0.90)', '13');
+    drawSectionLabel(undefined, 14, 240, 'next move');
+    wrapText(undefined, lower(item.next), 14, 256, 212, 13, 'rgba(8,8,8,0.96)', '13');
   }
 
   function wrapText(parent, content, x, y, width, lineHeight, fill, fontSize = '10') {

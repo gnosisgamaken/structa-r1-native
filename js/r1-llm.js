@@ -16,7 +16,18 @@
 
   function fields(t){var r={raw:t,insight:t,next:'',conf:'med'};var m=t.match(/(?:next step|suggest|recommend|you should|start by|try)[:\s]*(.{10,100})/i);if(m)r.next=m[1].trim();if(/definitely|clearly/i.test(t))r.conf='high';if(/maybe|perhaps|might/i.test(t))r.conf='low';return r;}
 
+  var lastCallTime = 0;
+  var MIN_GAP_MS = 8000; // 8s between calls — respect device connection
+
   async function ask(msg,opts){
+    // Rate limit: don't flood the R1 device connection
+    var now = Date.now();
+    var elapsed = now - lastCallTime;
+    if (elapsed < MIN_GAP_MS) {
+      await new Promise(function(r) { setTimeout(r, MIN_GAP_MS - elapsed); });
+    }
+    lastCallTime = Date.now();
+
     opts=opts||{};var ms=[{role:'system',content:opts.sys||SYS}];
     for(var i=0;i<hist.length;i++)ms.push(hist[i]);
     ms.push({role:'user',content:msg});

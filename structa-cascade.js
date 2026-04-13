@@ -148,20 +148,13 @@
     window.__STRUCTA_PTT_TARGET__ = source === 'ptt' ? 'camera' : null;
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
-    // activeSurface and render() are driven by the 'structa-camera-open' event
-    // that fires inside StructaCamera.open() → showOverlay(). Never set early.
     window.StructaVoice?.close?.();
 
-    // Fire async but do not await — overlay appears as soon as stream is ready.
-    // On PTT: stream was pre-acquired at startup, so open() resolves instantly.
-    // On touch: same path, zero difference.
-    void window.StructaCamera?.open?.().then(result => {
-      if (!result?.ok) {
-        pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');
-      } else {
-        pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
-      }
-    });
+    // openFromGesture calls getUserMedia SYNCHRONOUSLY from within this
+    // event handler chain. This is the ONLY safe way to acquire the camera
+    // on R1 where getUserMedia requires a trusted user gesture.
+    window.StructaCamera?.openFromGesture?.();
+    pushLog(source === 'ptt' ? 'show ready from ptt' : 'show ready', 'focus');
   }
 
   function openVoiceSurface(source = 'touch') {

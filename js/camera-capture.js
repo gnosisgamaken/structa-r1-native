@@ -67,6 +67,19 @@
     return warmupPromise;
   }
 
+  async function waitForPreviewReady(timeout = 900) {
+    if (!preview) return true;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeout) {
+      if ((preview.readyState >= 2 && preview.videoWidth > 0 && preview.videoHeight > 0) || !preview.paused) {
+        return true;
+      }
+      await preview.play().catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 120));
+    }
+    return preview.readyState >= 2 || preview.videoWidth > 0;
+  }
+
   async function open(mode = facingMode) {
     showOverlay();
     const nextMode = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
@@ -83,6 +96,11 @@
       if (preview) {
         preview.srcObject = stream;
         await preview.play().catch(() => {});
+      }
+      const ready = await waitForPreviewReady();
+      if (!ready) {
+        setStatus('warming');
+        return { ok: false, error: new Error('camera preview not ready') };
       }
       cameraPrimed = true;
       native?.setCameraFacing?.(facingMode);

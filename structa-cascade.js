@@ -158,8 +158,13 @@
         try {
           await native?.openCamera?.('environment');
         } catch (_) {}
+        await new Promise(resolve => setTimeout(resolve, 420));
       }
-      const result = await window.StructaCamera?.open?.();
+      let result = await window.StructaCamera?.open?.();
+      if (result?.ok === false && source === 'ptt') {
+        await new Promise(resolve => setTimeout(resolve, 260));
+        result = await window.StructaCamera?.open?.();
+      }
       if (result?.ok === false) {
         pushLog(source === 'ptt' ? 'show blocked from ptt' : 'show blocked', 'focus');
         return;

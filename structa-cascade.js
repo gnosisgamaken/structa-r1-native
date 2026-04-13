@@ -596,15 +596,16 @@
   }
 
   function cardLayout(index) {
-    // Symmetric 4-card cascade — all cards vertically centered, staggered right
-    // Hero (selected) is the full-size card on the left
-    // Stack peeks cascade right with 25% reduction per depth level
-    if (index === selectedIndex) return { x: 4, y: 24, scale: 1.30, opacity: 1, depth: -1 };
+    // Hero card — fills the left
+    if (index === selectedIndex) return { x: 4, y: 16, scale: 1.30, opacity: 1, depth: -1 };
+    // Stack — each card peeks 16-20px past the one in front
+    // Diagonal cascade: top-left → bottom-right
+    // Hero right edge at x=199, viewport edge at x=240
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
     const stack = [
-      { x: 28, y: 44, scale: 0.98, opacity: 1, depth: 0 },
-      { x: 52, y: 66, scale: 0.74, opacity: 0.98, depth: 1 },
-      { x: 74, y: 88, scale: 0.54, opacity: 0.96, depth: 2 }
+      { x: 180, y: 42, scale: 0.53, opacity: 1, depth: 0 },
+      { x: 207, y: 70, scale: 0.42, opacity: 0.98, depth: 1 },
+      { x: 230, y: 98, scale: 0.33, opacity: 0.96, depth: 2 }
     ];
     return stack[Math.min(depth, stack.length - 1)];
   }

@@ -517,19 +517,31 @@
   /**
    * approvePendingDecision -- moves a pending decision to locked decisions.
    * @param {number} index - index in pending_decisions array (default: 0 = most recent)
+   * @param {number} selectedOptionIndex - selected option index for multi-option decisions
+   * @param {string|null} selectedOption - selected option label for multi-option decisions
    * @returns {{ ok: boolean, decision: object }}
    */
-  function approvePendingDecision(index) {
+  function approvePendingDecision(index, selectedOptionIndex, selectedOption) {
     var idx = index || 0;
+    var optionIndex = typeof selectedOptionIndex === 'number' ? selectedOptionIndex : null;
+    var optionLabel = typeof selectedOption === 'string' ? selectedOption : null;
     return touchProjectMemory(function(project) {
       project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
       project.decisions = Array.isArray(project.decisions) ? project.decisions : [];
       if (idx >= project.pending_decisions.length) return;
       var pending = project.pending_decisions.splice(idx, 1)[0];
+      var pendingOptions = Array.isArray(pending && pending.options) ? pending.options.slice(0, 3) : [];
+      var resolvedOption = optionLabel;
+      if (!resolvedOption && optionIndex !== null && optionIndex >= 0 && optionIndex < pendingOptions.length) {
+        resolvedOption = pendingOptions[optionIndex];
+      }
       var decision = {
         text: typeof pending === 'string' ? pending : (pending.text || 'decision locked'),
         source: (pending.source || 'voice') + ' → approved',
         reason: pending.insight_body || pending.text || '',
+        options: pendingOptions,
+        selected_option_index: optionIndex,
+        selected_option: resolvedOption,
         created_at: pending.created_at || new Date().toISOString(),
         approved_at: new Date().toISOString()
       };

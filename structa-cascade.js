@@ -378,6 +378,63 @@
     }
   }
 
+  function openTellSurface(extra = {}) {
+    transition(STATES.VOICE_OPEN, { fromPTT: false, ...extra });
+  }
+
+  function openNowNextMove() {
+    const project = getProjectMemory();
+    const openQuestions = project?.open_questions || [];
+    if (openQuestions.length) {
+      transition(STATES.VOICE_OPEN, {
+        answeringQuestion: { index: 0, text: openQuestions[0] },
+        fromPTT: false
+      });
+      return;
+    }
+    openTellSurface();
+  }
+
+  function approveCurrentNowDecision() {
+    const project = getProjectMemory();
+    const pending = project?.pending_decisions || [];
+    const decisionIndex = stateData.decisionIndex || 0;
+    if (!(pending.length && decisionIndex < pending.length)) return false;
+    const current = pending[decisionIndex];
+    const options = (typeof current !== 'string' && current?.options) || [];
+    const selectedOptionIndex = Math.max(0, Math.min(stateData.selectedOption || 0, Math.max(options.length - 1, 0)));
+    const selectedOption = options.length ? options[selectedOptionIndex] : null;
+    native?.approvePendingDecision?.(decisionIndex, selectedOptionIndex, selectedOption);
+    pushLog(selectedOption ? `decision approved: ${selectedOption}` : 'decision approved', 'decision');
+    stateData.decisionIndex = 0;
+    stateData.selectedOption = 0;
+    render();
+    return true;
+  }
+
+  function dismissCurrentNowDecision() {
+    const project = getProjectMemory();
+    const pending = project?.pending_decisions || [];
+    const decisionIndex = stateData.decisionIndex || 0;
+    if (!(pending.length && decisionIndex < pending.length)) return false;
+    native?.dismissPendingDecision?.(decisionIndex);
+    pushLog('decision skipped', 'decision');
+    stateData.decisionIndex = 0;
+    stateData.selectedOption = 0;
+    render();
+    return true;
+  }
+
+  function advanceCurrentNowDecision() {
+    const project = getProjectMemory();
+    const pending = project?.pending_decisions || [];
+    if (pending.length <= 1) return false;
+    stateData.decisionIndex = ((stateData.decisionIndex || 0) + 1) % pending.length;
+    stateData.selectedOption = 0;
+    render();
+    return true;
+  }
+
   // === Surface identification (backward compat for render) ===
   function activeSurface() {
     switch (currentState) {
@@ -954,6 +1011,19 @@
       const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
       const pdOptions = typeof pd === 'string' ? [] : (pd.options || []);
       const pdCount = data.pendingDecisions.length;
+      const optionTapTargets = [];
+      const controlTapTargets = [];
+
+      const attachTap = (x, y, width, height, handler) => {
+        const group = mk('g', { style: 'cursor: pointer;' });
+        mk('rect', { x, y, width, height, rx: 8, ry: 8, fill: 'transparent' }, group);
+        group.addEventListener('pointerup', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handler();
+        });
+        return group;
+      };
 
       const boxY = 142;
       const boxH = pdOptions.length >= 2 ? 120 : 80;
@@ -982,28 +1052,49 @@
           const isSelected = stateData.selectedOption === i;
           const pillLabel = String(opt).slice(0, 8);
           drawSquaredPill(pillX, pillY, 64, 16, pillLabel, isSelected, 'light');
+          optionTapTargets.push({ x: pillX, y: pillY, width: 64, height: 16, handler: () => {
+            stateData.selectedOption = i;
+            render();
+          } });
         });
 
         // Approve / skip controls
         const ctrlY = pillY + 24;
         drawSquaredPill(18, ctrlY, 74, 16, '✓ approve', true, 'light');
         drawSquaredPill(100, ctrlY, 58, 16, '✗ skip', false, 'light');
+        controlTapTargets.push({ x: 18, y: ctrlY, width: 74, height: 16, handler: approveCurrentNowDecision });
+        controlTapTargets.push({ x: 100, y: ctrlY, width: 58, height: 16, handler: dismissCurrentNowDecision });
         if (pdCount > 1) {
           drawSquaredPill(166, ctrlY, 58, 16, '↓ next', false, 'light');
+          controlTapTargets.push({ x: 166, y: ctrlY, width: 58, height: 16, handler: advanceCurrentNowDecision });
         }
       } else {
         // Legacy 2-option layout
         const pillY = boxY + boxH - 22;
         drawSquaredPill(18, pillY, 74, 16, '✓ approve', true, 'light');
         drawSquaredPill(100, pillY, 58, 16, '✗ skip', false, 'light');
+        controlTapTargets.push({ x: 18, y: pillY, width: 74, height: 16, handler: approveCurrentNowDecision });
+        controlTapTargets.push({ x: 100, y: pillY, width: 58, height: 16, handler: dismissCurrentNowDecision });
         if (pdCount > 1) {
           drawSquaredPill(166, pillY, 58, 16, '↓ next', false, 'light');
+          controlTapTargets.push({ x: 166, y: pillY, width: 58, height: 16, handler: advanceCurrentNowDecision });
         }
       }
+
+      optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
+      controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else {
       // No pending — show next move
       drawSectionLabel(undefined, 14, 142, 'next move');
       wrapText(undefined, lower(data.next), 14, 156, 212, 14, 'rgba(8,8,8,0.96)', '14');
+
+      const nextMoveTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x: 10, y: 136, width: 220, height: 58, rx: 8, ry: 8, fill: 'transparent' }, nextMoveTap);
+      nextMoveTap.addEventListener('pointerup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openNowNextMove();
+      });
 
       // Impact chain stats — how many autonomous insights generated
       if (data.totalImpacts > 0) {
@@ -1349,16 +1440,8 @@
       }
 
       case STATES.NOW_BROWSE: {
-        const project = getProjectMemory();
-        const pending = project?.pending_decisions || [];
-        if (pending.length && stateData.decisionIndex < pending.length) {
-          native?.approvePendingDecision?.(stateData.decisionIndex);
-          pushLog('decision approved', 'decision');
-          stateData.decisionIndex = 0;
-          render();
-          return;
-        }
-        goHome();
+        if (approveCurrentNowDecision()) return;
+        openNowNextMove();
         break;
       }
 

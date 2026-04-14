@@ -1,8 +1,7 @@
 (() => {
   const contracts = window.StructaContracts;
   const validation = window.StructaValidation;
-  const router = window.StructaActionRouter;
-  const probe = window.StructaRuntimeProbe;
+  const router = window.StructaActionRouter;   // optional — loaded if present
 
   const runtimeEvents = [];
   const MAX_RUNTIME_EVENTS = 200;
@@ -135,14 +134,7 @@
   let probeListenerAttached = false;
 
   function startProbeIfNeeded() {
-    if (!probeMode || !probe?.start) return;
-    probe.start();
-    probe.getEvents?.().forEach(event => appendProbeEvent(event));
-    if (probeListenerAttached) return;
-    probeListenerAttached = true;
-    window.addEventListener('structa-probe-event', event => {
-      appendProbeEvent(event.detail || {});
-    });
+    // Probe module removed — no-op
   }
 
   function persist() {
@@ -620,7 +612,7 @@
   persist();
 
   window.StructaNative = Object.freeze({
-    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true, probeMode, hasProbe: !!probe }),
+    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true, probeMode }),
     getContext: () => router?.getContext?.() || null,
     routeAction: raw => router?.routeAction?.(raw) || { ok: false },
     setActiveVerb: (verb, target) => router?.setActiveVerb?.(verb, target),

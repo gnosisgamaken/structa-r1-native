@@ -115,6 +115,10 @@
     }
     const row = document.createElement('div');
     row.className = 'entry';
+    // Tag chain/decision entries for styling
+    if (strong === 'chain' || strong === 'decision') {
+      row.setAttribute('data-kind', strong);
+    }
     const time = document.createElement('span');
     time.className = 'muted';
     time.textContent = `[${stamp()}]`;
@@ -333,6 +337,7 @@
     native?.updateUIState?.({ selected_card_id: 'now', last_surface: 'project' });
     setLogDrawer(false);
     stateData.decisionIndex = 0;
+    stateData.selectedOption = 0;
   };
 
   // --- LOG_OPEN ---
@@ -434,6 +439,22 @@
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
     const decIdx = stateData.decisionIndex || 0;
+
+    // Impact chain state
+    const chain = window.StructaImpactChain || {};
+    const chainPhase = chain.phase || 'idle';
+    const chainActive = chain.active || false;
+    const chainImpacts = chain.impacts || [];
+    const chainBpm = chain.bpm || 4;
+    const chainBeatCount = chain.beatCount || 0;
+    const lastImpact = chain.lastImpact || null;
+    const totalImpacts = chain.totalImpacts || 0;
+    const totalDecisions = chain.totalDecisions || 0;
+    const cooldownRemaining = chain.cooldownRemaining || 0;
+
+    // Latest impact chain from storage
+    const storedImpacts = project?.impact_chain || [];
+
     return {
       title: project?.name || 'untitled project',
       changed: ui.last_event_summary || 'ready to resume',
@@ -446,7 +467,18 @@
       decisions: decisions.length,
       pendingDecisions: pendingDecisions,
       pendingDecisionText: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? pendingDecisions[0] : pendingDecisions[0].text) : null,
-      pendingDecisionIndex: decIdx
+      pendingDecisionIndex: decIdx,
+      pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
+      chainPhase,
+      chainActive,
+      chainImpacts,
+      chainBpm,
+      chainBeatCount,
+      lastImpact,
+      totalImpacts,
+      totalDecisions,
+      cooldownRemaining,
+      storedImpacts: storedImpacts.slice(0, 5)
     };
   }
 
@@ -836,29 +868,100 @@
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
 
+    // Full bleed background
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
 
-    // Project subtitle
+    // Project name — subtitle
     text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
-    // Latest change — one line summary
-    drawSectionLabel(undefined, 14, 78, 'last change');
-    wrapText(undefined, lower(data.changed), 14, 92, 212, 14, 'rgba(8,8,8,0.88)', '13');
+    // ── Impact Chain Status ──
+    const chainY = 78;
+    if (data.chainActive || data.chainPhase !== 'idle') {
+      // Chain phase indicator
+      const phaseLabel = {
+        observe: 'observing',
+        research: 'researching',
+        evaluate: 'evaluating',
+        decision: 'deciding',
+        cooldown: 'cooling down',
+        idle: ''
+      }[data.chainPhase] || data.chainPhase;
 
-    // Pending decision
+      // Phase dot — pulsing indicator
+      mk('circle', { cx: 18, cy: chainY + 4, r: 4, fill: 'rgba(8,8,8,0.88)', opacity: data.chainActive ? '1' : '0.4' });
+
+      // Phase text
+      text(28, chainY + 8, phaseLabel, {
+        fill: 'rgba(8,8,8,0.72)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      });
+
+      // Last impact output — the main content
+      if (data.lastImpact) {
+        const impactText = String(data.lastImpact.output).slice(0, 60);
+        wrapText(undefined, lower(impactText), 14, chainY + 22, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      }
+
+      // Chain progress bar
+      const progressY = chainY + 42;
+      const progressWidth = 212;
+      const progressChunks = data.chainImpacts.length;
+      const maxChunks = 3;
+      const chunkW = progressWidth / maxChunks;
+
+      mk('rect', { x: 14, y: progressY, width: progressWidth, height: 3, rx: 1.5, fill: 'rgba(8,8,8,0.12)' });
+      for (let i = 0; i < progressChunks && i < maxChunks; i++) {
+        mk('rect', { x: 14 + (i * chunkW), y: progressY, width: chunkW - 2, height: 3, rx: 1.5, fill: 'rgba(8,8,8,0.72)' });
+      }
+
+      // Progress label
+      text(14, progressY + 14, `impact ${progressChunks}/${maxChunks}`, {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+
+      // Cooldown timer
+      if (data.chainPhase === 'cooldown' && data.cooldownRemaining > 0) {
+        const secs = Math.ceil(data.cooldownRemaining / 1000);
+        text(180, progressY + 14, `${secs}s`, {
+          fill: 'rgba(8,8,8,0.50)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9'
+        });
+      }
+    } else {
+      // Chain idle — show status line
+      text(14, chainY + 8, 'chain idle', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      });
+
+      // Latest stored impacts if any
+      if (data.storedImpacts.length > 0) {
+        const latest = data.storedImpacts[0];
+        const impText = String(latest.output || latest.type).slice(0, 55);
+        wrapText(undefined, lower(impText), 14, chainY + 22, 212, 14, 'rgba(8,8,8,0.58)', '12');
+      }
+    }
+
+    // ── Pending Decision ──
     if (data.pendingDecisions.length > 0) {
       const pd = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
       const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
+      const pdOptions = typeof pd === 'string' ? [] : (pd.options || []);
       const pdCount = data.pendingDecisions.length;
 
-      const boxY = 118;
-      const boxH = 90;
+      const boxY = 142;
+      const boxH = pdOptions.length >= 2 ? 120 : 80;
 
       // Decision card background
-      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.08)' });
+      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 6, fill: 'rgba(8,8,8,0.10)' });
 
-      // Decision label with count
+      // Decision label
       const countLabel = pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : '';
       text(18, boxY + 14, 'needs your call' + countLabel, {
         fill: 'rgba(8,8,8,0.50)',
@@ -866,35 +969,57 @@
         'font-size': '10'
       });
 
-      // Decision text - truncated cleanly
+      // Decision text
       const maxChars = 52;
       const displayText = pdText.length > maxChars ? pdText.slice(0, maxChars - 1) + '…' : pdText;
       wrapText(undefined, lower(displayText), 18, boxY + 30, 195, 14, 'rgba(8,8,8,0.96)', '14');
 
-      // Action pills - clean options
-      const pillY = boxY + boxH - 22;
-      drawSquaredPill(18, pillY, 74, 16, '✓ approve', true, 'light');
-      drawSquaredPill(100, pillY, 58, 16, '✗ skip', false, 'light');
-      if (pdCount > 1) {
-        drawSquaredPill(166, pillY, 58, 16, '↓ next', false, 'light');
+      // Option pills — 3 options from impact chain
+      if (pdOptions.length >= 2) {
+        const pillY = boxY + 50;
+        pdOptions.slice(0, 3).forEach((opt, i) => {
+          const pillX = 18 + (i * 68);
+          const isSelected = stateData.selectedOption === i;
+          const pillLabel = String(opt).slice(0, 8);
+          drawSquaredPill(pillX, pillY, 64, 16, pillLabel, isSelected, 'light');
+        });
+
+        // Approve / skip controls
+        const ctrlY = pillY + 24;
+        drawSquaredPill(18, ctrlY, 74, 16, '✓ approve', true, 'light');
+        drawSquaredPill(100, ctrlY, 58, 16, '✗ skip', false, 'light');
+        if (pdCount > 1) {
+          drawSquaredPill(166, ctrlY, 58, 16, '↓ next', false, 'light');
+        }
+      } else {
+        // Legacy 2-option layout
+        const pillY = boxY + boxH - 22;
+        drawSquaredPill(18, pillY, 74, 16, '✓ approve', true, 'light');
+        drawSquaredPill(100, pillY, 58, 16, '✗ skip', false, 'light');
+        if (pdCount > 1) {
+          drawSquaredPill(166, pillY, 58, 16, '↓ next', false, 'light');
+        }
       }
-
-      // Stats footer
-      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
-      });
     } else {
-      // No pending - show next move
-      drawSectionLabel(undefined, 14, 118, 'next move');
-      wrapText(undefined, lower(data.next), 14, 132, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      // No pending — show next move
+      drawSectionLabel(undefined, 14, 142, 'next move');
+      wrapText(undefined, lower(data.next), 14, 156, 212, 14, 'rgba(8,8,8,0.96)', '14');
 
-      // Stats footer
-      text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
-      });
+      // Impact chain stats — how many autonomous insights generated
+      if (data.totalImpacts > 0) {
+        text(14, 174, `${data.totalImpacts} impacts · ${data.totalDecisions} chain decisions`, {
+          fill: 'rgba(8,8,8,0.36)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9'
+        });
+      }
     }
+
+    // Stats footer — always visible
+    text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
+      fill: 'rgba(8,8,8,0.36)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
+    });
   }
 
   // === KNOW insight surface render ===
@@ -1157,8 +1282,16 @@
       case STATES.NOW_BROWSE: {
         const project = getProjectMemory();
         const pending = project?.pending_decisions || [];
-        if (pending.length > 1) {
+        const current = pending[stateData.decisionIndex || 0];
+        const options = (typeof current !== 'string' && current?.options) || [];
+
+        // If decision has 3 options, scroll cycles options first
+        if (options.length >= 2 && stateData.selectedOption !== undefined) {
+          stateData.selectedOption = (stateData.selectedOption + (direction > 0 ? 1 : -1) + options.length) % options.length;
+          render();
+        } else if (pending.length > 1) {
           stateData.decisionIndex = (stateData.decisionIndex + (direction > 0 ? 1 : -1) + pending.length) % pending.length;
+          stateData.selectedOption = 0;
           render();
         } else {
           goHome();
@@ -1513,6 +1646,57 @@
     }
   }
   svg.addEventListener('pointerup', () => primeCameraOnFirstTouch(), { once: true });
+
+  // === Impact Chain event wiring ===
+
+  // Update chain badge in log drawer
+  function updateChainBadge() {
+    const chain = window.StructaImpactChain;
+    const badge = document.getElementById('log-chain-badge');
+    const phaseText = document.getElementById('chain-phase-text');
+    if (!badge || !phaseText) return;
+
+    if (!chain || chain.phase === 'idle') {
+      badge.className = 'idle';
+      return;
+    }
+
+    badge.className = '';
+    const labels = {
+      observe: 'obs',
+      research: 'res',
+      evaluate: 'eval',
+      decision: 'dec',
+      cooldown: 'cool'
+    };
+    phaseText.textContent = labels[chain.phase] || chain.phase;
+  }
+
+  // Re-render NOW panel on each impact
+  window.addEventListener('structa-impact', function() {
+    updateChainBadge();
+    if (currentState === STATES.NOW_BROWSE) render();
+  });
+
+  // Show spring notification when decision created
+  window.addEventListener('structa-decision-created', function(e) {
+    updateChainBadge();
+    notifyCard('now', 'urgent');
+    if (currentState === STATES.NOW_BROWSE) render();
+  });
+
+  // Start chain after first user interaction
+  let chainStarted = false;
+  function startChainOnInteraction() {
+    if (chainStarted) return;
+    chainStarted = true;
+    if (window.StructaImpactChain && !window.StructaImpactChain.active) {
+      window.StructaImpactChain.start(4); // 4bpm = every 15s
+    }
+  }
+  ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {
+    window.addEventListener(evt, startChainOnInteraction, { once: true });
+  });
 
   // === Public API ===
   window.StructaPanel = Object.freeze({

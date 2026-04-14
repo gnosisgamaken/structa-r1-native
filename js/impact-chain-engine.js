@@ -1,0 +1,455 @@
+/**
+ * impact-chain-engine.js — Structa Autonomous Impact Chain
+ *
+ * Every 15 seconds, Structa autonomously thinks about the project.
+ * Each "impact" is a self-contained LLM call that:
+ * 1. Reads current project context
+ * 2. Decides: research more, or create a decision for the user
+ * 3. Stores the result tagged for the next chain step
+ * 4. Updates the NOW card with the latest impact
+ *
+ * Phases: observe → research → research → decision
+ * After decision: 60s cooldown, then restart
+ * Auto-pauses after 5 min of no user interaction
+ * Resumes on any hardware event
+ */
+(function() {
+  'use strict';
+
+  var native = window.StructaNative;
+  var llm = window.StructaLLM;
+  var panel = window.StructaPanel;
+
+  // === Chain state ===
+  var chain = {
+    active: false,
+    bpm: 4,                    // beats per minute (4 = every 15s)
+    beatCount: 0,
+    impacts: [],
+    currentPhase: 'idle',       // idle | observe | research | evaluate | decision | cooldown
+    lastDecisionAt: 0,
+    lastUserActivity: Date.now(),
+    maxImpactsPerChain: 3,      // observe + research × N before decision
+    cooldownMs: 60000,          // 60s cooldown after decision
+    idleTimeoutMs: 300000,      // 5 min auto-pause
+    timerId: null,
+    chainId: 0,
+    totalImpacts: 0,
+    totalDecisions: 0
+  };
+
+  // === Impact ID ===
+  function makeImpactId(type) {
+    chain.chainId++;
+    var d = new Date();
+    var ts = d.getFullYear() + '' +
+      String(d.getMonth() + 1).padStart(2, '0') +
+      String(d.getDate()).padStart(2, '0') + '-' +
+      String(d.getHours()).padStart(2, '0') +
+      String(d.getMinutes()).padStart(2, '0');
+    return ts + '-' + type.slice(0, 3) + '-' + String(chain.chainId).padStart(3, '0');
+  }
+
+  // === Tag extraction ===
+  var STOP_WORDS = new Set([
+    'the','a','an','is','are','was','were','be','been','being',
+    'have','has','had','do','does','did','will','would','could',
+    'should','may','might','can','this','that','these','those',
+    'it','its','we','you','they','our','your','their','i','me',
+    'my','he','she','him','her','his','of','in','to','for','with',
+    'on','at','by','from','or','and','but','not','no','so','if',
+    'than','too','very','just','about','up','out','into','over',
+    'after','before','between','under','again','then','once',
+    'here','there','when','where','why','how','all','each',
+    'what','which','who','whom','more','most','other','some',
+    'such','only','same','also','still','even','need','needs'
+  ]);
+
+  function extractTags(text) {
+    if (!text) return [];
+    var words = String(text).toLowerCase().replace(/[^a-z0-9\s-]/g, '').split(/\s+/);
+    var counts = {};
+    words.forEach(function(w) {
+      if (w.length > 2 && !STOP_WORDS.has(w)) {
+        counts[w] = (counts[w] || 0) + 1;
+      }
+    });
+    return Object.keys(counts)
+      .sort(function(a, b) { return counts[b] - counts[a]; })
+      .slice(0, 3);
+  }
+
+  // === Context builder for impact prompts ===
+  function buildImpactContext() {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var memory = native && native.getMemory ? native.getMemory() : {};
+    var captures = memory.captures || [];
+    var insights = project.insights || [];
+    var openQuestions = project.open_questions || [];
+    var pending = project.pending_decisions || [];
+    var backlog = project.backlog || [];
+
+    var parts = [];
+    parts.push('Project: ' + (project.name || 'untitled'));
+    parts.push('Captures: ' + captures.length + ' | Insights: ' + insights.length + ' | Asks: ' + openQuestions.length);
+    if (backlog.length) {
+      parts.push('Backlog: ' + backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
+    }
+    if (openQuestions.length) {
+      parts.push('Open: ' + openQuestions.slice(0, 2).map(function(q) {
+        return String(q).slice(0, 40);
+      }).join('; '));
+    }
+    if (pending.length) {
+      var pd = typeof pending[0] === 'string' ? pending[0] : (pending[0].text || '');
+      parts.push('Pending decision: ' + pd.slice(0, 50));
+    }
+
+    // Last impact summary
+    var lastImpact = chain.impacts[chain.impacts.length - 1];
+    if (lastImpact) {
+      parts.push('Last impact: ' + String(lastImpact.output).slice(0, 60));
+    }
+
+    return parts.join('\n');
+  }
+
+  // === Prompt templates ===
+  function observePrompt(context) {
+    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+      'You are Structa, a project cognition system. You ONLY process what you are given.\n\n' +
+      '[CONTEXT]\n' + context + '\n\n' +
+      '[TASK]\n' +
+      'In exactly 5 words, state what is most missing from this project right now.';
+  }
+
+  function researchPrompt(context, observation) {
+    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+      'You are Structa. Based on the observation "' + observation + '", ' +
+      'formulate ONE specific question that would resolve this gap. ' +
+      'Return ONLY the question, nothing else. 10 words max.';
+  }
+
+  function evaluatePrompt(context, impacts) {
+    var impactSummaries = impacts.map(function(imp, i) {
+      return (i + 1) + '. ' + String(imp.output).slice(0, 80);
+    }).join('\n');
+
+    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+      'You are Structa. Based on these impacts:\n' +
+      impactSummaries + '\n\n' +
+      'Decide: should we continue researching, or create a decision?\n' +
+      'If research is still needed, respond with "RESEARCH: " followed by a 5-word research direction.\n' +
+      'If we have enough, respond with JSON only: {"decision": "...", "options": ["...", "...", "..."]}\n' +
+      'The decision must be 10 words max. Each option must be 6 words max.';
+  }
+
+  // === Store impact ===
+  function storeImpact(type, verb, input, output) {
+    var impact = {
+      impact_id: makeImpactId(type),
+      chain_index: chain.impacts.length + 1,
+      parent_id: chain.impacts.length ? chain.impacts[chain.impacts.length - 1].impact_id : null,
+      type: type,
+      verb: verb,
+      input: String(input).slice(0, 200),
+      output: String(output).slice(0, 200),
+      tags: extractTags(output),
+      created_at: new Date().toISOString()
+    };
+
+    chain.impacts.push(impact);
+    chain.totalImpacts++;
+
+    // Persist to project memory
+    if (native && native.touchProjectMemory) {
+      native.touchProjectMemory(function(project) {
+        project.impact_chain = Array.isArray(project.impact_chain) ? project.impact_chain : [];
+        project.impact_chain.unshift(impact);
+        // Keep last 24 impacts
+        project.impact_chain = project.impact_chain.slice(0, 24);
+      });
+    }
+
+    // Log entry
+    if (panel && panel.pushLog) {
+      panel.pushLog(type + ': ' + String(output).slice(0, 40), 'chain');
+    }
+
+    // Dispatch event for cascade to re-render
+    window.dispatchEvent(new CustomEvent('structa-impact', { detail: impact }));
+
+    return impact;
+  }
+
+  // === Store decision ===
+  function storeDecision(decisionText, options) {
+    if (!native || !native.touchProjectMemory) return;
+
+    native.touchProjectMemory(function(project) {
+      project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+      var exists = project.pending_decisions.some(function(d) {
+        return (d.text || d) === decisionText;
+      });
+      if (!exists) {
+        project.pending_decisions.unshift({
+          text: decisionText,
+          options: options || [],
+          source: 'impact-chain',
+          created_at: new Date().toISOString()
+        });
+        project.pending_decisions = project.pending_decisions.slice(0, 8);
+        chain.totalDecisions++;
+      }
+    });
+
+    chain.lastDecisionAt = Date.now();
+    chain.currentPhase = 'cooldown';
+
+    if (panel && panel.pushLog) {
+      panel.pushLog('decision created: ' + decisionText.slice(0, 40), 'chain');
+    }
+
+    // Notify cascade to show decision on NOW card
+    window.dispatchEvent(new CustomEvent('structa-decision-created', {
+      detail: { text: decisionText, options: options }
+    }));
+
+    // TTS announcement (brief)
+    if (typeof PluginMessageHandler !== 'undefined') {
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: 'new decision ready',
+          useLLM: false,
+          wantsR1Response: true
+        }));
+      } catch (e) {}
+    }
+  }
+
+  // === Parse JSON from LLM ===
+  function tryParseDecision(text) {
+    if (!text) return null;
+    // Try direct JSON parse
+    try {
+      var obj = JSON.parse(text);
+      if (obj.decision && Array.isArray(obj.options) && obj.options.length >= 2) {
+        return { decision: obj.decision, options: obj.options.slice(0, 3) };
+      }
+    } catch (e) {}
+
+    // Try extracting JSON from surrounding text
+    var jsonMatch = text.match(/\{[\s\S]*"decision"[\s\S]*"options"[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        var obj2 = JSON.parse(jsonMatch[0]);
+        if (obj2.decision && Array.isArray(obj2.options)) {
+          return { decision: obj2.decision, options: obj2.options.slice(0, 3) };
+        }
+      } catch (e2) {}
+    }
+    return null;
+  }
+
+  // === Beat logic ===
+  function beat() {
+    if (!chain.active) return;
+
+    // Check idle timeout
+    var idleMs = Date.now() - chain.lastUserActivity;
+    if (idleMs > chain.idleTimeoutMs) {
+      pause('idle timeout');
+      return;
+    }
+
+    // Check cooldown
+    if (chain.currentPhase === 'cooldown') {
+      var cooldownMs = Date.now() - chain.lastDecisionAt;
+      if (cooldownMs < chain.cooldownMs) {
+        return; // still cooling
+      }
+      // Cooldown over — restart chain
+      chain.currentPhase = 'observe';
+      chain.impacts = [];
+      chain.beatCount = 0;
+    }
+
+    var context = buildImpactContext();
+
+    if (!llm || !llm.sendToLLM) {
+      pause('no LLM bridge');
+      return;
+    }
+
+    chain.beatCount++;
+
+    switch (chain.currentPhase) {
+      case 'idle':
+      case 'observe':
+        chain.currentPhase = 'observe';
+        llm.sendToLLM(observePrompt(context), { speak: false, journal: false, timeout: 20000 })
+          .then(function(result) {
+            if (!chain.active) return;
+            if (result && result.ok && result.clean) {
+              var impact = storeImpact('observe', 'inspect', context, result.clean);
+              chain.currentPhase = 'research';
+              panel && panel.render && panel.render();
+            }
+          });
+        break;
+
+      case 'research':
+        var lastObserve = chain.impacts.filter(function(i) { return i.type === 'observe'; });
+        var observation = lastObserve.length ? lastObserve[0].output : 'project status';
+
+        // Decide: continue research or evaluate?
+        if (chain.impacts.length >= chain.maxImpactsPerChain) {
+          chain.currentPhase = 'evaluate';
+          // Fall through to evaluate
+        } else {
+          llm.sendToLLM(researchPrompt(context, observation), { speak: false, journal: false, timeout: 20000 })
+            .then(function(result) {
+              if (!chain.active) return;
+              if (result && result.ok && result.clean) {
+                // Check if LLM wants to continue researching
+                var isResearchContinue = /^RESEARCH:/i.test(result.clean);
+                if (isResearchContinue) {
+                  var direction = result.clean.replace(/^RESEARCH:\s*/i, '').trim();
+                  storeImpact('research', 'research', observation, direction);
+                } else {
+                  storeImpact('research', 'research', observation, result.clean);
+                }
+
+                // After enough research, move to evaluate
+                if (chain.impacts.length >= chain.maxImpactsPerChain) {
+                  chain.currentPhase = 'evaluate';
+                }
+                panel && panel.render && panel.render();
+              }
+            });
+          break;
+        }
+        // Intentional fall-through to evaluate when max impacts reached
+
+      case 'evaluate':
+        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { speak: false, journal: false, timeout: 25000 })
+          .then(function(result) {
+            if (!chain.active) return;
+            if (result && result.ok && result.clean) {
+              // Try to parse as decision JSON
+              var parsed = tryParseDecision(result.clean);
+
+              if (parsed && parsed.decision) {
+                storeImpact('decision', 'decide', chain.impacts.map(function(i) { return i.output; }).join('; '), parsed.decision);
+                storeDecision(parsed.decision, parsed.options);
+                panel && panel.render && panel.render();
+              } else {
+                // LLM wants more research
+                storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.clean);
+
+                // If we've been going too long, force a decision anyway
+                if (chain.impacts.length >= chain.maxImpactsPerChain + 2) {
+                  var fallback = result.clean.slice(0, 60);
+                  storeDecision(fallback, ['approve', 'skip', 'revise']);
+                }
+
+                chain.currentPhase = 'research';
+                panel && panel.render && panel.render();
+              }
+            }
+          });
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // === Start / Stop ===
+  function start(bpm) {
+    if (chain.active) return;
+    chain.active = true;
+    chain.bpm = bpm || 4;
+    chain.currentPhase = 'observe';
+    chain.impacts = [];
+    chain.beatCount = 0;
+
+    var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
+    chain.timerId = setInterval(beat, intervalMs);
+
+    if (panel && panel.pushLog) {
+      panel.pushLog('chain started · ' + chain.bpm + 'bpm', 'chain');
+    }
+
+    // Fire first beat immediately
+    beat();
+  }
+
+  function pause(reason) {
+    if (!chain.active) return;
+    chain.active = false;
+    chain.currentPhase = 'idle';
+    if (chain.timerId) {
+      clearInterval(chain.timerId);
+      chain.timerId = null;
+    }
+    if (panel && panel.pushLog) {
+      panel.pushLog('chain paused · ' + (reason || 'unknown'), 'chain');
+    }
+  }
+
+  function resume() {
+    chain.lastUserActivity = Date.now();
+    if (!chain.active && chain.currentPhase !== 'cooldown') {
+      start(chain.bpm);
+    } else if (!chain.active) {
+      // In cooldown — just mark active, beat will check cooldown timer
+      chain.active = true;
+      var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
+      chain.timerId = setInterval(beat, intervalMs);
+    }
+  }
+
+  function touchActivity() {
+    chain.lastUserActivity = Date.now();
+  }
+
+  // === Public API ===
+  window.StructaImpactChain = Object.freeze({
+    start: start,
+    pause: pause,
+    resume: resume,
+    touchActivity: touchActivity,
+    get active() { return chain.active; },
+    get phase() { return chain.currentPhase; },
+    get bpm() { return chain.bpm; },
+    set bpm(val) { chain.bpm = Math.max(1, Math.min(20, val || 4)); },
+    get impacts() { return chain.impacts.slice(); },
+    get beatCount() { return chain.beatCount; },
+    get totalImpacts() { return chain.totalImpacts; },
+    get totalDecisions() { return chain.totalDecisions; },
+    get lastImpact() { return chain.impacts[chain.impacts.length - 1] || null; },
+    get cooldownRemaining() {
+      if (chain.currentPhase !== 'cooldown') return 0;
+      return Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt));
+    }
+  });
+
+  // === Auto-start on user activity ===
+  // Wire to hardware events so chain resumes on device wake
+  ['sideClick', 'scrollUp', 'scrollDown', 'longPressStart'].forEach(function(evt) {
+    window.addEventListener(evt, function() {
+      touchActivity();
+      if (!chain.active) resume();
+    });
+  });
+
+  // Also resume on visibility change (device wake)
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) {
+      touchActivity();
+      if (!chain.active) resume();
+    }
+  });
+
+})();

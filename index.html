@@ -99,45 +99,47 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: 18px;
+      height: 22px;
       transform: translateY(0);
-      transition: transform 180ms ease, background 180ms ease, height 180ms ease;
-      background: rgba(6, 6, 6, 0.96);
-      border-top: 1px solid var(--line);
+      transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), background 200ms ease, height 200ms ease;
+      background: rgba(5, 5, 5, 0.98);
+      border-top: 1.5px solid rgba(255, 255, 255, 0.08);
       z-index: 8;
       display: flex;
       flex-direction: column;
-      backdrop-filter: blur(14px);
+      backdrop-filter: blur(16px);
       overflow: hidden;
+      font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
     #log-drawer.open {
       inset: 0;
       height: auto;
       transform: translateY(0);
-      background: rgba(6, 6, 6, 0.985);
+      background: rgba(5, 5, 5, 0.995);
       z-index: 28;
     }
 
     #log-handle {
-      min-height: 18px;
+      min-height: 22px;
       border: 0;
       background: transparent;
       color: var(--text);
-      padding: 2px 8px 2px;
+      padding: 3px 10px 3px;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       justify-content: space-between;
-      letter-spacing: 0.01em;
+      letter-spacing: 0.02em;
       font-size: 10px;
+      font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
     #log-grip {
-      width: 16px;
+      width: 20px;
       height: 2px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.20);
+      border-radius: 1px;
+      background: rgba(255,255,255,0.16);
       flex: 0 0 auto;
     }
 
@@ -148,11 +150,43 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      color: rgba(244, 239, 228, 0.82);
+      color: rgba(244, 239, 228, 0.72);
+      font-size: 10px;
+      letter-spacing: 0.01em;
     }
 
     #log-drawer.open #log-preview {
-      display: block;
+      display: none;
+    }
+
+    #log-chain-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 138, 101, 0.15);
+      color: rgba(255, 138, 101, 0.88);
+      font-size: 9px;
+      letter-spacing: 0.02em;
+      flex: 0 0 auto;
+    }
+
+    #log-chain-badge.idle {
+      display: none;
+    }
+
+    #log-chain-badge .chain-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255, 138, 101, 0.88);
+      animation: chain-pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes chain-pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
     }
 
     #log-actions {
@@ -167,49 +201,54 @@
     }
 
     .log-action {
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.05);
-      color: var(--text);
-      border-radius: 999px;
-      padding: 4px 8px;
-      min-height: 20px;
-      font-size: 10px;
-      letter-spacing: 0.01em;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: rgba(244, 239, 228, 0.72);
+      border-radius: 4px;
+      padding: 3px 8px;
+      min-height: 18px;
+      font-size: 9px;
+      letter-spacing: 0.02em;
+      font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
     #log {
       display: none;
       flex: 1 1 auto;
       overflow: hidden;
-      padding: 4px 8px 6px;
+      padding: 6px 10px 8px;
       font-size: 9px;
-      line-height: 1.2;
+      line-height: 1.35;
+      font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
     #log-drawer.open #log {
       display: block;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      padding-top: 8px;
+      padding-top: 10px;
     }
 
     .entry {
       display: flex;
       gap: 6px;
       align-items: flex-start;
-      margin-bottom: 3px;
+      margin-bottom: 4px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      color: rgba(244, 239, 228, 0.84);
+      color: rgba(244, 239, 228, 0.72);
+      font-size: 9px;
     }
 
     #log-drawer.open .entry {
       white-space: normal;
     }
 
-    .muted { color: var(--muted); }
-    .accent { color: rgba(255, 255, 255, 0.96); }
+    .muted { color: rgba(244, 239, 228, 0.36); font-size: 9px; }
+    .accent { color: rgba(244, 239, 228, 0.96); font-weight: 600; font-size: 9px; }
+    .entry[data-kind="chain"] { color: rgba(255, 138, 101, 0.78); }
+    .entry[data-kind="decision"] { color: rgba(255, 138, 101, 0.92); }
 
     .overlay {
       position: absolute;
@@ -459,9 +498,7 @@
       <button id="log-handle" aria-label="toggle log">
         <span id="log-grip"></span>
         <span id="log-preview">no logs yet</span>
-        <span id="log-actions">
-          <button class="log-action" id="log-export" type="button" hidden>save 33</button>
-        </span>
+        <span id="log-chain-badge" class="idle"><span class="chain-dot"></span><span id="chain-phase-text">idle</span></span>
       </button>
       <div id="log"></div>
     </section>
@@ -498,6 +535,7 @@
   <script src="js/voice-capture.js"></script>
   <script src="js/camera-capture.js"></script>
   <script src="js/r1-llm.js"></script>
+  <script src="js/impact-chain-engine.js"></script>
   <script src="structa-cascade.js"></script>
 </body>
 </html>

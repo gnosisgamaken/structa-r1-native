@@ -1,0 +1,1 @@
+{"name": "structa", "scripts": {"start": "npx serve -s -p 3000 ."}, "dependencies": {"serve": "^14.2.1"}}

@@ -25,6 +25,24 @@
     if (status) status.textContent = String(text || '').toLowerCase();
   }
 
+  async function readyOverlay(targetMode) {
+    const ready = await attachPreview();
+    if (!ready) {
+      killStream();
+      setStatus('preview unavailable');
+      return false;
+    }
+    if (targetMode && targetMode !== facingMode) {
+      facingMode = targetMode;
+      native?.setCameraFacing?.(facingMode);
+    }
+    streamReady = true;
+    setStatus('tap to shoot');
+    showOverlay();
+    showOverlayReady();
+    return true;
+  }
+
   /**
    * showOverlay — now shows a loading state until stream is ready.
    * The overlay background stays transparent (showing the app bg) until
@@ -84,65 +102,49 @@
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
-    // 1. Stream already live — show overlay and attach immediately
     if (streamReady && stream) {
-      showOverlay();
-      showOverlayReady();
-      if (target !== facingMode) {
-        flip();
-      }
+      setStatus('opening');
+      void readyOverlay(target).then(() => {
+        if (target !== facingMode) flip();
+      });
       return;
     }
 
-    // 2. Check if cascade already primed a stream for us
     const primed = window.__STRUCTA_PRIMED_STREAM__;
     if (primed && primed.active) {
       stream = primed;
       facingMode = target;
-      streamReady = true;
       if (preview) preview.srcObject = stream;
       native?.setCameraFacing?.(facingMode);
-      setStatus('ready');
-      showOverlay();
-      showOverlayReady();
+      setStatus('opening');
+      void readyOverlay(target);
       return;
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setStatus('no getUserMedia');
+      setStatus('camera unavailable');
       return;
     }
 
-    if (streamAcquiring) return; // already acquiring
+    if (streamAcquiring) return;
     streamAcquiring = true;
     facingMode = target;
-    setStatus('acquiring');
+    setStatus('opening');
 
-    // 3. Cold start — DON'T show overlay until stream flows.
-    //    This prevents the black screen flash.
-    //    The overlay will appear via showOverlayReady() once getUserMedia resolves.
     navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { max: 640 }, height: { max: 480 } } })
       .then(async (mediaStream) => {
         streamAcquiring = false;
         stream = mediaStream;
         window.__STRUCTA_PRIMED_STREAM__ = stream;
-        const ready = await attachPreview();
-        if (!ready) {
-          killStream();
-          setStatus('preview not ready');
-          return;
-        }
-        streamReady = true;
+        if (preview) preview.srcObject = stream;
         native?.setCameraFacing?.(facingMode);
-        setStatus('ready');
-        // NOW show overlay — stream is flowing
-        showOverlay();
-        showOverlayReady();
+        const ok = await readyOverlay(target);
+        if (!ok) return;
       })
       .catch(err => {
         streamAcquiring = false;
         killStream();
-        setStatus(`gm: ${err?.name || err?.message || 'denied'}`);
+        setStatus(`camera blocked`);
       });
   }
 

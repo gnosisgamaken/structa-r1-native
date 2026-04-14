@@ -28,6 +28,7 @@
   // === Constants ===
   const STATES = Object.freeze({
     HOME: 'home',
+    SHOW_BROWSE: 'show_browse',
     SHOW_PRIMED: 'show_primed',
     CAMERA_OPEN: 'camera_open',
     CAMERA_CAPTURE: 'camera_capture',
@@ -42,7 +43,7 @@
   });
 
   const cards = [
-    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'capture image', color: 'var(--show)', surface: 'camera' },
+    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
     { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture commands', roleShort: 'speak update', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'generate insights', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'catch up fast', color: 'var(--now)', surface: 'project' }
@@ -53,6 +54,7 @@
   let stateData = {}; // per-state context
   let selectedIndex = 0;
   let logOpen = false;
+  let cameraReturnState = STATES.HOME;
 
   // Derived from stateData (shorthand accessors)
   function isHome() { return currentState === STATES.HOME; }
@@ -81,6 +83,18 @@
 
   function getUIState() {
     return native?.getUIState?.() || getMemory().uiState || {};
+  }
+
+  function getCaptureList() {
+    return (getMemory().captures || []).filter(Boolean);
+  }
+
+  function getCaptureImageHref(capture) {
+    return capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || '';
+  }
+
+  function getCaptureSummary(capture) {
+    return lower(capture?.ai_analysis || capture?.ai_response || capture?.summary || capture?.prompt_text || 'untitled capture');
   }
 
   function latestLogText() {
@@ -207,10 +221,22 @@
     // nothing specific
   };
 
-  // --- SHOW_PRIMED (invisible, pre-warming getUserMedia) ---
+  // --- SHOW_BROWSE ---
+  stateEnterHandlers[STATES.SHOW_BROWSE] = function(data) {
+    document.title = 'show';
+    native?.setActiveNode?.('show');
+    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'show' });
+    setLogDrawer(false);
+    const captures = getCaptureList();
+    const maxIndex = Math.max(0, captures.length - 1);
+    stateData.showCaptureIndex = Math.min(stateData.showCaptureIndex || 0, maxIndex);
+    if (!stateData.showStatus) {
+      stateData.showStatus = captures.length ? 'ready for another frame' : 'tap to start';
+    }
+  };
+
+  // --- SHOW_PRIMED (legacy invisible warm state) ---
   stateEnterHandlers[STATES.SHOW_PRIMED] = function(data) {
-    // Still on HOME visually. Start camera priming.
-    window.StructaCamera?.openFromGesture?.('environment');
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
     window.StructaVoice?.close?.();
@@ -246,10 +272,14 @@
     window.StructaCamera?.capture?.();
     pushLog('image captured', 'camera');
 
-    // Auto-transition to HOME after brief delay
+    // Auto-transition back after brief delay if the overlay did not already close us.
     setTimeout(() => {
       if (currentState === STATES.CAMERA_CAPTURE) {
-        transition(STATES.HOME);
+        const returnState = cameraReturnState;
+        cameraReturnState = STATES.HOME;
+        transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, {
+          showStatus: 'latest visual memory'
+        });
       }
     }, 300);
   };
@@ -360,8 +390,7 @@
   // === Open a card's primary surface ===
   function openCard(card) {
     if (card.surface === 'camera') {
-      // Direct to camera — no hint mode
-      transition(STATES.SHOW_PRIMED);
+      transition(STATES.SHOW_BROWSE, { showStatus: 'tap to start' });
       return;
     }
     if (card.surface === 'voice') {
@@ -376,6 +405,24 @@
       transition(STATES.NOW_BROWSE);
       return;
     }
+  }
+
+  function openCameraFromShow(source = 'touch') {
+    cameraReturnState = STATES.SHOW_BROWSE;
+    stateData.showStatus = source === 'touch'
+      ? 'opening lens'
+      : 'opening lens';
+    render();
+
+    if (source !== 'touch' && !window.StructaCamera?.primed && !window.__STRUCTA_PRIMED_STREAM__?.active) {
+      stateData.showStatus = 'tap camera to enable lens';
+      pushLog('tap camera to enable lens', 'show');
+      render();
+      return false;
+    }
+
+    window.StructaCamera?.openFromGesture?.('environment');
+    return true;
   }
 
   function openTellSurface(extra = {}) {
@@ -439,10 +486,12 @@
   function activeSurface() {
     switch (currentState) {
       case STATES.HOME:
-      case STATES.SHOW_PRIMED:
       case STATES.TELL_PRIMED:
       case STATES.LOG_OPEN:
         return 'home';
+      case STATES.SHOW_BROWSE:
+        return 'show';
+      case STATES.SHOW_PRIMED:
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
         return 'camera';
@@ -878,14 +927,14 @@
   }
 
   function drawSquaredPill(x, y, width, height, label, active, tone = 'dark') {
-    const activeFill = tone === 'dark' ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.18)';
-    const idleFill = tone === 'dark' ? 'rgba(8,8,8,0.10)' : 'rgba(255,255,255,0.12)';
+    const activeFill = tone === 'dark' ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.18)';
+    const idleFill = tone === 'dark' ? 'rgba(8,8,8,0.12)' : 'rgba(255,255,255,0.12)';
     const activeText = tone === 'dark' ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.98)';
-    const idleText = tone === 'dark' ? 'rgba(8,8,8,0.76)' : 'rgba(8,8,8,0.62)';
+    const idleText = tone === 'dark' ? 'rgba(8,8,8,0.82)' : 'rgba(8,8,8,0.62)';
     mk('rect', {
-      x, y, width, height, rx: 6, ry: 6, // bumped from rx=4 → rx=6 per V2 UX
+      x, y, width, height, rx: 4, ry: 4,
       fill: active ? activeFill : idleFill,
-      stroke: active ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
+      stroke: active ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)',
       'stroke-width': 1
     });
     text(x + width / 2, y + height / 2 + 4, lower(label), {
@@ -916,6 +965,112 @@
       }
     });
     if (line) text(x, y + row * lineHeight, line, { fill, 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': fontSize }, parent);
+  }
+
+  function buildShowSummary() {
+    const captures = getCaptureList();
+    const project = getProjectMemory();
+    const ui = getUIState();
+    const safeIndex = Math.max(0, Math.min(stateData.showCaptureIndex || 0, Math.max(captures.length - 1, 0)));
+    stateData.showCaptureIndex = safeIndex;
+    const current = captures[safeIndex] || null;
+    return {
+      title: project?.name || 'untitled project',
+      captures,
+      current,
+      currentIndex: safeIndex,
+      insights: (project?.insights || []).length,
+      status: stateData.showStatus || (captures.length ? 'ready for another frame' : 'tap to start'),
+      summary: current ? getCaptureSummary(current) : 'no captures yet',
+      imageHref: current ? getCaptureImageHref(current) : '',
+      createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null
+    };
+  }
+
+  function drawShowSurface() {
+    if (currentState !== STATES.SHOW_BROWSE) return;
+    const showCard = cards.find(c => c.id === 'show');
+    const model = buildShowSummary();
+
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
+    drawSurfaceHeader(showCard);
+    text(14, 60, lower(model.title), {
+      fill: 'rgba(8,8,8,0.50)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    });
+
+    const cameraButton = mk('g', { style: 'cursor: pointer;' });
+    mk('rect', { x: 14, y: 72, width: 212, height: 24, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.88)' }, cameraButton);
+    text(24, 88, 'open camera', {
+      fill: 'rgba(244,239,228,0.96)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    }, cameraButton);
+    text(216, 88, model.captures.length ? `${model.captures.length} caps` : 'start', {
+      fill: 'rgba(244,239,228,0.58)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    }, cameraButton);
+    cameraButton.addEventListener('pointerup', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openCameraFromShow('touch');
+    });
+
+    mk('rect', { x: 14, y: 104, width: 212, height: 126, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.12)' });
+    if (model.imageHref) {
+      image(model.imageHref, {
+        x: 14, y: 104, width: 212, height: 126, preserveAspectRatio: 'xMidYMid slice', opacity: 1
+      });
+      mk('rect', { x: 14, y: 194, width: 212, height: 36, fill: 'rgba(5,5,5,0.62)' });
+      text(22, 208, 'latest frame', {
+        fill: 'rgba(244,239,228,0.58)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      wrapText(undefined, model.summary.slice(0, 64), 22, 222, 192, 12, 'rgba(244,239,228,0.92)', '11');
+    } else {
+      text(14, 132, 'no captures yet', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '18'
+      });
+      wrapText(undefined, 'tap open camera to capture the first visual reference for this project', 14, 152, 196, 14, 'rgba(8,8,8,0.62)', '12');
+    }
+
+    const thumbY = 238;
+    const recent = model.captures.slice(0, 3);
+    recent.forEach((capture, i) => {
+      const x = 14 + (i * 72);
+      const href = getCaptureImageHref(capture);
+      const active = i === model.currentIndex;
+      mk('rect', {
+        x, y: thumbY, width: 64, height: 34, rx: 6, ry: 6,
+        fill: active ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)',
+        stroke: active ? 'rgba(244,239,228,0.28)' : 'rgba(8,8,8,0.08)',
+        'stroke-width': 1
+      });
+      if (href) {
+        image(href, { x: x + 2, y: thumbY + 2, width: 60, height: 30, rx: 4, ry: 4, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.7 });
+      }
+      const thumbTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x, y: thumbY, width: 64, height: 34, rx: 6, ry: 6, fill: 'transparent' }, thumbTap);
+      thumbTap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        stateData.showCaptureIndex = i;
+        stateData.showStatus = 'latest visual memory';
+        render();
+      });
+    });
+
+    text(14, 284, `${model.captures.length} caps · ${model.insights} insights · ${lower(model.status)}`, {
+      fill: 'rgba(8,8,8,0.42)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
   }
 
   // === NOW panel render ===
@@ -1187,9 +1342,9 @@
       const chipWidth = Math.max(40, c.label.length * 7 + 16);
       const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
       mk('rect', {
-        x: chipX, y: chipY, width: chipWidth, height: 18, rx: 9, ry: 9,
-        fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
-        stroke: 'none', 'stroke-width': 0
+        x: chipX, y: chipY, width: chipWidth, height: 18, rx: 4, ry: 4,
+        fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.12)',
+        stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
       }, chipGroup);
       const chipText = mk('text', {
         x: chipX + chipWidth / 2, y: chipY + 13,
@@ -1329,10 +1484,11 @@
         .forEach(({ card, index }) => drawCard(card, index));
     }
 
+    drawShowSurface();
     drawNowPanel();
     drawInsightSurface();
 
-    const isContentSurface = surface === 'project' || surface === 'insight';
+    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show';
     logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
@@ -1340,6 +1496,16 @@
 
   function handleScrollDirection(direction) {
     switch (currentState) {
+      case STATES.SHOW_BROWSE: {
+        const captures = getCaptureList();
+        if (!captures.length) break;
+        const max = captures.length;
+        stateData.showCaptureIndex = ((stateData.showCaptureIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
+        stateData.showStatus = 'scroll to review captures';
+        render();
+        break;
+      }
+
       case STATES.CAMERA_OPEN:
         window.StructaCamera?.flip?.();
         break;
@@ -1413,6 +1579,10 @@
 
   function handleSideClick() {
     switch (currentState) {
+      case STATES.SHOW_BROWSE:
+        openCameraFromShow('hardware');
+        break;
+
       case STATES.CAMERA_OPEN:
         // Side = capture
         transition(STATES.CAMERA_CAPTURE);
@@ -1463,9 +1633,7 @@
       case STATES.HOME: {
         const card = currentCard();
         if (card.id === 'show') {
-          // PTT on SHOW = direct camera open
-          transition(STATES.SHOW_PRIMED);
-          stateData.pttCapture = true; // will capture on release
+          transition(STATES.SHOW_BROWSE, { showStatus: 'tap to start' });
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           transition(STATES.VOICE_OPEN, { fromPTT: true });
@@ -1498,22 +1666,6 @@
     document.body.classList.remove('input-locked');
 
     switch (currentState) {
-      case STATES.SHOW_PRIMED:
-        // PTT released while priming
-        stateData.pttCapture = false;
-        if (window.StructaCamera?.primed) {
-          // Camera stream ready — capture immediately
-          transition(STATES.CAMERA_OPEN);
-          setTimeout(() => {
-            if (currentState === STATES.CAMERA_OPEN) {
-              transition(STATES.CAMERA_CAPTURE);
-            }
-          }, 100);
-        }
-        // If stream not ready yet, camera overlay will auto-open when ready
-        // and user can tap to capture. No black flash.
-        break;
-
       case STATES.CAMERA_OPEN:
         // PTT released on camera open = capture (handled by state entry)
         break;
@@ -1536,6 +1688,11 @@
 
   function handleNativeBack(event) {
     switch (currentState) {
+      case STATES.SHOW_BROWSE:
+        if (event) event.preventDefault?.();
+        goHome();
+        return;
+
       case STATES.NOW_BROWSE: {
         const project = getProjectMemory();
         const pending = project?.pending_decisions || [];
@@ -1610,14 +1767,18 @@
 
   // Camera events — transition state machine
   window.addEventListener('structa-camera-open', () => {
-    if (currentState === STATES.SHOW_PRIMED) {
+    if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
       transition(STATES.CAMERA_OPEN);
     }
   });
 
   window.addEventListener('structa-camera-close', () => {
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
-      transition(STATES.HOME);
+      const returnState = cameraReturnState;
+      cameraReturnState = STATES.HOME;
+      transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, {
+        showStatus: 'latest visual memory'
+      });
     }
     refreshLogFromMemory();
   });

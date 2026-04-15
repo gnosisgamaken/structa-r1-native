@@ -251,6 +251,27 @@
     return null;
   }
 
+  // === Discovery mode ===
+  // When project has <5 nodes, ask concrete questions to shape the project
+  function isDiscoveryMode() {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var nodeCount = (project.nodes || []).length;
+    // Also check legacy arrays for compat
+    var legacyCount = (project.insights || []).length + (project.captures || []).length +
+      (project.decisions || []).length + (project.backlog || []).length;
+    return Math.max(nodeCount, legacyCount) < 5;
+  }
+
+  function discoveryPrompt(context) {
+    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
+      'You are Structa, helping shape a new project.\n\n' +
+      '[CONTEXT]\n' + context + '\n\n' +
+      '[TASK]\n' +
+      'Ask ONE concrete, specific question that would help define this project. ' +
+      'Make it actionable — something the user can answer in one sentence. ' +
+      'Return ONLY the question, 12 words max.';
+  }
+
   // === Beat logic ===
   function beat() {
     if (!chain.active) return;
@@ -261,6 +282,16 @@
       pause('idle timeout');
       return;
     }
+
+    // Play audio heartbeat
+    if (window.StructaAudio && window.StructaAudio.initialized && !window.StructaAudio.muted) {
+      window.StructaAudio.heartbeat(chain.currentPhase);
+    }
+
+    // Dispatch visual heartbeat event for cascade
+    window.dispatchEvent(new CustomEvent('structa-heartbeat', {
+      detail: { phase: chain.currentPhase, beat: chain.beatCount }
+    }));
 
     // Check cooldown
     if (chain.currentPhase === 'cooldown') {
@@ -282,6 +313,47 @@
     }
 
     chain.beatCount++;
+
+    // === Discovery mode: ask shaping questions when project is new ===
+    if (isDiscoveryMode() && chain.currentPhase === 'observe') {
+      llm.sendToLLM(discoveryPrompt(context), { speak: true, journal: false, timeout: 20000 })
+        .then(function(result) {
+          if (!chain.active) return;
+          if (result && result.ok && result.clean) {
+            var questionText = result.clean.replace(/^["']|["']$/g, '');
+            storeImpact('observe', 'inspect', context, 'discovery: ' + questionText);
+
+            // Store as open question
+            if (native && native.addNode) {
+              native.addNode({
+                type: 'question', status: 'open',
+                title: 'structa asks', body: questionText,
+                source: 'impact-chain'
+              });
+            } else if (native && native.touchProjectMemory) {
+              native.touchProjectMemory(function(project) {
+                project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
+                if (!project.open_questions.includes(questionText)) {
+                  project.open_questions.unshift(questionText);
+                  project.open_questions = project.open_questions.slice(0, 12);
+                }
+              });
+            }
+
+            chain.currentPhase = 'cooldown';
+            chain.lastDecisionAt = Date.now();
+            chain.cooldownMs = 45000; // shorter cooldown in discovery
+
+            // Notify
+            window.dispatchEvent(new CustomEvent('structa-discovery-question', {
+              detail: { question: questionText }
+            }));
+
+            if (panel && panel.render) panel.render();
+          }
+        });
+      return; // Skip normal flow
+    }
 
     switch (chain.currentPhase) {
       case 'idle':

@@ -1,10 +1,12 @@
 /**
  * camera-capture.js — Camera for R1 with user-gesture acquisition.
  *
- * Changes (2026-04-13):
- * - capture() now uses StructaLLM.processImage() for analysis (no longer fire-and-forget)
- * - Image analysis result is stored as project insight
- * - Removed raw PluginMessageHandler call — all LLM queries go through r1-llm.js
+ * Changes (2026-04-16):
+ * - SHOW+TELL: PTT during camera opens a voice strip at bottom
+ * - Voice annotation is captured alongside the image
+ * - Image + voice go to LLM together via processImage({ voiceAnnotation })
+ * - Audio engine: play capture sound on frame grab
+ * - capture() now uses StructaLLM.processImage() for analysis
  */
 (() => {
   const native = window.StructaNative;
@@ -20,6 +22,12 @@
   let streamReady = false;
   let overlayVisible = false;
   let streamAcquiring = false;
+
+  // === SHOW+TELL voice strip state ===
+  let voiceStripActive = false;
+  let voiceStripTranscript = '';
+  let voiceStripRecognition = null;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -37,24 +45,18 @@
       native?.setCameraFacing?.(facingMode);
     }
     streamReady = true;
-    setStatus('tap or side click to capture');
+    setStatus('tap to capture · hold to narrate');
     showOverlay();
     showOverlayReady();
     return true;
   }
 
-  /**
-   * showOverlay — now shows a loading state until stream is ready.
-   * The overlay background stays transparent (showing the app bg) until
-   * the camera feed is actually flowing, preventing the black flash on cold start.
-   */
   function showOverlay() {
     if (overlayVisible) return;
     overlayVisible = true;
     document.getElementById('app')?.classList.add('overlay-active');
     overlay?.classList.add('open');
     overlay?.setAttribute('aria-hidden', 'false');
-    // Don't dispatch camera-open until stream is actually flowing
   }
 
   function showOverlayReady() {
@@ -64,6 +66,7 @@
   function hideOverlay() {
     if (!overlayVisible) return;
     overlayVisible = false;
+    stopVoiceStrip();
     overlay?.classList.remove('open');
     overlay?.setAttribute('aria-hidden', 'true');
     document.getElementById('app')?.classList.remove('overlay-active');
@@ -73,6 +76,7 @@
   function killStream() {
     streamReady = false;
     streamAcquiring = false;
+    stopVoiceStrip();
     if (stream) {
       try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
       stream = null;
@@ -94,11 +98,6 @@
     return preview.videoWidth > 0 || preview.readyState >= 2;
   }
 
-  /**
-   * openFromGesture — MUST be called synchronously from a pointerup handler.
-   * Now defers overlay to when stream actually flows (for cold start).
-   * For warm start (stream already ready), shows overlay immediately.
-   */
   function openFromGesture(mode) {
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
@@ -144,7 +143,7 @@
       .catch(err => {
         streamAcquiring = false;
         killStream();
-        setStatus(`camera blocked`);
+        setStatus('camera blocked');
       });
   }
 
@@ -169,6 +168,95 @@
     }
   }
 
+  // === SHOW+TELL voice strip ===
+
+  function startVoiceStrip() {
+    if (voiceStripActive) return;
+    voiceStripActive = true;
+    voiceStripTranscript = '';
+
+    // Mute heartbeat audio during capture
+    if (window.StructaAudio) window.StructaAudio.mute();
+
+    // Show voice strip UI
+    var strip = document.getElementById('camera-voice-strip');
+    if (strip) {
+      strip.classList.add('active');
+      strip.querySelector('.strip-text').textContent = 'listening...';
+    }
+    setStatus('narrating · release to capture');
+
+    // Start R1 native STT if available
+    if (typeof CreationVoiceHandler !== 'undefined') {
+      try {
+        window.__STRUCTA_PTT_TARGET__ = 'camera';
+        CreationVoiceHandler.postMessage('start');
+        return;
+      } catch (e) {}
+    }
+
+    // Browser fallback: SpeechRecognition
+    if (SR && !voiceStripRecognition) {
+      voiceStripRecognition = new SR();
+      voiceStripRecognition.lang = 'en-US';
+      voiceStripRecognition.interimResults = true;
+      voiceStripRecognition.continuous = true;
+      voiceStripRecognition.onresult = function(event) {
+        var text = '';
+        for (var i = 0; i < event.results.length; i++) {
+          text += (event.results[i][0] && event.results[i][0].transcript) || '';
+        }
+        voiceStripTranscript = text.trim();
+        var stripEl = document.getElementById('camera-voice-strip');
+        if (stripEl) {
+          var textEl = stripEl.querySelector('.strip-text');
+          if (textEl) textEl.textContent = voiceStripTranscript.slice(-40) || 'listening...';
+        }
+      };
+      voiceStripRecognition.onerror = function() {};
+      voiceStripRecognition.onend = function() {};
+    }
+    if (voiceStripRecognition) {
+      try { voiceStripRecognition.start(); } catch (e) {}
+    }
+  }
+
+  function stopVoiceStrip() {
+    if (!voiceStripActive) return;
+    voiceStripActive = false;
+    window.__STRUCTA_PTT_TARGET__ = null;
+
+    // Unmute audio
+    if (window.StructaAudio) window.StructaAudio.unmute();
+
+    // Stop recognition
+    if (voiceStripRecognition) {
+      try { voiceStripRecognition.stop(); } catch (e) {}
+    }
+    // Stop R1 STT
+    if (typeof CreationVoiceHandler !== 'undefined') {
+      try { CreationVoiceHandler.postMessage('stop'); } catch (e) {}
+    }
+
+    // Hide voice strip UI
+    var strip = document.getElementById('camera-voice-strip');
+    if (strip) {
+      strip.classList.remove('active');
+    }
+  }
+
+  // Listen for R1 STT results during voice strip
+  window.addEventListener('structa-stt-ended', function(event) {
+    if (voiceStripActive && event && event.detail && event.detail.transcript) {
+      voiceStripTranscript = event.detail.transcript;
+      var strip = document.getElementById('camera-voice-strip');
+      if (strip) {
+        var textEl = strip.querySelector('.strip-text');
+        if (textEl) textEl.textContent = voiceStripTranscript.slice(-40);
+      }
+    }
+  });
+
   async function capture() {
     if (!preview || !stream) return null;
     const w = preview.videoWidth || 720;
@@ -180,9 +268,19 @@
     const dataUrl = canvas.toDataURL('image/png');
     const rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
 
+    // Grab voice annotation before stopping strip
+    var annotation = voiceStripTranscript || '';
+    stopVoiceStrip();
+
+    // Play capture sound
+    if (window.StructaAudio) {
+      window.StructaAudio.init();
+      window.StructaAudio.play('capture');
+    }
+
     const imageAsset = {
       kind: 'capture',
-      name: `camera-${Date.now()}.png`,
+      name: 'camera-' + Date.now() + '.png',
       mime_type: 'image/png',
       data: dataUrl,
       meta: { facingMode, width: w, height: h, captured_at: new Date().toISOString() }
@@ -190,14 +288,14 @@
 
     const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
-      input_type: 'image',
+      input_type: annotation ? 'image+voice' : 'image',
       image_asset: imageAsset,
-      prompt_text: facingMode === 'user' ? 'selfie capture' : 'camera capture',
+      prompt_text: annotation || (facingMode === 'user' ? 'selfie capture' : 'camera capture'),
       summary: 'analyzing...',
       approval_state: 'draft',
-      tags: [facingMode, 'capture'],
+      tags: annotation ? [facingMode, 'capture', 'show-tell'] : [facingMode, 'capture'],
       links: [],
-      meta: { facingMode, width: w, height: h }
+      meta: { facingMode, width: w, height: h, voiceAnnotation: annotation }
     });
 
     lastBundle = bundle;
@@ -207,34 +305,47 @@
       target: 'capture',
       input_type: 'capture-bundle',
       source_type: 'camera',
-      intent: `capture ${facingMode} image`,
+      intent: annotation ? 'show+tell capture' : 'capture ' + facingMode + ' image',
       goal: 'store visual context bundle',
       approval_mode: 'human_required',
       fallback: 'store-only',
       payload: bundle
     });
 
-    native?.appendLogEntry?.({ kind: 'camera', message: 'image saved' });
+    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'image saved' });
 
-    // Send image to R1 LLM via StructaLLM (no longer fire-and-forget)
+    // Also store as node if available
+    if (native?.addNode) {
+      native.addNode({
+        type: 'capture',
+        title: annotation ? 'show+tell: ' + annotation.slice(0, 40) : 'visual capture',
+        body: annotation || 'analyzing...',
+        source: 'camera',
+        capture_image: bundle?.entry_id || null,
+        voice_annotation: annotation || null,
+        tags: annotation ? ['show-tell', facingMode] : [facingMode]
+      });
+    }
+
     hideOverlay();
 
+    // Send to LLM with voice annotation context
     if (window.StructaLLM) {
-      var desc = `User captured a ${facingMode} photo (${w}x${h})`;
-      window.StructaLLM.processImage(rawBase64, desc, { facingMode: facingMode })
+      var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
+      window.StructaLLM.processImage(rawBase64, desc, {
+        facingMode: facingMode,
+        voiceAnnotation: annotation
+      })
         .then(function(result) {
           if (result && result.ok && result.clean) {
-            // Store as insight
-            window.StructaLLM.storeAsInsight(result, 'capture');
-            native?.appendLogEntry?.({ kind: 'llm', message: 'visual insight ready' });
-            // Update the bundle's summary with the analysis
+            window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
+            native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
               if (cap) {
                 cap.summary = result.clean;
                 cap.ai_analysis = result.clean;
               }
-              // Also update uiState
               native?.updateUIState?.({
                 last_capture_summary: result.clean,
                 last_insight_summary: result.clean
@@ -266,6 +377,8 @@
 
   overlay?.addEventListener('pointerup', event => {
     if (!overlay.classList.contains('open')) return;
+    // Don't capture if tapping inside voice strip
+    if (event.target.closest && event.target.closest('#camera-voice-strip')) return;
     event.preventDefault();
     event.stopPropagation();
     capture();
@@ -280,6 +393,10 @@
     close,
     stop: close,
     teardown: killStream,
+    startVoiceStrip,
+    stopVoiceStrip,
+    get voiceStripActive() { return voiceStripActive; },
+    get voiceStripTranscript() { return voiceStripTranscript; },
     get facingMode() { return facingMode; },
     get lastBundle() { return lastBundle; },
     get primed() { return streamReady; }

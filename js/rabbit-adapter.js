@@ -62,6 +62,8 @@
   const deviceScopeKey = hashText(deviceId);
   const cacheKey = `structa-native-cache-v2:${deviceScopeKey}`;
 
+  const MAX_NODES = 60;
+
   const memory = {
     messages: [],
     journals: [],
@@ -76,12 +78,20 @@
       resumed_at: null,
       last_capture_summary: '',
       last_insight_summary: '',
-      last_event_summary: ''
+      last_event_summary: '',
+      onboarded: false
     },
     projectMemory: {
       project_id: contracts.baseProjectCode,
       device_scope_key: deviceScopeKey,
       name: 'untitled project',
+      type: 'general',
+      user_role: '',
+      nodes: [],
+      impact_chain: [],
+      exports: [],
+      clarity_score: 0,
+      // Legacy compat views (computed from nodes)
       structure: [],
       backlog: [],
       decisions: [],
@@ -89,10 +99,184 @@
       captures: [],
       insights: [],
       open_questions: [],
-      exports: [],
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      schema_version: 3
     }
   };
+
+  // === Node helpers ===
+  function addNode(input) {
+    var node = contracts.createNode({
+      ...input,
+      project_id: memory.projectMemory.project_id
+    });
+    memory.projectMemory.nodes.unshift(node);
+    if (memory.projectMemory.nodes.length > MAX_NODES) {
+      memory.projectMemory.nodes = memory.projectMemory.nodes.slice(0, MAX_NODES);
+    }
+    rebuildLegacyViews();
+    memory.projectMemory.updated_at = new Date().toISOString();
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return node;
+  }
+
+  function resolveNode(nodeId, resolution) {
+    var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
+    if (!node) return null;
+    node.status = 'resolved';
+    node.resolved_at = new Date().toISOString();
+    if (resolution) {
+      if (resolution.selected_option) node.selected_option = resolution.selected_option;
+      if (resolution.question_answer) node.question_answer = resolution.question_answer;
+    }
+    rebuildLegacyViews();
+    memory.projectMemory.updated_at = new Date().toISOString();
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return node;
+  }
+
+  function archiveNode(nodeId) {
+    var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
+    if (!node) return null;
+    node.status = 'archived';
+    rebuildLegacyViews();
+    persist();
+    return node;
+  }
+
+  function getNodesByType(type) {
+    return memory.projectMemory.nodes.filter(function(n) { return n.type === type && n.status !== 'archived'; });
+  }
+
+  function getNodesByStatus(status) {
+    return memory.projectMemory.nodes.filter(function(n) { return n.status === status; });
+  }
+
+  function computeClarityScore() {
+    var nodes = memory.projectMemory.nodes;
+    if (!nodes.length) return 0;
+    var resolved = nodes.filter(function(n) { return n.status === 'resolved'; }).length;
+    return Math.round((resolved / nodes.length) * 100);
+  }
+
+  // Rebuild legacy flat-array views from unified nodes[]
+  function rebuildLegacyViews() {
+    var pm = memory.projectMemory;
+    var nodes = pm.nodes;
+
+    pm.backlog = nodes.filter(function(n) { return n.type === 'task' && n.status === 'open'; })
+      .map(function(n) { return { title: n.title, body: n.body, created_at: n.created_at, state: 'open', node_id: n.node_id }; });
+
+    pm.decisions = nodes.filter(function(n) { return n.type === 'decision' && n.status === 'resolved'; })
+      .map(function(n) {
+        return {
+          text: n.title, body: n.body, reason: n.body,
+          options: n.decision_options, selected_option: n.selected_option,
+          selected_option_index: n.decision_options.indexOf(n.selected_option),
+          source: n.source + ' → approved',
+          created_at: n.created_at, approved_at: n.resolved_at, node_id: n.node_id
+        };
+      });
+
+    pm.pending_decisions = nodes.filter(function(n) { return n.type === 'decision' && n.status === 'open'; })
+      .map(function(n) {
+        return {
+          text: n.title, options: n.decision_options, source: n.source,
+          insight_body: n.body, created_at: n.created_at, node_id: n.node_id
+        };
+      });
+
+    pm.captures = nodes.filter(function(n) { return n.type === 'capture'; })
+      .map(function(n) {
+        return {
+          id: n.node_id, type: n.capture_image ? 'image' : 'voice',
+          summary: n.body || n.title, ai_analysis: n.body,
+          created_at: n.created_at, node_id: n.node_id
+        };
+      });
+
+    pm.insights = nodes.filter(function(n) { return n.type === 'insight'; })
+      .map(function(n) {
+        return {
+          title: n.title, body: n.body, next: n.next_action,
+          confidence: n.confidence, created_at: n.created_at, node_id: n.node_id
+        };
+      });
+
+    pm.open_questions = nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; })
+      .map(function(n) { return n.body || n.title; });
+
+    pm.clarity_score = computeClarityScore();
+
+    pm.structure = [
+      { title: 'captures', count: pm.captures.length },
+      { title: 'insights', count: pm.insights.length },
+      { title: 'decisions', count: pm.decisions.length },
+      { title: 'open items', count: pm.backlog.length }
+    ];
+  }
+
+  // === v2 → v3 migration ===
+  function migrateV2toV3(pm) {
+    if (pm.schema_version >= 3) return pm;
+    var nodes = [];
+
+    (pm.backlog || []).forEach(function(item) {
+      nodes.push(contracts.createNode({
+        type: 'task', status: 'open', title: item.title || '', body: item.body || '',
+        source: 'migration', created_at: item.created_at
+      }));
+    });
+
+    (pm.decisions || []).forEach(function(d) {
+      var text = typeof d === 'string' ? d : (d.text || d.title || '');
+      nodes.push(contracts.createNode({
+        type: 'decision', status: 'resolved', title: text, body: d.reason || d.body || text,
+        source: (d.source || 'migration'), decision_options: d.options || [],
+        selected_option: d.selected_option || null,
+        created_at: d.created_at, resolved_at: d.approved_at || d.created_at
+      }));
+    });
+
+    (pm.pending_decisions || []).forEach(function(d) {
+      var text = typeof d === 'string' ? d : (d.text || '');
+      nodes.push(contracts.createNode({
+        type: 'decision', status: 'open', title: text, body: d.insight_body || '',
+        source: d.source || 'migration', decision_options: d.options || [],
+        created_at: d.created_at
+      }));
+    });
+
+    (pm.captures || []).forEach(function(c) {
+      nodes.push(contracts.createNode({
+        type: 'capture', title: c.summary || 'capture', body: c.ai_analysis || c.summary || '',
+        source: 'camera', capture_image: c.id, created_at: c.created_at
+      }));
+    });
+
+    (pm.insights || []).forEach(function(ins) {
+      nodes.push(contracts.createNode({
+        type: 'insight', title: ins.title || 'insight', body: ins.body || '',
+        confidence: ins.confidence || 'med', next_action: ins.next || '',
+        source: 'llm', created_at: ins.created_at
+      }));
+    });
+
+    (pm.open_questions || []).forEach(function(q) {
+      nodes.push(contracts.createNode({
+        type: 'question', status: 'open', title: 'question', body: q,
+        source: 'migration', created_at: new Date().toISOString()
+      }));
+    });
+
+    pm.nodes = nodes.slice(0, MAX_NODES);
+    pm.schema_version = 3;
+    pm.type = pm.type || 'general';
+    pm.user_role = pm.user_role || '';
+    return pm;
+  }
 
   function emit(eventType, payload) {
     const record = {
@@ -147,6 +331,10 @@
     try {
       window.localStorage?.setItem(cacheKey, JSON.stringify(blob));
     } catch (_) {}
+    // Also write to StructaStorage if available
+    if (window.StructaStorage) {
+      window.StructaStorage.save(blob).catch(function() {});
+    }
   }
 
   function hydrate() {
@@ -156,9 +344,48 @@
       const parsed = JSON.parse(raw);
       Object.assign(memory, parsed.memory || {});
     } catch (_) {}
+    // Migrate v2 → v3 if needed
+    if (memory.projectMemory && (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3)) {
+      migrateV2toV3(memory.projectMemory);
+      rebuildLegacyViews();
+      persist();
+    } else if (memory.projectMemory && memory.projectMemory.nodes) {
+      rebuildLegacyViews();
+    }
   }
 
+  // Async hydrate from StructaStorage (runs after sync hydrate)
+  async function hydrateAsync() {
+    if (!window.StructaStorage) return;
+    try {
+      await window.StructaStorage.init();
+      var data = await window.StructaStorage.load();
+      if (data && data.memory) {
+        // Only use if newer than localStorage version
+        var storedTime = new Date(data.memory?.projectMemory?.updated_at || 0).getTime();
+        var localTime = new Date(memory.projectMemory?.updated_at || 0).getTime();
+        if (storedTime > localTime) {
+          Object.assign(memory, data.memory);
+          if (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3) {
+            migrateV2toV3(memory.projectMemory);
+          }
+          rebuildLegacyViews();
+          persist();
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Emergency snapshot on beforeunload
+  window.addEventListener('beforeunload', function() {
+    if (window.StructaStorage) {
+      window.StructaStorage.snapshot({ deviceId, deviceScopeKey, memory, runtimeEvents });
+    }
+  });
+
   hydrate();
+  hydrateAsync();
   startProbeIfNeeded();
 
   function postPayload(payload) {
@@ -174,6 +401,7 @@
   function touchProjectMemory(mutator) {
     mutator(memory.projectMemory);
     memory.projectMemory.updated_at = new Date().toISOString();
+    rebuildLegacyViews();
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return memory.projectMemory;
@@ -525,34 +753,44 @@
     var idx = index || 0;
     var optionIndex = typeof selectedOptionIndex === 'number' ? selectedOptionIndex : null;
     var optionLabel = typeof selectedOption === 'string' ? selectedOption : null;
+
+    // Try node-based approval first
+    var pendingNodes = memory.projectMemory.nodes.filter(function(n) { return n.type === 'decision' && n.status === 'open'; });
+    if (idx < pendingNodes.length) {
+      var node = pendingNodes[idx];
+      var options = node.decision_options || [];
+      var resolvedOption = optionLabel;
+      if (!resolvedOption && optionIndex !== null && optionIndex >= 0 && optionIndex < options.length) {
+        resolvedOption = options[optionIndex];
+      }
+      resolveNode(node.node_id, { selected_option: resolvedOption });
+      // Also journal the decision
+      pushLimited(memory.messages, {
+        message: 'decision locked: ' + (node.title || '').slice(0, 60),
+        useLLM: false,
+        wantsJournalEntry: true
+      });
+      return memory.projectMemory;
+    }
+
+    // Fallback to legacy
     return touchProjectMemory(function(project) {
       project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
-      project.decisions = Array.isArray(project.decisions) ? project.decisions : [];
       if (idx >= project.pending_decisions.length) return;
       var pending = project.pending_decisions.splice(idx, 1)[0];
+      // Convert to node
+      var text = typeof pending === 'string' ? pending : (pending.text || 'decision locked');
       var pendingOptions = Array.isArray(pending && pending.options) ? pending.options.slice(0, 3) : [];
-      var resolvedOption = optionLabel;
-      if (!resolvedOption && optionIndex !== null && optionIndex >= 0 && optionIndex < pendingOptions.length) {
-        resolvedOption = pendingOptions[optionIndex];
+      var resolvedOpt = optionLabel;
+      if (!resolvedOpt && optionIndex !== null && optionIndex >= 0 && optionIndex < pendingOptions.length) {
+        resolvedOpt = pendingOptions[optionIndex];
       }
-      var decision = {
-        text: typeof pending === 'string' ? pending : (pending.text || 'decision locked'),
-        source: (pending.source || 'voice') + ' → approved',
-        reason: pending.insight_body || pending.text || '',
-        options: pendingOptions,
-        selected_option_index: optionIndex,
-        selected_option: resolvedOption,
-        created_at: pending.created_at || new Date().toISOString(),
-        approved_at: new Date().toISOString()
-      };
-      project.decisions.unshift(decision);
-      project.decisions = project.decisions.slice(0, 20);
-      project.structure = [
-        { title: 'captures', count: (project.captures || []).length },
-        { title: 'insights', count: (project.insights || []).length },
-        { title: 'decisions', count: project.decisions.length },
-        { title: 'open items', count: (project.backlog || []).length }
-      ];
+      addNode({
+        type: 'decision', status: 'resolved', title: text,
+        body: pending.insight_body || text, source: (pending.source || 'voice'),
+        decision_options: pendingOptions, selected_option: resolvedOpt,
+        resolved_at: new Date().toISOString()
+      });
     });
   }
 
@@ -561,6 +799,14 @@
    */
   function dismissPendingDecision(index) {
     var idx = index || 0;
+    var pendingNodes = memory.projectMemory.nodes.filter(function(n) { return n.type === 'decision' && n.status === 'open'; });
+    if (idx < pendingNodes.length) {
+      archiveNode(pendingNodes[idx].node_id);
+      rebuildLegacyViews();
+      persist();
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      return memory.projectMemory;
+    }
     return touchProjectMemory(function(project) {
       project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
       if (idx >= project.pending_decisions.length) return;
@@ -575,11 +821,27 @@
    */
   function resolveQuestion(index, answer) {
     var idx = index || 0;
+    // Try node-based resolution
+    var questionNodes = memory.projectMemory.nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; });
+    if (idx < questionNodes.length) {
+      resolveNode(questionNodes[idx].node_id, { question_answer: answer });
+      pushLimited(memory.journals, {
+        project_code: contracts.baseProjectCode,
+        entry_id: contracts.makeEntryId('answer'),
+        source_type: 'voice',
+        title: 'answered: ' + (questionNodes[idx].body || '').slice(0, 30),
+        body: 'Q: ' + (questionNodes[idx].body || '') + '\nA: ' + (answer || ''),
+        created_at: new Date().toISOString(),
+        meta: { answered: true }
+      });
+      appendLogEntry({ kind: 'journal', message: 'answered: ' + (questionNodes[idx].body || '').slice(0, 40) });
+      return memory.projectMemory;
+    }
+    // Legacy fallback
     return touchProjectMemory(function(project) {
       project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
       if (idx >= project.open_questions.length) return;
       var question = project.open_questions.splice(idx, 1)[0];
-      // Store as journal entry with the answer
       pushLimited(memory.journals, {
         project_code: contracts.baseProjectCode,
         entry_id: contracts.makeEntryId('answer'),
@@ -597,15 +859,10 @@
    * addBacklogItem -- adds a task to the project backlog from voice.
    */
   function addBacklogItem(title, body) {
-    return touchProjectMemory(function(project) {
-      project.backlog = Array.isArray(project.backlog) ? project.backlog : [];
-      project.backlog.unshift({
-        title: title || 'new task',
-        body: body || '',
-        created_at: new Date().toISOString(),
-        state: 'open'
-      });
-      project.backlog = project.backlog.slice(0, 20);
+    return addNode({
+      type: 'task', status: 'open',
+      title: title || 'new task', body: body || '',
+      source: 'voice'
     });
   }
 
@@ -619,6 +876,24 @@
         project.name = name;
       }
     });
+  }
+
+  function setProjectType(type) {
+    if (!type || !contracts.projectTypes.includes(type)) return;
+    return touchProjectMemory(function(project) {
+      project.type = type;
+    });
+  }
+
+  function setUserRole(role) {
+    if (!role) return;
+    return touchProjectMemory(function(project) {
+      project.user_role = role;
+    });
+  }
+
+  function getActiveProject() {
+    return JSON.parse(JSON.stringify(memory.projectMemory));
   }
 
   persist();
@@ -656,6 +931,14 @@
     resolveQuestion,
     addBacklogItem,
     setProjectName,
+    setProjectType,
+    setUserRole,
+    getActiveProject,
+    addNode,
+    resolveNode,
+    archiveNode,
+    getNodesByType,
+    getNodesByStatus,
     deviceId,
     deviceScopeKey,
     probeMode

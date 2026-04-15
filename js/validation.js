@@ -70,11 +70,35 @@
     return `${label} rejected: ${errors.join('; ')}`;
   }
 
+  function validateNode(raw = {}) {
+    const payload = contracts.createNode(raw);
+    const errors = [];
+
+    if (!isNonEmptyString(payload.node_id)) errors.push('node_id is required');
+    if (!isNonEmptyString(payload.project_id)) errors.push('project_id is required');
+    if (!contracts.nodeTypes.includes(payload.type)) errors.push('type must be one of: ' + contracts.nodeTypes.join(', '));
+    if (!isNonEmptyString(payload.title) && !isNonEmptyString(payload.body)) errors.push('title or body is required');
+
+    return errors.length ? result(false, payload, errors) : result(true, payload, []);
+  }
+
+  function validateProject(raw = {}) {
+    const payload = contracts.createProject(raw);
+    const errors = [];
+
+    if (!isNonEmptyString(payload.project_id)) errors.push('project_id is required');
+    if (!isNonEmptyString(payload.name)) errors.push('name is required');
+
+    return errors.length ? result(false, payload, errors) : result(true, payload, []);
+  }
+
   window.StructaValidation = Object.freeze({
     validateEnvelope,
     validateCaptureBundle,
     validateJournalEntry,
     validateAsset,
+    validateNode,
+    validateProject,
     validationMessage,
     isNonEmptyString
   });

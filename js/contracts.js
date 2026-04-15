@@ -75,13 +75,109 @@
     };
   }
 
+  // === Unified Node Model ===
+  const nodeTypes = Object.freeze([
+    'insight', 'decision', 'question', 'task', 'capture', 'research', 'voice-entry'
+  ]);
+
+  const nodeStatuses = Object.freeze([
+    'open', 'resolved', 'archived'
+  ]);
+
+  function createNode(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      node_id: input.node_id || makeEntryId(input.type || 'node'),
+      project_id: input.project_id || baseProjectCode,
+      type: nodeTypes.includes(input.type) ? input.type : 'insight',
+      status: nodeStatuses.includes(input.status) ? input.status : 'open',
+      title: (input.title || '').toLowerCase(),
+      body: (input.body || '').toLowerCase(),
+      source: input.source || 'voice',
+      links: Array.isArray(input.links) ? input.links : [],
+      tags: Array.isArray(input.tags) ? input.tags : [],
+      decision_options: Array.isArray(input.decision_options) ? input.decision_options.slice(0, 3) : [],
+      selected_option: input.selected_option || null,
+      question_answer: input.question_answer || null,
+      capture_image: input.capture_image || null,
+      voice_annotation: input.voice_annotation || null,
+      research_findings: Array.isArray(input.research_findings) ? input.research_findings : [],
+      confidence: input.confidence || 'med',
+      next_action: (input.next_action || '').toLowerCase(),
+      created_at: input.created_at || now,
+      resolved_at: input.resolved_at || null,
+      meta: input.meta || {}
+    };
+  }
+
+  // === Project Schema ===
+  const projectTypes = Object.freeze([
+    'architecture', 'software', 'design', 'film', 'music', 'writing', 'research', 'general'
+  ]);
+
+  function createProject(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      project_id: input.project_id || makeEntryId('project'),
+      name: (input.name || 'untitled project').toLowerCase(),
+      type: projectTypes.includes(input.type) ? input.type : 'general',
+      user_role: (input.user_role || '').toLowerCase(),
+      device_scope_key: input.device_scope_key || '',
+      nodes: Array.isArray(input.nodes) ? input.nodes : [],
+      impact_chain: Array.isArray(input.impact_chain) ? input.impact_chain : [],
+      exports: Array.isArray(input.exports) ? input.exports : [],
+      clarity_score: typeof input.clarity_score === 'number' ? input.clarity_score : 0,
+      created_at: input.created_at || now,
+      updated_at: now,
+      meta: input.meta || {}
+    };
+  }
+
+  // === Knowledge Transfer Schema ===
+  function createTransfer(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      transfer_id: input.transfer_id || makeEntryId('transfer'),
+      source_project_id: input.source_project_id || '',
+      target_project_id: input.target_project_id || '',
+      node_ids: Array.isArray(input.node_ids) ? input.node_ids : [],
+      status: input.status || 'pending',
+      created_at: input.created_at || now,
+      meta: input.meta || {}
+    };
+  }
+
+  // === Adaptive Vocabulary ===
+  const vocabularyMap = Object.freeze({
+    architecture: { capture: 'site photo', insight: 'design note', decision: 'design call', task: 'action item', question: 'open brief' },
+    software:     { capture: 'screenshot', insight: 'finding', decision: 'tech decision', task: 'ticket', question: 'blocker' },
+    design:       { capture: 'reference', insight: 'direction', decision: 'design lock', task: 'deliverable', question: 'review ask' },
+    film:         { capture: 'frame ref', insight: 'note', decision: 'creative call', task: 'shot task', question: 'coverage gap' },
+    music:        { capture: 'sample', insight: 'arrangement note', decision: 'mix call', task: 'track task', question: 'sound question' },
+    writing:      { capture: 'reference', insight: 'theme note', decision: 'editorial call', task: 'draft task', question: 'research gap' },
+    research:     { capture: 'data point', insight: 'finding', decision: 'methodology call', task: 'study task', question: 'hypothesis' },
+    general:      { capture: 'capture', insight: 'insight', decision: 'decision', task: 'task', question: 'question' }
+  });
+
+  function getVocabulary(projectType) {
+    return vocabularyMap[projectType] || vocabularyMap.general;
+  }
+
   window.StructaContracts = Object.freeze({
     allowedVerbs,
     allowedTargets,
     baseProjectCode,
+    nodeTypes,
+    nodeStatuses,
+    projectTypes,
+    vocabularyMap,
     makeEntryId,
     createEnvelope,
     createCaptureBundle,
-    createJournalEntry
+    createJournalEntry,
+    createNode,
+    createProject,
+    createTransfer,
+    getVocabulary
   });
 })();

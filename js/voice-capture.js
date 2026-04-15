@@ -59,11 +59,86 @@
     }
   }
 
+  // === Voice command patterns ===
+  var VOICE_COMMANDS = [
+    { pattern: /^(?:research|look up|search for|find out about)\s+(.+)/i, type: 'research' },
+    { pattern: /^export\s+(brief|decisions|research|summary)/i, type: 'export' },
+    { pattern: /^(?:new project|create project|start project)\s+(.+)/i, type: 'new-project' },
+    { pattern: /^(?:switch to|open project|go to project)\s+(.+)/i, type: 'switch-project' },
+    { pattern: /^(?:set type|project type)\s+(architecture|software|design|film|music|writing|research|general)/i, type: 'set-type' },
+    { pattern: /^(?:i am a|my role is|i'm a)\s+(.+)/i, type: 'set-role' }
+  ];
+
+  function tryVoiceCommand(text) {
+    var lower = text.toLowerCase().trim();
+    for (var i = 0; i < VOICE_COMMANDS.length; i++) {
+      var cmd = VOICE_COMMANDS[i];
+      var match = lower.match(cmd.pattern);
+      if (!match) continue;
+      var arg = (match[1] || '').trim();
+
+      switch (cmd.type) {
+        case 'research':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'researching: ' + arg.slice(0, 40) });
+          if (window.StructaLLM && window.StructaLLM.research) {
+            window.StructaLLM.research(arg).then(function(result) {
+              if (result && result.ok) {
+                native?.appendLogEntry?.({ kind: 'llm', message: 'research: ' + result.findings.slice(0, 2).join('; ').slice(0, 50) });
+                native?.updateUIState?.({ last_insight_summary: 'research: ' + arg.slice(0, 30) });
+              }
+              window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+            });
+          }
+          return true;
+
+        case 'export':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'exporting ' + arg });
+          if (window.StructaLLM && window.StructaLLM.generateExport) {
+            window.StructaLLM.generateExport(arg).then(function(result) {
+              if (result && result.ok) {
+                native?.appendLogEntry?.({ kind: 'export', message: arg + ' sent to email' });
+              }
+              window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+            });
+          }
+          return true;
+
+        case 'new-project':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'new project: ' + arg.slice(0, 30) });
+          window.dispatchEvent(new CustomEvent('structa-voice-command', {
+            detail: { command: 'new-project', name: arg }
+          }));
+          return true;
+
+        case 'switch-project':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'switch to: ' + arg.slice(0, 30) });
+          window.dispatchEvent(new CustomEvent('structa-voice-command', {
+            detail: { command: 'switch-project', name: arg }
+          }));
+          return true;
+
+        case 'set-type':
+          if (native?.setProjectType) native.setProjectType(arg);
+          native?.appendLogEntry?.({ kind: 'voice', message: 'project type: ' + arg });
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          return true;
+
+        case 'set-role':
+          if (native?.setUserRole) native.setUserRole(arg);
+          native?.appendLogEntry?.({ kind: 'voice', message: 'role set: ' + arg.slice(0, 30) });
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * handleTranscript — processes a voice transcript.
    * Routes to:
-   * 1. Question answering (if activeQuestion is set)
-   * 2. Normal voice input (project context via StructaLLM)
+   * 1. Voice commands (research, export, new project, switch, set type/role)
+   * 2. Question answering (if activeQuestion is set)
+   * 3. Normal voice input (project context via StructaLLM)
    */
   function handleTranscript(text) {
     if (!text || !text.trim()) return;
@@ -76,6 +151,10 @@
     text = text.replace(/\bexclamation mark\b/gi, '!');
     text = text.replace(/\bexclamation point\b/gi, '!');
     text = text.replace(/\s+/g, ' ').trim();
+
+    // === Voice commands — intercept before normal processing ===
+    var commandHandled = tryVoiceCommand(text);
+    if (commandHandled) return;
 
     // === Question answering mode ===
     if (activeQuestion) {
@@ -213,6 +292,9 @@
       }
     }
 
+    // Unmute heartbeat after capture
+    if (window.StructaAudio) window.StructaAudio.unmute();
+
     setStatus('idle');
     close();
   }
@@ -245,6 +327,15 @@
     listening = true;
     voiceTarget = activeQuestion ? 'question-answer' : 'tell';
     setStatus('listening');
+
+    // Mute heartbeat and play voice start sound
+    if (window.StructaAudio) {
+      window.StructaAudio.mute();
+      window.StructaAudio.init();
+      window.StructaAudio.unmute(); // briefly unmute for the sound
+      window.StructaAudio.play('voice');
+      window.StructaAudio.mute();
+    }
 
     // Show context-specific status
     if (activeQuestion) {

@@ -884,7 +884,40 @@
         fill: 'rgba(8,8,8,0.98)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '22'
       }, group);
-      // Role text — NO hint text anymore
+
+      // Glanceable stat — one big number that tells you what matters
+      const project = getProjectMemory();
+      const memory = getMemory();
+      let statNumber = '';
+      let statLabel = '';
+
+      if (card.id === 'show') {
+        statNumber = String((memory.captures || []).length);
+        statLabel = 'captures today';
+      } else if (card.id === 'tell') {
+        statNumber = String(getVoiceEntries().length);
+        statLabel = 'voice entries';
+      } else if (card.id === 'know') {
+        const qCount = (project?.open_questions || []).length;
+        const iCount = (project?.insights || []).length;
+        statNumber = qCount > 0 ? String(qCount) : String(iCount);
+        statLabel = qCount > 0 ? 'open asks' : 'insights';
+      } else if (card.id === 'now') {
+        const pCount = (project?.pending_decisions || []).length;
+        const clarity = project?.clarity_score || 0;
+        statNumber = pCount > 0 ? String(pCount) : (clarity > 0 ? clarity + '%' : '0');
+        statLabel = pCount > 0 ? 'pending decisions' : 'clarity';
+      }
+
+      if (statNumber && statNumber !== '0') {
+        text(130, 78, statNumber, {
+          fill: 'rgba(8,8,8,0.22)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '42',
+          'text-anchor': 'end'
+        }, group);
+      }
+
+      // Role text
       const displayRole = lower(card.roleShort || card.role);
       const words = displayRole.split(/\s+/);
       const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
@@ -900,8 +933,15 @@
         }, group);
       }
 
+      // Stat label
+      if (statLabel) {
+        text(18, 136, lower(statLabel), {
+          fill: 'rgba(8,8,8,0.38)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
+        }, group);
+      }
+
       // Notification dots
-      const project = getProjectMemory();
       const pendingCount = (project?.pending_decisions || []).length;
       const questionCount = (project?.open_questions || []).length;
       if (pendingCount > 0 && card.id === 'now') {
@@ -1733,8 +1773,8 @@
         break;
 
       case STATES.CAMERA_OPEN:
-        // PTT while camera is open = capture
-        transition(STATES.CAMERA_CAPTURE);
+        // PTT while camera is open = SHOW+TELL voice strip
+        window.StructaCamera?.startVoiceStrip?.();
         break;
 
       case STATES.VOICE_OPEN:
@@ -1758,7 +1798,11 @@
 
     switch (currentState) {
       case STATES.CAMERA_OPEN:
-        // PTT released on camera open = capture (handled by state entry)
+        // PTT released = stop voice strip and capture with annotation
+        if (window.StructaCamera?.voiceStripActive) {
+          // Voice strip was active — capture with annotation
+          transition(STATES.CAMERA_CAPTURE);
+        }
         break;
 
       case STATES.VOICE_OPEN:
@@ -2027,17 +2071,93 @@
     if (currentState === STATES.NOW_BROWSE) render();
   });
 
-  // Start chain after first user interaction
+  // Start chain after first user interaction + init audio
   let chainStarted = false;
   function startChainOnInteraction() {
     if (chainStarted) return;
     chainStarted = true;
+    // Init audio engine on first user gesture (required by browsers)
+    if (window.StructaAudio) window.StructaAudio.init();
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
       window.StructaImpactChain.start(4); // 4bpm = every 15s
     }
   }
   ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {
     window.addEventListener(evt, startChainOnInteraction, { once: true });
+  });
+
+  // === Heartbeat visual micro-pulse ===
+  window.addEventListener('structa-heartbeat', function() {
+    if (currentState === STATES.HOME) {
+      svg.classList.remove('heartbeat-pulse');
+      void svg.offsetWidth; // force reflow
+      svg.classList.add('heartbeat-pulse');
+      setTimeout(function() { svg.classList.remove('heartbeat-pulse'); }, 320);
+    }
+  });
+
+  // === Discovery question notification ===
+  window.addEventListener('structa-discovery-question', function(e) {
+    notifyCard('know', 'urgent');
+    if (e && e.detail && e.detail.question) {
+      pushLog('structa asks: ' + e.detail.question.slice(0, 40), 'chain');
+    }
+  });
+
+  // === Voice command handler ===
+  window.addEventListener('structa-voice-command', function(e) {
+    if (!e || !e.detail) return;
+    var cmd = e.detail;
+
+    if (cmd.command === 'new-project') {
+      // Create new project — for now, just rename current if untitled
+      var project = getProjectMemory();
+      if (project && project.name === 'untitled project' && cmd.name) {
+        native?.setProjectName?.(cmd.name);
+        pushLog('project: ' + cmd.name.slice(0, 30), 'voice');
+      } else {
+        pushLog('project rename requires fresh start', 'voice');
+      }
+      render();
+    }
+
+    if (cmd.command === 'switch-project') {
+      // Multi-project: for now, log the intent
+      pushLog('switch: ' + (cmd.name || '').slice(0, 30) + ' (coming soon)', 'voice');
+    }
+  });
+
+  // === BPM control: detect rapid scroll ticks ===
+  let rapidScrollCount = 0;
+  let rapidScrollTimer = null;
+  window.addEventListener('scrollUp', function() {
+    rapidScrollCount++;
+    clearTimeout(rapidScrollTimer);
+    rapidScrollTimer = setTimeout(function() {
+      if (rapidScrollCount >= 3 && window.StructaImpactChain) {
+        var chain = window.StructaImpactChain;
+        var newBpm = Math.min(20, chain.bpm + 2);
+        chain.bpm = newBpm;
+        if (window.StructaAudio) window.StructaAudio.play('bpmUp');
+        pushLog('chain speed: ' + newBpm + 'bpm', 'system');
+      }
+      rapidScrollCount = 0;
+    }, 600);
+  });
+
+  window.addEventListener('scrollDown', function() {
+    rapidScrollCount++;
+    clearTimeout(rapidScrollTimer);
+    rapidScrollTimer = setTimeout(function() {
+      if (rapidScrollCount >= 3 && window.StructaImpactChain) {
+        var chain = window.StructaImpactChain;
+        var newBpm = Math.max(1, chain.bpm - 2);
+        chain.bpm = newBpm;
+        if (window.StructaAudio) window.StructaAudio.play('bpmDown');
+        pushLog('chain speed: ' + newBpm + 'bpm', 'system');
+      }
+      rapidScrollCount = 0;
+    }, 600);
   });
 
   // === Public API ===

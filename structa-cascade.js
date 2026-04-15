@@ -28,6 +28,7 @@
   // === Constants ===
   const STATES = Object.freeze({
     HOME: 'home',
+    TELL_BROWSE: 'tell_browse',
     SHOW_BROWSE: 'show_browse',
     SHOW_PRIMED: 'show_primed',
     CAMERA_OPEN: 'camera_open',
@@ -55,6 +56,7 @@
   let selectedIndex = 0;
   let logOpen = false;
   let cameraReturnState = STATES.HOME;
+  let voiceReturnState = STATES.HOME;
 
   // Derived from stateData (shorthand accessors)
   function isHome() { return currentState === STATES.HOME; }
@@ -87,6 +89,14 @@
 
   function getCaptureList() {
     return (getMemory().captures || []).filter(Boolean);
+  }
+
+  function getVoiceEntries() {
+    const journals = (getMemory().journals || []).filter(Boolean);
+    return journals
+      .filter(entry => lower(entry?.source_type || '') === 'voice')
+      .slice()
+      .reverse();
   }
 
   function getCaptureImageHref(capture) {
@@ -221,6 +231,23 @@
     // nothing specific
   };
 
+  // --- TELL_BROWSE ---
+  stateEnterHandlers[STATES.TELL_BROWSE] = function(data) {
+    document.title = 'tell';
+    native?.setActiveNode?.('tell');
+    native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'tell' });
+    setLogDrawer(false);
+    const entries = getVoiceEntries();
+    const maxIndex = Math.max(0, entries.length - 1);
+    if (typeof stateData.tellEntryIndex !== 'number') {
+      stateData.tellEntryIndex = 0;
+    }
+    stateData.tellEntryIndex = Math.min(stateData.tellEntryIndex, maxIndex);
+    if (!stateData.tellStatus) {
+      stateData.tellStatus = entries.length ? 'hold to speak' : 'hold to record';
+    }
+  };
+
   // --- SHOW_BROWSE ---
   stateEnterHandlers[STATES.SHOW_BROWSE] = function(data) {
     document.title = 'show';
@@ -327,10 +354,14 @@
 
   // --- VOICE_PROCESSING ---
   stateEnterHandlers[STATES.VOICE_PROCESSING] = function(data) {
-    // Brief processing state — auto-transitions to HOME
+    // Brief processing state — return to the prior surface
     setTimeout(() => {
       if (currentState === STATES.VOICE_PROCESSING) {
-        transition(STATES.HOME);
+        const returnState = voiceReturnState;
+        voiceReturnState = STATES.HOME;
+        transition(returnState || STATES.HOME, {
+          tellStatus: 'voice saved'
+        });
       }
     }, 300);
   };
@@ -354,6 +385,7 @@
   // --- KNOW_ANSWER ---
   stateEnterHandlers[STATES.KNOW_ANSWER] = function(data) {
     // Reuses VOICE_OPEN but with question context
+    voiceReturnState = STATES.KNOW_BROWSE;
     transition(STATES.VOICE_OPEN, {
       answeringQuestion: data.question,
       fromPTT: false
@@ -394,7 +426,7 @@
       return;
     }
     if (card.surface === 'voice') {
-      transition(STATES.TELL_PRIMED);
+      transition(STATES.TELL_BROWSE, { tellStatus: 'hold to speak' });
       return;
     }
     if (card.surface === 'insight') {
@@ -426,6 +458,7 @@
   }
 
   function openTellSurface(extra = {}) {
+    voiceReturnState = extra.returnState || STATES.TELL_BROWSE;
     transition(STATES.VOICE_OPEN, { fromPTT: false, ...extra });
   }
 
@@ -433,13 +466,14 @@
     const project = getProjectMemory();
     const openQuestions = project?.open_questions || [];
     if (openQuestions.length) {
+      voiceReturnState = STATES.NOW_BROWSE;
       transition(STATES.VOICE_OPEN, {
         answeringQuestion: { index: 0, text: openQuestions[0] },
         fromPTT: false
       });
       return;
     }
-    openTellSurface();
+    openTellSurface({ returnState: STATES.NOW_BROWSE });
   }
 
   function approveCurrentNowDecision() {
@@ -489,6 +523,8 @@
       case STATES.TELL_PRIMED:
       case STATES.LOG_OPEN:
         return 'home';
+      case STATES.TELL_BROWSE:
+        return 'tell';
       case STATES.SHOW_BROWSE:
         return 'show';
       case STATES.SHOW_PRIMED:
@@ -970,8 +1006,9 @@
   function buildShowSummary() {
     const captures = getCaptureList();
     const project = getProjectMemory();
-    const ui = getUIState();
-    const safeIndex = Math.max(0, Math.min(stateData.showCaptureIndex || 0, Math.max(captures.length - 1, 0)));
+    const safeIndex = captures.length
+      ? Math.max(0, Math.min(typeof stateData.showCaptureIndex === 'number' ? stateData.showCaptureIndex : captures.length - 1, captures.length - 1))
+      : 0;
     stateData.showCaptureIndex = safeIndex;
     const current = captures[safeIndex] || null;
     return {
@@ -1001,13 +1038,13 @@
     });
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 72, width: 212, height: 24, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.88)' }, cameraButton);
-    text(24, 88, 'open camera', {
+    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
+    text(24, 89, 'open camera', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 88, model.captures.length ? `${model.captures.length} caps` : 'start', {
+    text(216, 89, model.captures.length ? `${model.captures.length} saved` : 'start', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1019,54 +1056,154 @@
       openCameraFromShow('touch');
     });
 
-    mk('rect', { x: 14, y: 104, width: 212, height: 126, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.12)' });
+    mk('rect', { x: 14, y: 106, width: 212, height: 100, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
     if (model.imageHref) {
       image(model.imageHref, {
-        x: 14, y: 104, width: 212, height: 126, preserveAspectRatio: 'xMidYMid slice', opacity: 1
+        x: 14, y: 106, width: 212, height: 100, preserveAspectRatio: 'xMidYMid slice', opacity: 1
       });
-      mk('rect', { x: 14, y: 194, width: 212, height: 36, fill: 'rgba(5,5,5,0.62)' });
-      text(22, 208, 'latest frame', {
+      mk('rect', { x: 14, y: 174, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
+      text(22, 188, 'latest frame', {
         fill: 'rgba(244,239,228,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapText(undefined, model.summary.slice(0, 64), 22, 222, 192, 12, 'rgba(244,239,228,0.92)', '11');
+      wrapText(undefined, model.summary.slice(0, 52), 22, 200, 190, 11, 'rgba(244,239,228,0.92)', '10');
     } else {
-      text(14, 132, 'no captures yet', {
+      text(14, 142, 'no captures yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'tap open camera to capture the first visual reference for this project', 14, 152, 196, 14, 'rgba(8,8,8,0.62)', '12');
+      wrapText(undefined, 'open camera to capture the first visual reference for this project', 14, 162, 196, 14, 'rgba(8,8,8,0.62)', '12');
     }
 
-    const thumbY = 238;
-    const recent = model.captures.slice(0, 3);
+    const thumbY = 212;
+    const recent = model.captures.slice().reverse().slice(0, 3);
     recent.forEach((capture, i) => {
-      const x = 14 + (i * 72);
+      const x = i * 80;
       const href = getCaptureImageHref(capture);
-      const active = i === model.currentIndex;
-      mk('rect', {
-        x, y: thumbY, width: 64, height: 34, rx: 6, ry: 6,
-        fill: active ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)',
-        stroke: active ? 'rgba(244,239,228,0.28)' : 'rgba(8,8,8,0.08)',
-        'stroke-width': 1
-      });
+      const active = capture === model.current;
+      mk('rect', { x, y: thumbY, width: 80, height: 80, fill: active ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.10)' });
       if (href) {
-        image(href, { x: x + 2, y: thumbY + 2, width: 60, height: 30, rx: 4, ry: 4, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.7 });
+        image(href, { x, y: thumbY, width: 80, height: 80, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68 });
+      }
+      if (active) {
+        mk('rect', { x, y: thumbY, width: 80, height: 80, fill: 'rgba(8,8,8,0.01)', stroke: 'rgba(244,239,228,0.38)', 'stroke-width': 2 });
       }
       const thumbTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x, y: thumbY, width: 64, height: 34, rx: 6, ry: 6, fill: 'transparent' }, thumbTap);
+      mk('rect', { x, y: thumbY, width: 80, height: 80, fill: 'transparent' }, thumbTap);
       thumbTap.addEventListener('pointerup', event => {
         event.preventDefault();
         event.stopPropagation();
-        stateData.showCaptureIndex = i;
+        const absoluteIndex = model.captures.indexOf(capture);
+        stateData.showCaptureIndex = absoluteIndex >= 0 ? absoluteIndex : 0;
         stateData.showStatus = 'latest visual memory';
         render();
       });
     });
+  }
 
-    text(14, 284, `${model.captures.length} caps · ${model.insights} insights · ${lower(model.status)}`, {
+  function buildTellModel() {
+    const entries = getVoiceEntries();
+    const project = getProjectMemory();
+    const safeIndex = Math.max(0, Math.min(stateData.tellEntryIndex || 0, Math.max(entries.length - 1, 0)));
+    stateData.tellEntryIndex = safeIndex;
+    const current = entries[safeIndex] || null;
+    return {
+      title: project?.name || 'untitled project',
+      entries,
+      current,
+      currentIndex: safeIndex,
+      insights: (project?.insights || []).length,
+      questions: (project?.open_questions || []).length,
+      status: stateData.tellStatus || (entries.length ? 'hold to speak' : 'hold to record')
+    };
+  }
+
+  function drawTellSurface() {
+    if (currentState !== STATES.TELL_BROWSE) return;
+    const tellCard = cards.find(c => c.id === 'tell');
+    const model = buildTellModel();
+
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
+    drawSurfaceHeader(tellCard);
+    text(14, 60, lower(model.title), {
+      fill: 'rgba(8,8,8,0.50)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    });
+
+    const actionBar = mk('g', { style: 'cursor: pointer;' });
+    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, actionBar);
+    text(24, 89, 'hold to speak', {
+      fill: 'rgba(244,239,228,0.96)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    }, actionBar);
+    text(216, 89, model.entries.length ? `${model.entries.length} saved` : 'new', {
+      fill: 'rgba(244,239,228,0.58)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    }, actionBar);
+    actionBar.addEventListener('pointerup', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'ready to listen' });
+    });
+
+    mk('rect', { x: 14, y: 106, width: 212, height: 78, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
+    if (model.current) {
+      text(20, 122, 'latest voice', {
+        fill: 'rgba(8,8,8,0.50)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 140, 184, 13, 'rgba(8,8,8,0.96)', '13');
+    } else {
+      text(20, 136, 'no voice yet', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '18'
+      });
+      wrapText(undefined, 'hold the side button to save the first spoken update for this project', 20, 154, 184, 13, 'rgba(8,8,8,0.60)', '11');
+    }
+
+    const visible = model.entries.slice(0, 3);
+    visible.forEach((entry, index) => {
+      const y = 192 + (index * 30);
+      const selected = index === model.currentIndex;
+      const rowTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 14,
+        y,
+        width: 212,
+        height: 24,
+        rx: 6,
+        ry: 6,
+        fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)'
+      }, rowTap);
+      text(22, y + 14, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
+        fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.92)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      }, rowTap);
+      text(216, y + 14, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
+        fill: selected ? 'rgba(244,239,228,0.60)' : 'rgba(8,8,8,0.52)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9',
+        'text-anchor': 'end'
+      }, rowTap);
+      rowTap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        stateData.tellEntryIndex = index;
+        stateData.tellStatus = 'latest voice saved';
+        render();
+      });
+    });
+
+    text(14, 284, `${model.entries.length} voice · ${model.insights} insights · ${model.questions} asks · ${lower(model.status)}`, {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
@@ -1080,87 +1217,32 @@
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
 
-    // Full bleed background
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-
-    // Project name — subtitle
     text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
-    // ── Impact Chain Status ──
     const chainY = 78;
-    if (data.chainActive || data.chainPhase !== 'idle') {
-      // Chain phase indicator
-      const phaseLabel = {
-        observe: 'observing',
-        research: 'researching',
-        evaluate: 'evaluating',
-        decision: 'deciding',
-        cooldown: 'cooling down',
-        idle: ''
-      }[data.chainPhase] || data.chainPhase;
+    const phaseLabel = {
+      observe: 'observing',
+      research: 'researching',
+      evaluate: 'evaluating',
+      decision: 'deciding',
+      cooldown: 'cooling down',
+      idle: 'idle'
+    }[data.chainPhase] || data.chainPhase;
 
-      // Phase dot — pulsing indicator
-      mk('circle', { cx: 18, cy: chainY + 4, r: 4, fill: 'rgba(8,8,8,0.88)', opacity: data.chainActive ? '1' : '0.4' });
+    text(14, chainY + 8, phaseLabel, {
+      fill: 'rgba(8,8,8,0.56)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '11'
+    });
 
-      // Phase text
-      text(28, chainY + 8, phaseLabel, {
-        fill: 'rgba(8,8,8,0.72)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
-
-      // Last impact output — the main content
-      if (data.lastImpact) {
-        const impactText = String(data.lastImpact.output).slice(0, 60);
-        wrapText(undefined, lower(impactText), 14, chainY + 22, 212, 14, 'rgba(8,8,8,0.96)', '14');
-      }
-
-      // Chain progress bar
-      const progressY = chainY + 42;
-      const progressWidth = 212;
-      const progressChunks = data.chainImpacts.length;
-      const maxChunks = 3;
-      const chunkW = progressWidth / maxChunks;
-
-      mk('rect', { x: 14, y: progressY, width: progressWidth, height: 3, rx: 1.5, fill: 'rgba(8,8,8,0.12)' });
-      for (let i = 0; i < progressChunks && i < maxChunks; i++) {
-        mk('rect', { x: 14 + (i * chunkW), y: progressY, width: chunkW - 2, height: 3, rx: 1.5, fill: 'rgba(8,8,8,0.72)' });
-      }
-
-      // Progress label
-      text(14, progressY + 14, `impact ${progressChunks}/${maxChunks}`, {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9'
-      });
-
-      // Cooldown timer
-      if (data.chainPhase === 'cooldown' && data.cooldownRemaining > 0) {
-        const secs = Math.ceil(data.cooldownRemaining / 1000);
-        text(180, progressY + 14, `${secs}s`, {
-          fill: 'rgba(8,8,8,0.50)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9'
-        });
-      }
-    } else {
-      // Chain idle — show status line
-      text(14, chainY + 8, 'chain idle', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
-
-      // Latest stored impacts if any
-      if (data.storedImpacts.length > 0) {
-        const latest = data.storedImpacts[0];
-        const impText = String(latest.output || latest.type).slice(0, 55);
-        wrapText(undefined, lower(impText), 14, chainY + 22, 212, 14, 'rgba(8,8,8,0.58)', '12');
-      }
+    if (data.lastImpact) {
+      wrapText(undefined, lower(String(data.lastImpact.output).slice(0, 54)), 14, chainY + 24, 212, 14, 'rgba(8,8,8,0.96)', '13');
+    } else if (data.storedImpacts.length > 0) {
+      wrapText(undefined, lower(String(data.storedImpacts[0].output || data.storedImpacts[0].type).slice(0, 54)), 14, chainY + 24, 212, 14, 'rgba(8,8,8,0.72)', '12');
     }
 
-    // ── Pending Decision ──
     if (data.pendingDecisions.length > 0) {
       const pd = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
       const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
@@ -1180,80 +1262,66 @@
         return group;
       };
 
-      const boxY = 142;
-      const boxH = pdOptions.length >= 2 ? 120 : 80;
+      const boxY = 136;
+      const boxH = pdOptions.length >= 2 ? 132 : 96;
+      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
-      // Decision card background
-      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 6, fill: 'rgba(8,8,8,0.10)' });
-
-      // Decision label
       const countLabel = pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : '';
-      text(18, boxY + 14, 'needs your call' + countLabel, {
+      text(18, boxY + 16, 'decision arena' + countLabel, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
 
-      // Decision text
-      const maxChars = 52;
-      const displayText = pdText.length > maxChars ? pdText.slice(0, maxChars - 1) + '…' : pdText;
-      wrapText(undefined, lower(displayText), 18, boxY + 30, 195, 14, 'rgba(8,8,8,0.96)', '14');
+      const displayText = pdText.length > 52 ? pdText.slice(0, 51) + '…' : pdText;
+      wrapText(undefined, lower(displayText), 18, boxY + 34, 190, 14, 'rgba(8,8,8,0.96)', '14');
 
-      // Option pills — 3 options from impact chain
       if (pdOptions.length >= 2) {
-        const pillY = boxY + 50;
+        const slabY = boxY + 56;
         pdOptions.slice(0, 3).forEach((opt, i) => {
-          const pillX = 18 + (i * 68);
+          const slabTop = slabY + (i * 22);
           const isSelected = stateData.selectedOption === i;
-          const pillLabel = String(opt).slice(0, 8);
-          drawSquaredPill(pillX, pillY, 64, 16, pillLabel, isSelected, 'light');
-          optionTapTargets.push({ x: pillX, y: pillY, width: 64, height: 16, handler: () => {
+          mk('rect', {
+            x: 18,
+            y: slabTop,
+            width: 204,
+            height: 18,
+            rx: 6,
+            ry: 6,
+            fill: isSelected ? 'rgba(8,8,8,0.90)' : 'rgba(8,8,8,0.14)'
+          });
+          text(24, slabTop + 12, lower(String(opt).slice(0, 34)), {
+            fill: isSelected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.90)',
+            'font-family': 'PowerGrotesk-Regular, sans-serif',
+            'font-size': '11'
+          });
+          optionTapTargets.push({ x: 18, y: slabTop, width: 204, height: 18, handler: () => {
             stateData.selectedOption = i;
             render();
           } });
         });
+      }
 
-        // Approve / skip controls
-        const ctrlY = pillY + 24;
-        drawSquaredPill(18, ctrlY, 74, 16, '✓ approve', true, 'light');
-        drawSquaredPill(100, ctrlY, 58, 16, '✗ skip', false, 'light');
-        controlTapTargets.push({ x: 18, y: ctrlY, width: 74, height: 16, handler: approveCurrentNowDecision });
-        controlTapTargets.push({ x: 100, y: ctrlY, width: 58, height: 16, handler: dismissCurrentNowDecision });
-        if (pdCount > 1) {
-          drawSquaredPill(166, ctrlY, 58, 16, '↓ next', false, 'light');
-          controlTapTargets.push({ x: 166, y: ctrlY, width: 58, height: 16, handler: advanceCurrentNowDecision });
-        }
-      } else {
-        // Legacy 2-option layout
-        const pillY = boxY + boxH - 22;
-        drawSquaredPill(18, pillY, 74, 16, '✓ approve', true, 'light');
-        drawSquaredPill(100, pillY, 58, 16, '✗ skip', false, 'light');
-        controlTapTargets.push({ x: 18, y: pillY, width: 74, height: 16, handler: approveCurrentNowDecision });
-        controlTapTargets.push({ x: 100, y: pillY, width: 58, height: 16, handler: dismissCurrentNowDecision });
-        if (pdCount > 1) {
-          drawSquaredPill(166, pillY, 58, 16, '↓ next', false, 'light');
-          controlTapTargets.push({ x: 166, y: pillY, width: 58, height: 16, handler: advanceCurrentNowDecision });
-        }
+      const ctrlY = boxY + boxH - 26;
+      mk('rect', { x: 18, y: ctrlY, width: 96, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
+      text(28, ctrlY + 12, 'approve', { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+      mk('rect', { x: 122, y: ctrlY, width: 48, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.16)' });
+      text(132, ctrlY + 12, 'skip', { fill: 'rgba(8,8,8,0.92)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+      controlTapTargets.push({ x: 18, y: ctrlY, width: 96, height: 18, handler: approveCurrentNowDecision });
+      controlTapTargets.push({ x: 122, y: ctrlY, width: 48, height: 18, handler: dismissCurrentNowDecision });
+      if (pdCount > 1) {
+        mk('rect', { x: 178, y: ctrlY, width: 44, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.16)' });
+        text(188, ctrlY + 12, 'next', { fill: 'rgba(8,8,8,0.92)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
+        controlTapTargets.push({ x: 178, y: ctrlY, width: 44, height: 18, handler: advanceCurrentNowDecision });
       }
 
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else {
-      // No pending — show next move
-      drawSectionLabel(undefined, 14, 142, 'next move');
-      wrapText(undefined, lower(data.next), 14, 156, 212, 14, 'rgba(8,8,8,0.96)', '14');
-
-      const nextMoveTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x: 10, y: 136, width: 220, height: 58, rx: 8, ry: 8, fill: 'transparent' }, nextMoveTap);
-      nextMoveTap.addEventListener('pointerup', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openNowNextMove();
-      });
-
-      // Impact chain stats — how many autonomous insights generated
+      drawSectionLabel(undefined, 14, 146, 'next move');
+      wrapText(undefined, lower(data.next), 14, 162, 212, 14, 'rgba(8,8,8,0.96)', '14');
       if (data.totalImpacts > 0) {
-        text(14, 174, `${data.totalImpacts} impacts · ${data.totalDecisions} chain decisions`, {
+        text(14, 184, `${data.totalImpacts} impacts · ${data.totalDecisions} chain decisions`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'
@@ -1261,7 +1329,6 @@
       }
     }
 
-    // Stats footer — always visible
     text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
@@ -1485,10 +1552,11 @@
     }
 
     drawShowSurface();
+    drawTellSurface();
     drawNowPanel();
     drawInsightSurface();
 
-    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show';
+    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell';
     logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
@@ -1506,12 +1574,25 @@
         break;
       }
 
+      case STATES.TELL_BROWSE: {
+        const entries = getVoiceEntries();
+        if (!entries.length) break;
+        const max = entries.length;
+        stateData.tellEntryIndex = ((stateData.tellEntryIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
+        stateData.tellStatus = 'scroll to review voice';
+        render();
+        break;
+      }
+
       case STATES.CAMERA_OPEN:
         window.StructaCamera?.flip?.();
         break;
 
       case STATES.VOICE_OPEN:
-        if (!window.StructaVoice?.listening) goHome();
+        if (!window.StructaVoice?.listening) {
+          document.body.classList.add('input-locked');
+          window.StructaVoice?.startListening?.();
+        }
         break;
 
       case STATES.KNOW_BROWSE: {
@@ -1583,6 +1664,10 @@
         openCameraFromShow('hardware');
         break;
 
+      case STATES.TELL_BROWSE:
+        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'ready to listen' });
+        break;
+
       case STATES.CAMERA_OPEN:
         // Side = capture
         transition(STATES.CAMERA_CAPTURE);
@@ -1636,10 +1721,16 @@
           transition(STATES.SHOW_BROWSE, { showStatus: 'tap to start' });
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
-          transition(STATES.VOICE_OPEN, { fromPTT: true });
+          voiceReturnState = STATES.TELL_BROWSE;
+          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
         }
         break;
       }
+
+      case STATES.TELL_BROWSE:
+        voiceReturnState = STATES.TELL_BROWSE;
+        transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
+        break;
 
       case STATES.CAMERA_OPEN:
         // PTT while camera is open = capture
@@ -1689,6 +1780,11 @@
   function handleNativeBack(event) {
     switch (currentState) {
       case STATES.SHOW_BROWSE:
+        if (event) event.preventDefault?.();
+        goHome();
+        return;
+
+      case STATES.TELL_BROWSE:
         if (event) event.preventDefault?.();
         goHome();
         return;
@@ -1797,7 +1893,9 @@
       var contextLabel = document.getElementById('voice-context-label');
       if (voiceOverlay) voiceOverlay.classList.remove('answer-mode');
       if (contextLabel) contextLabel.textContent = '';
-      transition(STATES.HOME);
+      const returnState = voiceReturnState;
+      voiceReturnState = STATES.HOME;
+      transition(returnState || STATES.HOME, { tellStatus: 'voice saved' });
     }
     refreshLogFromMemory();
   });

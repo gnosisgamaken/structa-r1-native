@@ -37,7 +37,7 @@
       native?.setCameraFacing?.(facingMode);
     }
     streamReady = true;
-    setStatus('tap to shoot');
+    setStatus('tap or side click to capture');
     showOverlay();
     showOverlayReady();
     return true;
@@ -214,7 +214,7 @@
       payload: bundle
     });
 
-    native?.appendLogEntry?.({ kind: 'camera', message: 'image stored: ' + w + 'x' + h + ' ' + facingMode });
+    native?.appendLogEntry?.({ kind: 'camera', message: 'image saved' });
 
     // Send image to R1 LLM via StructaLLM (no longer fire-and-forget)
     hideOverlay();
@@ -226,7 +226,7 @@
           if (result && result.ok && result.clean) {
             // Store as insight
             window.StructaLLM.storeAsInsight(result, 'capture');
-            native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+            native?.appendLogEntry?.({ kind: 'llm', message: 'visual insight ready' });
             // Update the bundle's summary with the analysis
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
@@ -242,11 +242,11 @@
             });
             window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           } else {
-            native?.appendLogEntry?.({ kind: 'camera', message: 'image analysis: no response' });
+            native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
           }
         })
         .catch(function() {
-          native?.appendLogEntry?.({ kind: 'camera', message: 'image analysis failed' });
+          native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });
         });
     }
 

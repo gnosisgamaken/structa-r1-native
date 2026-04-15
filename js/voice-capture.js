@@ -83,7 +83,7 @@
       activeQuestion = null;
       voiceTarget = null;
 
-      native?.appendLogEntry?.({ kind: 'voice', message: 'answered: ' + text.slice(0, 40) });
+      native?.appendLogEntry?.({ kind: 'voice', message: 'question answered' });
 
       // Store the answer in project memory
       native?.resolveQuestion?.(question.index, text);
@@ -110,7 +110,7 @@
     }
 
     // === Normal voice input ===
-    native?.appendLogEntry?.({ kind: 'voice', message: 'voice: ' + text.slice(0, 60) });
+    native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
 
     // Write journal entry
     native?.writeJournalEntry?.({
@@ -163,14 +163,14 @@
       window.StructaLLM.processVoice(text).then(function(result) {
         if (result && result.ok) {
           window.StructaLLM.storeAsInsight(result, 'voice');
-          native?.appendLogEntry?.({ kind: 'llm', message: result.clean.slice(0, 80) });
+          native?.appendLogEntry?.({ kind: 'llm', message: 'insight extracted' });
           native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         } else {
-          native?.appendLogEntry?.({ kind: 'llm', message: 'llm: ' + (result && result.error || 'no response') });
+          native?.appendLogEntry?.({ kind: 'llm', message: 'insight unavailable' });
         }
       }).catch(function(err) {
-        native?.appendLogEntry?.({ kind: 'llm', message: 'llm error: ' + (err && err.message || 'failed') });
+        native?.appendLogEntry?.({ kind: 'llm', message: 'insight failed' });
       });
     }
   }

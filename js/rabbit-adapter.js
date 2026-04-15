@@ -320,7 +320,7 @@
       wantsJournalEntry: envelope.wantsJournalEntry === true
     };
     const result = postPayload(sdkPayload);
-    appendLogEntry({ kind: envelope.verb, message: `${envelope.verb} ${envelope.target}` });
+    appendLogEntry({ kind: envelope.verb, message: envelope.target === 'camera' ? 'camera opened' : `${envelope.verb} ${envelope.target}` });
     emit('message_sent', { envelope, result });
     return { ok: true, envelope, result };
   }

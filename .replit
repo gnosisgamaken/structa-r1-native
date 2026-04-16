@@ -26,7 +26,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pkill -f 'http.server 5000' || true; python3 -m http.server 5000 --bind 0.0.0.0"
+args = "pkill -f 'http.server 5000' || true; pkill -f 'server.py' || true; python3 server.py"
 waitForPort = 5000
 
 [[ports]]

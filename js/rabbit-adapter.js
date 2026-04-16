@@ -180,6 +180,22 @@
     return node;
   }
 
+  function addVoiceEntry(raw = {}) {
+    var text = String(raw.body || raw.text || '').trim();
+    if (!text) return null;
+    return addNode({
+      type: 'voice-entry',
+      status: 'open',
+      title: (raw.title || text.slice(0, 42) || 'voice note'),
+      body: text,
+      source: raw.source || 'voice',
+      meta: {
+        entry_mode: raw.entry_mode || 'auto',
+        created_via: raw.created_via || 'tell'
+      }
+    });
+  }
+
   function resolveNode(nodeId, resolution) {
     var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
     if (!node) return null;
@@ -1167,17 +1183,13 @@
     var questionNodes = memory.projectMemory.nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; });
     if (idx < questionNodes.length) {
       resolveNode(questionNodes[idx].node_id, { question_answer: answer });
-      pushLimited(memory.journals, {
-        project_code: memory.active_project_id,
-        project_id: memory.active_project_id,
-        entry_id: contracts.makeEntryId('answer'),
-        source_type: 'voice',
+      addVoiceEntry({
         title: 'answered: ' + (questionNodes[idx].body || '').slice(0, 30),
         body: 'Q: ' + (questionNodes[idx].body || '') + '\nA: ' + (answer || ''),
-        created_at: new Date().toISOString(),
-        meta: { answered: true }
+        source: 'voice-answer',
+        entry_mode: 'answer'
       });
-      appendLogEntry({ kind: 'journal', message: 'answered: ' + (questionNodes[idx].body || '').slice(0, 40) });
+      appendLogEntry({ kind: 'voice', message: 'question answered' });
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-resolved' }
       }));
@@ -1188,17 +1200,13 @@
       project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
       if (idx >= project.open_questions.length) return;
       var question = project.open_questions.splice(idx, 1)[0];
-      pushLimited(memory.journals, {
-        project_code: memory.active_project_id,
-        project_id: memory.active_project_id,
-        entry_id: contracts.makeEntryId('answer'),
-        source_type: 'voice',
+      addVoiceEntry({
         title: 'answered: ' + (question || '').slice(0, 30),
         body: 'Q: ' + (question || '') + '\nA: ' + (answer || ''),
-        created_at: new Date().toISOString(),
-        meta: { question_index: idx, answered: true }
+        source: 'voice-answer',
+        entry_mode: 'answer'
       });
-      appendLogEntry({ kind: 'journal', message: 'answered: ' + (question || '').slice(0, 40) });
+      appendLogEntry({ kind: 'voice', message: 'question answered' });
     });
   }
 
@@ -1287,6 +1295,7 @@
     setProjectType,
     setUserRole,
     getActiveProject,
+    addVoiceEntry,
     addNode,
     resolveNode,
     archiveNode,

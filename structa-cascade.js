@@ -149,6 +149,14 @@
 
   function getVoiceEntries() {
     const activeProjectId = getActiveProjectId();
+    const nodes = (getProjectMemory()?.nodes || []).filter(Boolean);
+    const voiceNodes = nodes
+      .filter(entry => entry.type === 'voice-entry' && entry.status !== 'archived' && (!entry.project_id || entry.project_id === activeProjectId))
+      .slice()
+      .sort(function(a, b) {
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      });
+    if (voiceNodes.length) return voiceNodes;
     const journals = (getMemory().journals || []).filter(Boolean);
     return journals
       .filter(entry => lower(entry?.source_type || '') === 'voice' && (!entry.project_id || entry.project_id === activeProjectId))
@@ -516,6 +524,12 @@
       stateData.showStatus = wantsNarration ? 'opening show + tell' : 'opening lens';
       stateData.pendingShowNarration = wantsNarration;
       render();
+    }
+    if (source !== 'touch') {
+      stateData.showStatus = wantsNarration ? 'tap capture, then hold to narrate' : 'tap capture to open lens';
+      stateData.pendingShowNarration = false;
+      render();
+      return false;
     }
     window.StructaCamera?.openFromGesture?.('environment');
     return true;
@@ -1331,12 +1345,12 @@
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 92, currentState === STATES.SHOW_PRIMED ? 'opening lens' : 'capture', {
+    text(24, 92, currentState === STATES.SHOW_PRIMED ? 'tap to open lens' : 'capture', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, currentState === STATES.SHOW_PRIMED ? 'release stays here' : 'hold narrates', {
+    text(216, 92, currentState === STATES.SHOW_PRIMED ? 'hold after lens opens' : 'hold after lens opens', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1350,12 +1364,12 @@
 
     mk('rect', { x: 14, y: 112, width: 212, height: 112, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
     if (currentState === STATES.SHOW_PRIMED) {
-      text(20, 154, 'arming camera', {
+      text(20, 152, 'tap capture to open lens', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '18'
+        'font-size': '16'
       });
-      text(20, 178, 'release to stay in show', {
+      text(20, 176, 'once open: side shoots · hold narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1384,7 +1398,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 176, 'side opens lens · hold narrates', {
+      text(20, 176, 'tap capture · once open hold narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1392,7 +1406,7 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(226, 276, `${model.captures.length} stored · release keeps gallery`, {
+      text(226, 276, `${model.captures.length} stored · tap capture to continue`, {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
         'text-anchor': 'end'
@@ -2034,7 +2048,10 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        openCameraFromShow('hardware');
+        transition(STATES.SHOW_PRIMED, {
+          showStatus: 'tap capture to open lens',
+          pendingShowNarration: false
+        });
         break;
 
       case STATES.TELL_BROWSE:
@@ -2105,7 +2122,10 @@
         if (card.id === 'show') {
           showHoldIntentActive = true;
           document.body.classList.add('input-locked');
-          openCameraFromShow('touch', { narrate: true });
+          transition(STATES.SHOW_PRIMED, {
+            showStatus: 'tap capture, then hold to narrate',
+            pendingShowNarration: false
+          });
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           voiceReturnState = STATES.TELL_BROWSE;
@@ -2122,7 +2142,10 @@
       case STATES.SHOW_BROWSE:
         showHoldIntentActive = true;
         document.body.classList.add('input-locked');
-        openCameraFromShow('touch', { narrate: true });
+        transition(STATES.SHOW_PRIMED, {
+          showStatus: 'tap capture, then hold to narrate',
+          pendingShowNarration: false
+        });
         break;
 
       case STATES.CAMERA_OPEN:

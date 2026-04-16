@@ -211,6 +211,9 @@
             // Store the extracted answer as insight
             window.StructaLLM.storeAsInsight(result, 'answer');
             native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'question-answer' }
+            }));
           }
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         }).catch(function() {
@@ -225,12 +228,11 @@
     // === Normal voice input ===
     native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
 
-    // Store the note locally for tell/history, but avoid noisy visible journal logs.
-    native?.writeJournalEntry?.({
+    native?.addVoiceEntry?.({
       title: text.slice(0, 42) || 'voice note',
       body: text,
-      source_type: 'voice',
-      meta: { entry_mode: 'auto', silent: true }
+      source: 'voice',
+      entry_mode: 'auto'
     });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
@@ -281,6 +283,9 @@
           window.StructaLLM.storeAsInsight(result, 'voice');
           native?.appendLogEntry?.({ kind: 'llm', message: 'insight extracted' });
           native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'insight' }
+          }));
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         } else {
           native?.appendLogEntry?.({ kind: 'llm', message: 'insight unavailable' });
@@ -320,11 +325,11 @@
       if (text) {
         handleTranscript(text);
       } else if (pendingAudioAsset) {
-        native?.writeJournalEntry?.({
+        native?.addVoiceEntry?.({
           title: 'voice note',
           body: 'audio note captured',
-          source_type: 'voice',
-          meta: { entry_mode: 'audio-fallback', silent: true }
+          source: 'voice',
+          entry_mode: 'audio-fallback'
         });
       }
     }

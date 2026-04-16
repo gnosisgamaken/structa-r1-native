@@ -20,7 +20,7 @@
   var conversationHistory = [];
   var MAX_HISTORY = 10;
   var lastCallTime = 0;
-  var MIN_GAP_MS = 800;
+  var MIN_GAP_MS = 350;
   var dispatchTimer = null;
 
   function getNextId() {
@@ -311,7 +311,7 @@
     conversationHistory.push({ role: 'user', text: transcript, time: Date.now() });
     if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
 
-    return sendToLLM(prompt, { speak: false, journal: false }).then(function(result) {
+    return sendToLLM(prompt, { speak: false, journal: false, priority: 'high' }).then(function(result) {
       // Track LLM response in history
       if (result && result.ok && result.clean) {
         conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now() });
@@ -368,7 +368,7 @@
       prompt += analysisFrame + ' 1-2 key elements. 8 words max.';
     }
 
-    return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false });
+    return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false, priority: 'high' });
   }
 
   function query(question) {

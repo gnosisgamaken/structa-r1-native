@@ -1,7 +1,7 @@
 /**
  * impact-chain-engine.js — Structa Autonomous Impact Chain
  *
- * Every 15 seconds, Structa autonomously thinks about the project.
+ * Structa quietly reviews the project in the background.
  * Each "impact" is a self-contained LLM call that:
  * 1. Reads current project context
  * 2. Decides: research more, or create a decision for the user
@@ -23,7 +23,7 @@
   // === Chain state ===
   var chain = {
     active: false,
-    bpm: 4,                    // beats per minute (4 = every 15s)
+    bpm: 2,                    // beats per minute (2 = every 30s)
     beatCount: 0,
     impacts: [],
     currentPhase: 'idle',       // idle | observe | research | evaluate | decision | cooldown
@@ -171,10 +171,7 @@
       });
     }
 
-    // Log entry
-    if (panel && panel.pushLog) {
-      panel.pushLog(type + ': ' + String(output).slice(0, 40), 'chain');
-    }
+    // Keep chain activity mostly silent; only major outcomes surface elsewhere.
 
     // Dispatch event for cascade to re-render
     window.dispatchEvent(new CustomEvent('structa-impact', { detail: impact }));
@@ -207,7 +204,7 @@
     chain.currentPhase = 'cooldown';
 
     if (panel && panel.pushLog) {
-      panel.pushLog('decision created: ' + decisionText.slice(0, 40), 'chain');
+      panel.pushLog('decision ready', 'decision');
     }
 
     // Notify cascade to show decision on NOW card
@@ -215,16 +212,7 @@
       detail: { text: decisionText, options: options }
     }));
 
-    // TTS announcement (brief)
-    if (typeof PluginMessageHandler !== 'undefined') {
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          message: 'new decision ready',
-          useLLM: false,
-          wantsR1Response: true
-        }));
-      } catch (e) {}
-    }
+    // No automatic spoken announcement here — keep heartbeat and chain calm.
   }
 
   // === Parse JSON from LLM ===
@@ -449,10 +437,6 @@
     var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
     chain.timerId = setInterval(beat, intervalMs);
 
-    if (panel && panel.pushLog) {
-      panel.pushLog('chain started · ' + chain.bpm + 'bpm', 'chain');
-    }
-
     // Fire first beat immediately
     beat();
   }
@@ -464,9 +448,6 @@
     if (chain.timerId) {
       clearInterval(chain.timerId);
       chain.timerId = null;
-    }
-    if (panel && panel.pushLog) {
-      panel.pushLog('chain paused · ' + (reason || 'unknown'), 'chain');
     }
   }
 

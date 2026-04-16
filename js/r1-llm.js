@@ -88,7 +88,6 @@
   window.onPluginMessage = function(data) {
     // STT handling — match exact R1 format: { type: 'sttEnded', transcript: '...' }
     if (data && data.type === 'sttEnded' && data.transcript) {
-      native?.appendLogEntry?.({ kind: 'voice', message: 'stt: ' + data.transcript.slice(0, 60) });
       if (previousHandler) {
         try { previousHandler(data); } catch (e) {}
       }

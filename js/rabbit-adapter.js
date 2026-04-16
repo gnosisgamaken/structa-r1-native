@@ -418,17 +418,86 @@
     return { ...(memory.uiState || {}) };
   }
 
+  function normalizeSpacing(text = '') {
+    return lower(String(text || ''))
+      .replace(/\s+/g, ' ')
+      .replace(/\bthe the\b/g, 'the')
+      .trim();
+  }
+
+  function normalizeVisibleMessage(kind = '', message = '') {
+    const k = lower(kind || 'event');
+    const raw = normalizeSpacing(message || 'event');
+    if (!raw || raw === 'event' || raw === 'no event') return null;
+
+    if (raw.startsWith('stt:')) return null;
+    if (raw.startsWith('beat ')) return null;
+    if (raw.includes('started at') && k === 'heartbeat') return null;
+    if (raw.includes('paused —') && k === 'heartbeat') return null;
+    if (raw.includes('chain started')) return null;
+    if (raw.includes('chain paused')) return null;
+    if (raw === 'camera opened' || raw.endsWith('camera open')) return 'camera ready';
+    if (raw === 'capture capture') return 'capturing image';
+    if (raw === 'camera image captured' || raw === 'image captured') return 'image captured';
+    if (raw === 'image saved') return 'image saved';
+    if (raw === 'voice saved') return 'voice saved';
+    if (raw === 'question answered') return 'question answered';
+    if (raw === 'insight extracted') return 'insight added';
+    if (raw === 'insight unavailable' || raw === 'insight failed') return 'insight unavailable';
+    if (raw === 'visual insight ready') return 'visual note ready';
+    if (raw === 'visual insight failed') return 'visual note unavailable';
+    if (raw.startsWith('answering:')) return 'answering question';
+    if (raw.startsWith('answered:')) return 'question answered';
+    if (raw.startsWith('saved 33 logs')) return 'log export saved';
+    if (raw.startsWith('could not save logs')) return 'log export unavailable';
+    if (raw.startsWith('decision created:')) return 'decision ready';
+    if (raw === 'decision skipped' || raw === 'decision decision skipped') return 'decision skipped';
+    if (raw === 'decision decision approved') return 'decision approved';
+    if (raw.startsWith('suggestion:')) return 'new suggestion ready';
+    if (raw.includes('inspect camera') || raw.includes('environment facing')) return null;
+    if (raw.includes('r1 msg:') || raw === 'llm: thinking...' || raw === 'r1 stt: start') return null;
+    if (raw.includes('heartbeat started') || raw.includes('heartbeat stopped')) return null;
+    if (raw.includes('window ') || raw.includes('document ')) return null;
+
+    if (k === 'heartbeat') return null;
+    if (k === 'chain' && raw.startsWith('observe:')) return null;
+    if (k === 'chain' && raw.startsWith('research:')) return null;
+    if (k === 'chain' && raw.startsWith('evaluate:')) return null;
+    if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
+
+    return raw;
+  }
+
+  function isDuplicateVisibleMessage(message = '', createdAt = Date.now()) {
+    if (!message) return false;
+    for (let i = memory.logs.length - 1; i >= 0; i -= 1) {
+      const entry = memory.logs[i];
+      if (!entry?.visible_message) continue;
+      const ageMs = Math.abs(new Date(createdAt).getTime() - new Date(entry.created_at || createdAt).getTime());
+      if (ageMs > 8000) break;
+      if (entry.visible_message === message) return true;
+    }
+    return false;
+  }
+
   function appendLogEntry(raw = {}) {
+    const createdAt = raw.created_at || new Date().toISOString();
+    const rawMessage = normalizeSpacing(raw.message || 'event');
+    const visibleMessage = normalizeVisibleMessage(raw.kind || 'event', rawMessage);
     const entry = {
       id: contracts.makeEntryId('log'),
       kind: lower(raw.kind || 'event'),
-      message: lower(raw.message || 'event'),
+      message: rawMessage,
+      visible_message: visibleMessage,
+      visible: visibleMessage ? !isDuplicateVisibleMessage(visibleMessage, createdAt) : false,
       linked_capture_id: raw.linked_capture_id || null,
       linked_response_id: raw.linked_response_id || null,
-      created_at: raw.created_at || new Date().toISOString()
+      created_at: createdAt
     };
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
-    memory.uiState.last_event_summary = entry.message;
+    if (entry.visible && entry.visible_message) {
+      memory.uiState.last_event_summary = entry.visible_message;
+    }
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return entry;
@@ -440,7 +509,10 @@
    */
   function isVisibleLogEntry(entry = {}) {
     const kind = lower(entry.kind || '');
-    const message = lower(entry.message || '');
+    const message = lower(entry.visible_message || entry.message || '');
+
+    if (entry.visible === false) return false;
+    if (!entry.visible_message) return false;
 
     // Suppress ALL probe messages (hardware events, API probes)
     if (kind === 'probe') return false;
@@ -487,7 +559,10 @@
   }
 
   function getVisibleLogs(limit = 5) {
-    return memory.logs.filter(isVisibleLogEntry).slice(-limit);
+    return memory.logs
+      .filter(isVisibleLogEntry)
+      .map(entry => ({ ...entry, message: entry.visible_message || entry.message }))
+      .slice(-limit);
   }
 
   function inferCaptureInsight(bundle) {

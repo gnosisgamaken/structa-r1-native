@@ -132,37 +132,8 @@
 
   // === Log management ===
   function pushLog(text, strong = '') {
-    const wouldBeVisible = native?.isVisibleLogEntry?.({ kind: lower(strong || 'ui'), message: lower(`${strong ? `${strong} ` : ''}${text}`) });
-    if (wouldBeVisible === false) {
-      native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
-      return;
-    }
-    const row = document.createElement('div');
-    row.className = 'entry';
-    // Tag chain/decision entries for styling
-    if (strong === 'chain' || strong === 'decision') {
-      row.setAttribute('data-kind', strong);
-    }
-    const time = document.createElement('span');
-    time.className = 'muted';
-    time.textContent = `[${stamp()}]`;
-    row.appendChild(time);
-    if (strong) {
-      const accent = document.createElement('span');
-      accent.className = 'accent';
-      accent.textContent = lower(strong);
-      row.appendChild(accent);
-    }
-    const message = document.createElement('span');
-    message.textContent = lower(text);
-    row.appendChild(message);
-    log.appendChild(row);
-    while (log.children.length > 5 && !logOpen) log.removeChild(log.firstChild);
-    if (!logOpen && log.children.length > 5) {
-      while (log.children.length > 5) log.removeChild(log.firstChild);
-    }
-    logPreview.textContent = latestLogText();
-    native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
+    native?.appendLogEntry?.({ kind: lower(strong || 'ui'), message: lower(text) });
+    refreshLogFromMemory();
   }
 
   function refreshLogFromMemory() {
@@ -563,8 +534,7 @@
       const project = getProjectMemory();
       const hasContent = (project?.backlog?.length || 0) + (project?.insights?.length || 0) + (project?.captures?.length || 0) + (project?.open_questions?.length || 0);
       if (hasContent > 0) {
-        window.StructaHeartbeat.start(10);
-        pushLog('heartbeat started', 'system');
+        window.StructaHeartbeat.start(3);
       }
     }
   }
@@ -2079,7 +2049,7 @@
     // Init audio engine on first user gesture (required by browsers)
     if (window.StructaAudio) window.StructaAudio.init();
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
-      window.StructaImpactChain.start(4); // 4bpm = every 15s
+      window.StructaImpactChain.start(2); // 2bpm = every 30s
     }
   }
   ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {

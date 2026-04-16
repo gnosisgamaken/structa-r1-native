@@ -565,7 +565,8 @@
     ensureProjectRegistry();
     var rawName = String((name || '').trim() || 'Untitled Project');
     var normalizedName = lower(rawName);
-    var existing = memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
+    var allowDuplicate = normalizedName === 'untitled project' || normalizedName === 'project' || normalizedName === '';
+    var existing = allowDuplicate ? null : memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
     if (existing) return switchProject(existing.project_id);
 
     var project = createDefaultProject({

@@ -995,7 +995,7 @@
     const activeId = getActiveProjectId();
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
-    const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
+    const selectedProject = projects[selected] || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
     drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
@@ -1011,7 +1011,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '22'
     });
-    text(14, 54, compactProjectName(activeProject?.name || 'Untitled Project'), {
+    text(14, 54, compactProjectName(selectedProject?.name || 'Untitled Project'), {
       fill: '#f8c15d',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '15'
@@ -1102,7 +1102,7 @@
       });
     });
 
-    text(226, 268, projects.length > 1 ? 'scroll browse · click opens' : '1 project loaded', {
+    text(226, 268, projects.length > 1 ? `${projects.length} loaded · scroll browse` : '1 project loaded', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1336,13 +1336,6 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
-    text(226, 58, `${model.captures.length} frames`, {
-      fill: 'rgba(8,8,8,0.50)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
-
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
     text(24, 92, 'open lens', {
@@ -1406,7 +1399,7 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(226, 276, model.captures.length ? `${model.captures.length} stored · waiting for touch` : 'waiting for touch', {
+      text(226, 276, 'waiting for touch', {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
         'text-anchor': 'end'
@@ -1470,59 +1463,40 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
-    text(226, 58, `${model.entries.length} notes`, {
-      fill: 'rgba(8,8,8,0.50)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
-
-    const actionBar = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, actionBar);
-    text(24, 92, 'speak', {
-      fill: 'rgba(244,239,228,0.96)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '12'
-    }, actionBar);
-    text(216, 92, model.current ? recentTimeLabel(model.current.created_at) : 'hold ptt', {
-      fill: 'rgba(244,239,228,0.58)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    }, actionBar);
-    actionBar.addEventListener('pointerup', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
-    });
-
-    mk('rect', { x: 14, y: 112, width: 212, height: 78, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 76, width: 212, height: 92, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 127, `latest note · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
+      text(20, 92, `selected note · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 138), 20, 143, 184, 13, 'rgba(8,8,8,0.96)', '13', 3);
+      text(218, 92, recentTimeLabel(model.current.created_at), {
+        fill: 'rgba(8,8,8,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 180), 20, 110, 186, 13, 'rgba(8,8,8,0.96)', '13', 4);
     } else {
-      text(20, 140, 'ready for voice', {
+      text(20, 102, 'ready for voice', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 166, 'hold ptt anywhere', {
+      text(20, 126, 'hold ptt to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
     }
 
-    const start = Math.max(0, Math.min(model.currentIndex - 1, Math.max(model.entries.length - 3, 0)));
-    const visible = model.entries.slice(start, start + 3);
-    visible.forEach((entry, index) => {
-      const absoluteIndex = start + index;
-      const y = 198 + (index * 26);
-      const selected = absoluteIndex === model.currentIndex;
+    const relatedIndexes = [];
+    for (let offset = 1; offset < model.entries.length && relatedIndexes.length < 4; offset += 1) {
+      relatedIndexes.push((model.currentIndex + offset) % model.entries.length);
+    }
+    relatedIndexes.forEach((absoluteIndex, index) => {
+      const entry = model.entries[absoluteIndex];
+      const y = 176 + (index * 26);
       const rowTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 14,
@@ -1531,18 +1505,12 @@
         height: 22,
         rx: 6,
         ry: 6,
-        fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)'
+        fill: 'rgba(8,8,8,0.10)'
       }, rowTap);
       text(22, y + 13, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
-        fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.92)',
+        fill: 'rgba(8,8,8,0.92)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '11'
-      }, rowTap);
-      text(216, y + 13, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
-        fill: selected ? 'rgba(244,239,228,0.60)' : 'rgba(8,8,8,0.52)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
       }, rowTap);
       rowTap.addEventListener('pointerup', event => {
         event.preventDefault();
@@ -1552,9 +1520,8 @@
         render();
       });
     });
-
-    text(226, 276, `${model.insights} signals · ${model.questions} asks`, {
-      fill: 'rgba(8,8,8,0.42)',
+    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt builds' : 'hold ptt builds', {
+      fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
@@ -1570,13 +1537,6 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    text(226, 58, `${data.blockerCount || data.pendingDecisions.length || 0} blockers`, {
-      fill: 'rgba(8,8,8,0.42)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
-
     const hasBlockers = data.pendingDecisions.length > 0 || data.openQuestions > 0;
     const chainY = 78;
     const phaseLabel = {
@@ -1709,7 +1669,7 @@
       }
     }
 
-    text(226, 276, `${data.insights} signals · ${data.openQuestions} asks`, {
+    text(226, 276, hasBlockers ? 'ptt answers blocker' : 'scroll decisions · ptt answers', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -1811,14 +1771,7 @@
       });
     }
 
-    // Content area - directly below chips, no PTT needed
-    text(226, 58, `${items.length} items`, {
-      fill: 'rgba(8,8,8,0.40)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
-
+    // Content area - directly below chips
     const contentY = showChipRow ? 130 : 112;
 
     if (currentState === STATES.KNOW_BROWSE) {

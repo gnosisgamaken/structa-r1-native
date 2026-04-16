@@ -526,7 +526,7 @@
       render();
     }
     if (source !== 'touch') {
-      stateData.showStatus = wantsNarration ? 'tap capture, then hold to narrate' : 'tap capture to open lens';
+      stateData.showStatus = 'touch to start camera';
       stateData.pendingShowNarration = false;
       render();
       return false;
@@ -891,9 +891,9 @@
   }
 
   function getKnowHintText(item, lane, itemsCount) {
-    if (!item) return itemsCount > 1 ? 'scroll: items · ptt: detail' : 'ptt: detail';
-    if (item.source === 'question') return 'scroll: items · ptt: answer';
-    return itemsCount > 1 ? 'scroll: items · ptt: detail' : 'hold ptt: ask know';
+    if (!item) return itemsCount > 1 ? 'scroll items · ptt detail' : 'ptt detail';
+    if (item.source === 'question') return itemsCount > 1 ? 'scroll items · ptt answer' : 'ptt answer';
+    return itemsCount > 1 ? 'scroll items · ptt detail' : 'ptt know';
   }
 
   // === SVG rendering helpers ===
@@ -1102,7 +1102,7 @@
       });
     });
 
-    text(226, 268, projects.length > 1 ? 'scroll to browse · ptt opens' : '1 project loaded · say new project', {
+    text(226, 268, projects.length > 1 ? 'scroll browse · click opens' : '1 project loaded', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1345,12 +1345,12 @@
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 92, currentState === STATES.SHOW_PRIMED ? 'tap to open lens' : 'capture', {
+    text(24, 92, 'open lens', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, currentState === STATES.SHOW_PRIMED ? 'hold after lens opens' : 'hold after lens opens', {
+    text(216, 92, 'ptt in lens', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1364,12 +1364,12 @@
 
     mk('rect', { x: 14, y: 112, width: 212, height: 112, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
     if (currentState === STATES.SHOW_PRIMED) {
-      text(20, 152, 'tap capture to open lens', {
+      text(20, 148, 'touch to start camera', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, 176, 'once open: ptt shoots · hold narrates', {
+      text(20, 172, 'then click shoots · hold narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1393,12 +1393,12 @@
         'font-size': '10'
       });
     } else {
-      text(20, 152, 'no frames yet', {
+      text(20, 148, 'ready to capture', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 176, 'tap capture · once open hold narrates', {
+      text(20, 172, 'touch to start camera', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1406,7 +1406,7 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(226, 276, `${model.captures.length} stored · tap capture to continue`, {
+      text(226, 276, model.captures.length ? `${model.captures.length} stored · waiting for touch` : 'waiting for touch', {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
         'text-anchor': 'end'
@@ -1479,7 +1479,7 @@
 
     const actionBar = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, actionBar);
-    text(24, 92, 'record', {
+    text(24, 92, 'speak', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
@@ -1498,17 +1498,22 @@
 
     mk('rect', { x: 14, y: 112, width: 212, height: 78, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 127, `last entry · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
+      text(20, 127, `latest note · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
       wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 138), 20, 143, 184, 13, 'rgba(8,8,8,0.96)', '13', 3);
     } else {
-      text(20, 142, 'hold ptt to speak', {
+      text(20, 140, 'ready for voice', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
+      });
+      text(20, 166, 'hold ptt anywhere', {
+        fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
       });
     }
 
@@ -1704,7 +1709,7 @@
       }
     }
 
-    text(226, 276, `${data.insights} signals · ${data.openQuestions} asks · ${data.decisions} locked`, {
+    text(226, 276, `${data.insights} signals · ${data.openQuestions} asks`, {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -1846,7 +1851,7 @@
 
       const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       if (nextText && nextText !== 'review this') {
-        const actionY = Math.min(248, bodyY + (bodyRows * 13) + 18);
+        const actionY = Math.min(238, bodyY + (bodyRows * 13) + 16);
         text(14, actionY, '→', {
           fill: 'rgba(8,8,8,0.50)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2049,13 +2054,12 @@
 
       case STATES.SHOW_BROWSE:
         transition(STATES.SHOW_PRIMED, {
-          showStatus: 'tap capture to open lens',
+          showStatus: 'touch to start camera',
           pendingShowNarration: false
         });
         break;
 
       case STATES.TELL_BROWSE:
-        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
         break;
 
       case STATES.CAMERA_OPEN:
@@ -2123,7 +2127,7 @@
           showHoldIntentActive = true;
           document.body.classList.add('input-locked');
           transition(STATES.SHOW_PRIMED, {
-            showStatus: 'tap capture, then hold to narrate',
+            showStatus: 'touch to start camera',
             pendingShowNarration: false
           });
         } else if (card.id === 'tell') {
@@ -2143,7 +2147,7 @@
         showHoldIntentActive = true;
         document.body.classList.add('input-locked');
         transition(STATES.SHOW_PRIMED, {
-          showStatus: 'tap capture, then hold to narrate',
+          showStatus: 'touch to start camera',
           pendingShowNarration: false
         });
         break;

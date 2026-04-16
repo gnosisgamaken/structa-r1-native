@@ -1,10 +1,8 @@
 /**
  * heartbeat.js — Configurable heartbeat for Structa on R1.
  *
- * Runs at BPH (beats per hour). Each beat:
- * 1. Checks project state (stale tasks, open questions)
- * 2. Optionally queries R1 LLM for next-action suggestions (rate-limited)
- * 3. Updates the log with progress
+ * Runs at BPH (beats per hour). Each beat quietly checks project state and
+ * only surfaces meaningful deltas.
  *
  * BPH settings:
  *   1 BPH   = once per hour (background monitoring)
@@ -30,7 +28,6 @@
     const ms = Math.round(3600000 / bpm);
     interval = setInterval(beat, ms);
     idleBeats = 0;
-    native?.appendLogEntry?.({ kind: 'heartbeat', message: `started at ${bph} bph (${ms}ms)` });
   }
 
   function stop() {
@@ -49,7 +46,6 @@
 
     // Auto-pause after extended idle
     if (idleBeats >= MAX_IDLE_BEATS) {
-      native?.appendLogEntry?.({ kind: 'heartbeat', message: `paused — ${MAX_IDLE_BEATS} idle beats` });
       stop();
       return;
     }
@@ -67,14 +63,6 @@
     // Check for unanswered questions
     const questions = project.open_questions || [];
 
-    // Log summary
-    if (staleTasks.length || questions.length) {
-      native?.appendLogEntry?.({
-        kind: 'heartbeat',
-        message: `beat ${beatCount}: ${staleTasks.length} stale, ${questions.length} open`
-      });
-    }
-
     // Rate-limited LLM query for next-action suggestion
     if (beatCount % llmBeatInterval === 0 && window.StructaLLM) {
       const context = [
@@ -88,10 +76,11 @@
       window.StructaLLM.query(`In 5 words, what should the user focus on next? ${context}`)
         .then(result => {
           if (result && result.clean) {
-            native?.appendLogEntry?.({
-              kind: 'heartbeat',
-              message: `suggestion: ${result.clean.slice(0, 60)}`
-            });
+            const suggestion = String(result.clean || '').trim();
+            const previous = native?.getUIState?.()?.last_event_summary || '';
+            if (suggestion && suggestion.toLowerCase() !== String(previous).toLowerCase()) {
+              native?.appendLogEntry?.({ kind: 'heartbeat', message: `suggestion: ${suggestion.slice(0, 60)}` });
+            }
             idleBeats = 0; // Reset idle on successful LLM response
           }
         })

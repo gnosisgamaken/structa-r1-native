@@ -99,9 +99,9 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: 26px;
+      height: 28px;
       transform: translateY(0);
-      transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), background 200ms ease, height 200ms ease;
+      transition: transform 160ms ease, background 160ms ease, height 160ms ease;
       background: rgba(5, 5, 5, 0.985);
       border-top: 1.5px solid rgba(255, 255, 255, 0.08);
       z-index: 8;
@@ -120,17 +120,17 @@
     }
 
     #log-handle {
-      min-height: 26px;
+      min-height: 28px;
       border: 0;
       background: transparent;
       color: var(--text);
-      padding: 4px 10px 4px;
+      padding: 5px 12px 5px;
       display: flex;
       align-items: center;
       gap: 8px;
       justify-content: space-between;
-      letter-spacing: 0.02em;
-      font-size: 11px;
+      letter-spacing: 0.01em;
+      font-size: 12px;
       font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
@@ -149,9 +149,10 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      color: rgba(244, 239, 228, 0.78);
-      font-size: 11px;
-      letter-spacing: 0.01em;
+      color: rgba(244, 239, 228, 0.58);
+      font-size: 10px;
+      letter-spacing: 0.03em;
+      text-transform: lowercase;
     }
 
     #log-drawer.open #log-preview {
@@ -166,8 +167,8 @@
       border-radius: 4px;
       background: rgba(255, 138, 101, 0.15);
       color: rgba(255, 138, 101, 0.88);
-      font-size: 9px;
-      letter-spacing: 0.02em;
+      font-size: 10px;
+      letter-spacing: 0.01em;
       flex: 0 0 auto;
     }
 
@@ -179,13 +180,13 @@
       width: 4px;
       height: 4px;
       border-radius: 50%;
-      background: rgba(255, 138, 101, 0.88);
-      animation: chain-pulse 1.2s ease-in-out infinite;
+      background: rgba(255, 138, 101, 0.72);
+      opacity: 0.72;
     }
 
     @keyframes chain-pulse {
-      0%, 100% { opacity: 0.3; }
-      50% { opacity: 1; }
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 0.82; }
     }
 
     #log-actions {
@@ -215,9 +216,9 @@
       display: none;
       flex: 1 1 auto;
       overflow: hidden;
-      padding: 6px 10px 8px;
-      font-size: 9px;
-      line-height: 1.35;
+      padding: 10px 12px 12px;
+      font-size: 11px;
+      line-height: 1.45;
       font-family: 'PowerGrotesk-Regular', sans-serif;
     }
 
@@ -230,22 +231,22 @@
 
     .entry {
       display: flex;
-      gap: 6px;
+      gap: 8px;
       align-items: flex-start;
-      margin-bottom: 4px;
+      margin-bottom: 8px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       color: rgba(244, 239, 228, 0.72);
-      font-size: 9px;
+      font-size: 11px;
     }
 
     #log-drawer.open .entry {
       white-space: normal;
     }
 
-    .muted { color: rgba(244, 239, 228, 0.36); font-size: 9px; }
-    .accent { color: rgba(244, 239, 228, 0.96); font-weight: 600; font-size: 9px; }
+    .muted { color: rgba(244, 239, 228, 0.42); font-size: 10px; flex: 0 0 auto; min-width: 52px; }
+    .accent { color: rgba(244, 239, 228, 0.96); font-weight: 600; font-size: 10px; }
     .entry[data-kind="chain"] { color: rgba(255, 138, 101, 0.78); }
     .entry[data-kind="decision"] { color: rgba(255, 138, 101, 0.92); }
 
@@ -450,7 +451,7 @@
       color: rgba(248, 193, 93, 0.88);
     }
 
-    /* === Spring-jump card animations (V2) === */
+    /* === Calm motion system === */
 
     /* Capture flash — brief white overlay */
     svg.capture-flash {
@@ -463,39 +464,36 @@
       100% { filter: brightness(1); }
     }
 
-    /* Card notification spring — bounce effect on home cards */
+    /* Card notification pulse — subtle and anchored */
     [data-card-index] {
-      transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      transition: transform 140ms ease, opacity 140ms ease;
     }
 
     /* Gentle pulse for cards with pending items */
     [data-card-index].notify-pending {
-      animation: spring-bounce 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: calm-pulse 420ms ease-out;
     }
 
-    @keyframes spring-bounce {
+    @keyframes calm-pulse {
       0% { transform: scale(1); }
-      30% { transform: scale(1.08); }
-      60% { transform: scale(0.97); }
+      50% { transform: scale(1.02); }
       100% { transform: scale(1); }
     }
 
-    /* Strong notification — new question or decision */
+    /* Strong notification — still calm, no jumping */
     [data-card-index].notify-urgent {
-      animation: spring-urgent 800ms cubic-bezier(0.22, 1.2, 0.36, 1);
+      animation: calm-emphasis 520ms ease-out;
     }
 
-    @keyframes spring-urgent {
-      0% { transform: scale(1) translateY(0); }
-      20% { transform: scale(1.12) translateY(-4px); }
-      50% { transform: scale(0.96) translateY(2px); }
-      75% { transform: scale(1.04) translateY(-1px); }
-      100% { transform: scale(1) translateY(0); }
+    @keyframes calm-emphasis {
+      0% { transform: scale(1); opacity: 1; }
+      45% { transform: scale(1.03); opacity: 0.96; }
+      100% { transform: scale(1); opacity: 1; }
     }
 
     /* Surface enter animation — cards slide in */
     .overlay.open {
-      animation: surface-enter 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: surface-enter 160ms ease-out;
     }
 
     @keyframes surface-enter {
@@ -508,11 +506,11 @@
       transition: background-color 200ms ease;
     }
 
-    /* Log drawer spring */
+    /* Log drawer transition */
     #log-drawer.open {
-      transition: transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
-                  background 250ms ease,
-                  height 250ms ease;
+      transition: transform 160ms ease,
+                  background 160ms ease,
+                  height 160ms ease;
     }
 
     .sr-only {
@@ -595,7 +593,7 @@
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <button id="log-handle" aria-label="toggle log">
         <span id="log-grip"></span>
-        <span id="log-preview">no logs yet</span>
+        <span id="log-preview">audit</span>
         <span id="log-chain-badge" class="idle"><span class="chain-dot"></span><span id="chain-phase-text">idle</span></span>
       </button>
       <div id="log"></div>
@@ -629,15 +627,15 @@
     </section>
   </div>
 
-  <script src="js/contracts.js"></script>
-  <script src="js/validation.js"></script>
-  <script src="js/storage-manager.js"></script>
-  <script src="js/rabbit-adapter.js"></script>
-  <script src="js/audio-engine.js"></script>
-  <script src="js/voice-capture.js"></script>
-  <script src="js/camera-capture.js"></script>
-  <script src="js/r1-llm.js"></script>
-  <script src="js/impact-chain-engine.js"></script>
-  <script src="structa-cascade.js"></script>
+  <script src="js/contracts.js?v=20260416"></script>
+  <script src="js/validation.js?v=20260416"></script>
+  <script src="js/storage-manager.js?v=20260416"></script>
+  <script src="js/rabbit-adapter.js?v=20260416"></script>
+  <script src="js/audio-engine.js?v=20260416"></script>
+  <script src="js/voice-capture.js?v=20260416"></script>
+  <script src="js/camera-capture.js?v=20260416"></script>
+  <script src="js/r1-llm.js?v=20260416"></script>
+  <script src="js/impact-chain-engine.js?v=20260416"></script>
+  <script src="structa-cascade.js?v=20260416"></script>
 </body>
 </html>

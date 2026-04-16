@@ -64,6 +64,31 @@
 
   const MAX_NODES = 60;
 
+  function createDefaultProject(input = {}) {
+    const project = contracts.createProject({
+      project_id: input.project_id || contracts.baseProjectCode,
+      device_scope_key: deviceScopeKey,
+      name: input.name || 'untitled project',
+      type: input.type || 'general',
+      user_role: input.user_role || '',
+      nodes: input.nodes || [],
+      impact_chain: input.impact_chain || [],
+      exports: input.exports || [],
+      clarity_score: input.clarity_score || 0,
+      created_at: input.created_at,
+      meta: input.meta || {}
+    });
+    project.structure = Array.isArray(input.structure) ? input.structure : [];
+    project.backlog = Array.isArray(input.backlog) ? input.backlog : [];
+    project.decisions = Array.isArray(input.decisions) ? input.decisions : [];
+    project.pending_decisions = Array.isArray(input.pending_decisions) ? input.pending_decisions : [];
+    project.captures = Array.isArray(input.captures) ? input.captures : [];
+    project.insights = Array.isArray(input.insights) ? input.insights : [];
+    project.open_questions = Array.isArray(input.open_questions) ? input.open_questions : [];
+    project.schema_version = input.schema_version || 3;
+    return project;
+  }
+
   const memory = {
     messages: [],
     journals: [],
@@ -81,28 +106,61 @@
       last_event_summary: '',
       onboarded: false
     },
-    projectMemory: {
-      project_id: contracts.baseProjectCode,
-      device_scope_key: deviceScopeKey,
-      name: 'untitled project',
-      type: 'general',
-      user_role: '',
-      nodes: [],
-      impact_chain: [],
-      exports: [],
-      clarity_score: 0,
-      // Legacy compat views (computed from nodes)
-      structure: [],
-      backlog: [],
-      decisions: [],
-      pending_decisions: [],
-      captures: [],
-      insights: [],
-      open_questions: [],
-      updated_at: new Date().toISOString(),
-      schema_version: 3
-    }
+    active_project_id: contracts.baseProjectCode,
+    projects: [],
+    projectMemory: null
   };
+
+  memory.projects = [createDefaultProject({ project_id: contracts.baseProjectCode })];
+  memory.projectMemory = memory.projects[0];
+
+  function syncActiveProjectAlias() {
+    var active = Array.isArray(memory.projects)
+      ? memory.projects.find(function(project) { return project.project_id === memory.active_project_id; })
+      : null;
+    if (!active) {
+      if (!Array.isArray(memory.projects) || !memory.projects.length) {
+        memory.projects = [createDefaultProject({ project_id: contracts.baseProjectCode })];
+      }
+      active = memory.projects[0];
+      memory.active_project_id = active.project_id;
+    }
+    memory.projectMemory = active;
+    return active;
+  }
+
+  function ensureProjectRegistry() {
+    if (!Array.isArray(memory.projects) || !memory.projects.length) {
+      var legacyProject = memory.projectMemory && typeof memory.projectMemory === 'object'
+        ? memory.projectMemory
+        : createDefaultProject({ project_id: contracts.baseProjectCode });
+      memory.projects = [createDefaultProject(legacyProject)];
+      memory.active_project_id = legacyProject.project_id || contracts.baseProjectCode;
+    }
+
+    memory.projects = memory.projects.map(function(project, index) {
+      var hydrated = createDefaultProject(project || {});
+      if (!hydrated.project_id) hydrated.project_id = index === 0 ? contracts.baseProjectCode : contracts.makeEntryId('project');
+      if (!hydrated.device_scope_key) hydrated.device_scope_key = deviceScopeKey;
+      if (!hydrated.schema_version || hydrated.schema_version < 3) migrateV2toV3(hydrated);
+      return hydrated;
+    });
+
+    if (!memory.active_project_id || !memory.projects.some(function(project) { return project.project_id === memory.active_project_id; })) {
+      memory.active_project_id = memory.projects[0].project_id;
+    }
+
+    var activeProjectId = memory.active_project_id;
+    memory.captures = (memory.captures || []).map(function(capture) {
+      return capture && !capture.project_id ? { ...capture, project_id: activeProjectId } : capture;
+    });
+    memory.journals = (memory.journals || []).map(function(journal) {
+      return journal && !journal.project_id ? { ...journal, project_id: activeProjectId } : journal;
+    });
+
+    syncActiveProjectAlias();
+    return memory.projectMemory;
+  }
 
   // === Node helpers ===
   function addNode(input) {
@@ -344,14 +402,8 @@
       const parsed = JSON.parse(raw);
       Object.assign(memory, parsed.memory || {});
     } catch (_) {}
-    // Migrate v2 → v3 if needed
-    if (memory.projectMemory && (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3)) {
-      migrateV2toV3(memory.projectMemory);
-      rebuildLegacyViews();
-      persist();
-    } else if (memory.projectMemory && memory.projectMemory.nodes) {
-      rebuildLegacyViews();
-    }
+    ensureProjectRegistry();
+    rebuildLegacyViews();
   }
 
   // Async hydrate from StructaStorage (runs after sync hydrate)
@@ -362,13 +414,14 @@
       var data = await window.StructaStorage.load();
       if (data && data.memory) {
         // Only use if newer than localStorage version
-        var storedTime = new Date(data.memory?.projectMemory?.updated_at || 0).getTime();
+        var storedActive = Array.isArray(data.memory?.projects)
+          ? data.memory.projects.find(function(project) { return project.project_id === data.memory.active_project_id; })
+          : data.memory?.projectMemory;
+        var storedTime = new Date(storedActive?.updated_at || 0).getTime();
         var localTime = new Date(memory.projectMemory?.updated_at || 0).getTime();
         if (storedTime > localTime) {
           Object.assign(memory, data.memory);
-          if (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3) {
-            migrateV2toV3(memory.projectMemory);
-          }
+          ensureProjectRegistry();
           rebuildLegacyViews();
           persist();
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
@@ -399,12 +452,80 @@
   }
 
   function touchProjectMemory(mutator) {
+    ensureProjectRegistry();
     mutator(memory.projectMemory);
     memory.projectMemory.updated_at = new Date().toISOString();
     rebuildLegacyViews();
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return memory.projectMemory;
+  }
+
+  function getProjects() {
+    ensureProjectRegistry();
+    return memory.projects
+      .slice()
+      .sort(function(a, b) {
+        return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
+      })
+      .map(function(project) {
+        return {
+          project_id: project.project_id,
+          name: project.name || 'untitled project',
+          type: project.type || 'general',
+          user_role: project.user_role || '',
+          updated_at: project.updated_at,
+          created_at: project.created_at,
+          counts: {
+            captures: (project.captures || []).length,
+            insights: (project.insights || []).length,
+            backlog: (project.backlog || []).length,
+            questions: (project.open_questions || []).length
+          },
+          is_active: project.project_id === memory.active_project_id
+        };
+      });
+  }
+
+  function createProject(name, type) {
+    ensureProjectRegistry();
+    var rawName = String((name || '').trim() || 'Untitled Project');
+    var normalizedName = lower(rawName);
+    var existing = memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
+    if (existing) return switchProject(existing.project_id);
+
+    var project = createDefaultProject({
+      project_id: contracts.makeEntryId('project'),
+      name: rawName,
+      type: contracts.projectTypes.includes(type) ? type : 'general'
+    });
+    memory.projects.unshift(project);
+    memory.active_project_id = project.project_id;
+    syncActiveProjectAlias();
+    updateUIState({ last_event_summary: 'project created', last_surface: 'home' });
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return project;
+  }
+
+  function switchProject(projectIdOrName) {
+    ensureProjectRegistry();
+    var needle = lower(projectIdOrName || '').trim();
+    if (!needle) return null;
+    var project = memory.projects.find(function(entry) {
+      return entry.project_id === projectIdOrName || lower(entry.name) === needle;
+    }) || memory.projects.find(function(entry) {
+      return lower(entry.name).includes(needle);
+    });
+    if (!project) return null;
+    memory.active_project_id = project.project_id;
+    syncActiveProjectAlias();
+    rebuildLegacyViews();
+    memory.uiState.last_event_summary = 'project opened';
+    memory.uiState.last_surface = 'home';
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return project;
   }
 
   function updateUIState(patch = {}) {
@@ -418,17 +539,86 @@
     return { ...(memory.uiState || {}) };
   }
 
+  function normalizeSpacing(text = '') {
+    return lower(String(text || ''))
+      .replace(/\s+/g, ' ')
+      .replace(/\bthe the\b/g, 'the')
+      .trim();
+  }
+
+  function normalizeVisibleMessage(kind = '', message = '') {
+    const k = lower(kind || 'event');
+    const raw = normalizeSpacing(message || 'event');
+    if (!raw || raw === 'event' || raw === 'no event') return null;
+
+    if (raw.startsWith('stt:')) return null;
+    if (raw.startsWith('beat ')) return null;
+    if (raw.includes('started at') && k === 'heartbeat') return null;
+    if (raw.includes('paused —') && k === 'heartbeat') return null;
+    if (raw.includes('chain started')) return null;
+    if (raw.includes('chain paused')) return null;
+    if (raw === 'camera opened' || raw.endsWith('camera open')) return 'camera ready';
+    if (raw === 'capture capture') return 'capturing image';
+    if (raw === 'camera image captured' || raw === 'image captured') return 'image captured';
+    if (raw === 'image saved') return 'image saved';
+    if (raw === 'voice saved') return 'voice saved';
+    if (raw === 'question answered') return 'question answered';
+    if (raw === 'insight extracted') return 'insight added';
+    if (raw === 'insight unavailable' || raw === 'insight failed') return 'insight unavailable';
+    if (raw === 'visual insight ready') return 'visual note ready';
+    if (raw === 'visual insight failed') return 'visual note unavailable';
+    if (raw.startsWith('answering:')) return 'answering question';
+    if (raw.startsWith('answered:')) return 'question answered';
+    if (raw.startsWith('saved 33 logs')) return 'log export saved';
+    if (raw.startsWith('could not save logs')) return 'log export unavailable';
+    if (raw.startsWith('decision created:')) return 'decision ready';
+    if (raw === 'decision skipped' || raw === 'decision decision skipped') return 'decision skipped';
+    if (raw === 'decision decision approved') return 'decision approved';
+    if (raw.startsWith('suggestion:')) return 'new suggestion ready';
+    if (raw.includes('inspect camera') || raw.includes('environment facing')) return null;
+    if (raw.includes('r1 msg:') || raw === 'llm: thinking...' || raw === 'r1 stt: start') return null;
+    if (raw.includes('heartbeat started') || raw.includes('heartbeat stopped')) return null;
+    if (raw.includes('window ') || raw.includes('document ')) return null;
+
+    if (k === 'heartbeat') return null;
+    if (k === 'chain' && raw.startsWith('observe:')) return null;
+    if (k === 'chain' && raw.startsWith('research:')) return null;
+    if (k === 'chain' && raw.startsWith('evaluate:')) return null;
+    if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
+
+    return raw;
+  }
+
+  function isDuplicateVisibleMessage(message = '', createdAt = Date.now()) {
+    if (!message) return false;
+    for (let i = memory.logs.length - 1; i >= 0; i -= 1) {
+      const entry = memory.logs[i];
+      if (!entry?.visible_message) continue;
+      const ageMs = Math.abs(new Date(createdAt).getTime() - new Date(entry.created_at || createdAt).getTime());
+      if (ageMs > 8000) break;
+      if (entry.visible_message === message) return true;
+    }
+    return false;
+  }
+
   function appendLogEntry(raw = {}) {
+    const createdAt = raw.created_at || new Date().toISOString();
+    const rawMessage = normalizeSpacing(raw.message || 'event');
+    const visibleMessage = normalizeVisibleMessage(raw.kind || 'event', rawMessage);
     const entry = {
       id: contracts.makeEntryId('log'),
       kind: lower(raw.kind || 'event'),
-      message: lower(raw.message || 'event'),
+      message: rawMessage,
+      visible_message: visibleMessage,
+      visible: visibleMessage ? !isDuplicateVisibleMessage(visibleMessage, createdAt) : false,
       linked_capture_id: raw.linked_capture_id || null,
       linked_response_id: raw.linked_response_id || null,
-      created_at: raw.created_at || new Date().toISOString()
+      created_at: createdAt
     };
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
-    memory.uiState.last_event_summary = entry.message;
+    if (entry.visible && entry.visible_message) {
+      memory.uiState.last_event_summary = entry.visible_message;
+    }
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return entry;
@@ -440,7 +630,10 @@
    */
   function isVisibleLogEntry(entry = {}) {
     const kind = lower(entry.kind || '');
-    const message = lower(entry.message || '');
+    const message = lower(entry.visible_message || entry.message || '');
+
+    if (entry.visible === false) return false;
+    if (!entry.visible_message) return false;
 
     // Suppress ALL probe messages (hardware events, API probes)
     if (kind === 'probe') return false;
@@ -487,7 +680,10 @@
   }
 
   function getVisibleLogs(limit = 5) {
-    return memory.logs.filter(isVisibleLogEntry).slice(-limit);
+    return memory.logs
+      .filter(isVisibleLogEntry)
+      .map(entry => ({ ...entry, message: entry.visible_message || entry.message }))
+      .slice(-limit);
   }
 
   function inferCaptureInsight(bundle) {
@@ -579,7 +775,7 @@
       emit('validation_failed', { kind: 'journal', errors: verdict.errors, raw });
       return { ok: false, error: validation.validationMessage('journal entry', verdict.errors), payload: verdict.value };
     }
-    const payload = verdict.value;
+    const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.journals, payload);
     appendLogEntry({ kind: 'journal', message: payload.title });
     touchProjectMemory(project => {
@@ -612,7 +808,7 @@
       emit('validation_failed', { kind: 'capture_bundle', errors: verdict.errors, raw });
       return { ok: false, error: validation.validationMessage('capture bundle', verdict.errors), payload: verdict.value };
     }
-    const payload = verdict.value;
+    const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.captures, payload);
     appendLogEntry({ kind: payload.input_type, message: payload.summary || payload.prompt_text || 'capture stored', linked_capture_id: payload.entry_id });
     updateProjectFromCapture(payload);
@@ -624,7 +820,7 @@
     const body = lower(raw.body || raw.note || 'prepare export');
     appendLogEntry({ kind: 'withdraw', message: body });
     return sendStructuredMessage({
-      project_code: raw.project_code || contracts.baseProjectCode,
+      project_code: raw.project_code || memory.active_project_id,
       entry_id: raw.entry_id || contracts.makeEntryId('withdraw'),
       source_type: raw.source_type || 'voice',
       input_type: 'withdrawal',
@@ -651,6 +847,7 @@
       name,
       body,
       created_at: new Date().toISOString(),
+      project_id: memory.active_project_id,
       device_scope_key: deviceScopeKey,
       items
     };
@@ -713,6 +910,7 @@
   }
 
   function getMemory() {
+    ensureProjectRegistry();
     return {
       ...memory,
       messages: [...memory.messages],
@@ -731,7 +929,13 @@
   }
 
   function getProjectMemory() {
+    ensureProjectRegistry();
     return JSON.parse(JSON.stringify(memory.projectMemory));
+  }
+
+  function getActiveProjectId() {
+    ensureProjectRegistry();
+    return memory.active_project_id;
   }
 
   function returnHome() {
@@ -826,7 +1030,8 @@
     if (idx < questionNodes.length) {
       resolveNode(questionNodes[idx].node_id, { question_answer: answer });
       pushLimited(memory.journals, {
-        project_code: contracts.baseProjectCode,
+        project_code: memory.active_project_id,
+        project_id: memory.active_project_id,
         entry_id: contracts.makeEntryId('answer'),
         source_type: 'voice',
         title: 'answered: ' + (questionNodes[idx].body || '').slice(0, 30),
@@ -843,7 +1048,8 @@
       if (idx >= project.open_questions.length) return;
       var question = project.open_questions.splice(idx, 1)[0];
       pushLimited(memory.journals, {
-        project_code: contracts.baseProjectCode,
+        project_code: memory.active_project_id,
+        project_id: memory.active_project_id,
         entry_id: contracts.makeEntryId('answer'),
         source_type: 'voice',
         title: 'answered: ' + (question || '').slice(0, 30),
@@ -918,6 +1124,10 @@
     isVisibleLogEntry,
     exportLatestLogs,
     getProjectMemory,
+    getProjects,
+    getActiveProjectId,
+    switchProject,
+    createProject,
     getMemory,
     getUIState,
     updateUIState,

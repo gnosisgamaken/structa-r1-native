@@ -28,6 +28,7 @@
   // === Constants ===
   const STATES = Object.freeze({
     HOME: 'home',
+    PROJECT_SWITCHER: 'project_switcher',
     TELL_BROWSE: 'tell_browse',
     SHOW_BROWSE: 'show_browse',
     SHOW_PRIMED: 'show_primed',
@@ -45,7 +46,7 @@
 
   const cards = [
     { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'speak it in', color: 'var(--tell)', surface: 'voice' },
+    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
   ];
@@ -71,6 +72,36 @@
     return String(text || '').toLowerCase();
   }
 
+  function projectDisplayName(project = getProjectMemory()) {
+    const value = String(project?.name || '').trim();
+    if (!value) return 'Project';
+    if (lower(value) === 'untitled project') return 'Project';
+    return value;
+  }
+
+  function compactProjectName(name = '') {
+    const value = String(name || '').trim();
+    return value.length > 24 ? value.slice(0, 23) + '…' : value;
+  }
+
+  function recentTimeLabel(raw) {
+    if (!raw) return 'recent';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return 'recent';
+    const diff = Date.now() - date.getTime();
+    const hour = 60 * 60 * 1000;
+    const day = 24 * hour;
+    if (diff < hour) return 'now';
+    if (diff < day) return `${Math.max(1, Math.floor(diff / hour))}h`;
+    if (diff < 7 * day) return `${Math.max(1, Math.floor(diff / day))}d`;
+    return formatTimeLabel(raw);
+  }
+
+  function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {
+    mk('rect', { x: -12, y: -24, width: 264, height: 112, fill, opacity: String(opacity) });
+    mk('rect', { x: 0, y: 58, width: 240, height: 1, fill: 'rgba(255,255,255,0.16)' });
+  }
+
   function currentCard() {
     return cards[selectedIndex];
   }
@@ -83,18 +114,28 @@
     return native?.getProjectMemory?.() || getMemory().projectMemory || null;
   }
 
+  function getProjects() {
+    return native?.getProjects?.() || [];
+  }
+
+  function getActiveProjectId() {
+    return native?.getActiveProjectId?.() || getProjectMemory()?.project_id || '';
+  }
+
   function getUIState() {
     return native?.getUIState?.() || getMemory().uiState || {};
   }
 
   function getCaptureList() {
-    return (getMemory().captures || []).filter(Boolean);
+    const activeProjectId = getActiveProjectId();
+    return (getMemory().captures || []).filter(capture => capture && (!capture.project_id || capture.project_id === activeProjectId));
   }
 
   function getVoiceEntries() {
+    const activeProjectId = getActiveProjectId();
     const journals = (getMemory().journals || []).filter(Boolean);
     return journals
-      .filter(entry => lower(entry?.source_type || '') === 'voice')
+      .filter(entry => lower(entry?.source_type || '') === 'voice' && (!entry.project_id || entry.project_id === activeProjectId))
       .slice()
       .reverse();
   }
@@ -132,37 +173,8 @@
 
   // === Log management ===
   function pushLog(text, strong = '') {
-    const wouldBeVisible = native?.isVisibleLogEntry?.({ kind: lower(strong || 'ui'), message: lower(`${strong ? `${strong} ` : ''}${text}`) });
-    if (wouldBeVisible === false) {
-      native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
-      return;
-    }
-    const row = document.createElement('div');
-    row.className = 'entry';
-    // Tag chain/decision entries for styling
-    if (strong === 'chain' || strong === 'decision') {
-      row.setAttribute('data-kind', strong);
-    }
-    const time = document.createElement('span');
-    time.className = 'muted';
-    time.textContent = `[${stamp()}]`;
-    row.appendChild(time);
-    if (strong) {
-      const accent = document.createElement('span');
-      accent.className = 'accent';
-      accent.textContent = lower(strong);
-      row.appendChild(accent);
-    }
-    const message = document.createElement('span');
-    message.textContent = lower(text);
-    row.appendChild(message);
-    log.appendChild(row);
-    while (log.children.length > 5 && !logOpen) log.removeChild(log.firstChild);
-    if (!logOpen && log.children.length > 5) {
-      while (log.children.length > 5) log.removeChild(log.firstChild);
-    }
-    logPreview.textContent = latestLogText();
-    native?.appendLogEntry?.({ kind: 'ui', message: lower(`${strong ? `${strong} ` : ''}${text}`) });
+    native?.appendLogEntry?.({ kind: lower(strong || 'ui'), message: lower(text) });
+    refreshLogFromMemory();
   }
 
   function refreshLogFromMemory() {
@@ -229,6 +241,20 @@
 
   stateExitHandlers[STATES.HOME] = function(data) {
     // nothing specific
+  };
+
+  // --- PROJECT_SWITCHER ---
+  stateEnterHandlers[STATES.PROJECT_SWITCHER] = function(data) {
+    document.title = 'projects';
+    setLogDrawer(false);
+    const projects = getProjects();
+    const activeId = getActiveProjectId();
+    const activeIndex = Math.max(0, projects.findIndex(project => project.project_id === activeId));
+    stateData.projectListIndex = typeof data.projectListIndex === 'number' ? data.projectListIndex : activeIndex;
+  };
+
+  stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
+    // no-op
   };
 
   // --- TELL_BROWSE ---
@@ -514,10 +540,31 @@
     return true;
   }
 
+  function openProjectSwitcher() {
+    const projects = getProjects();
+    if (!projects.length) return;
+    const activeId = getActiveProjectId();
+    const index = Math.max(0, projects.findIndex(project => project.project_id === activeId));
+    transition(STATES.PROJECT_SWITCHER, { projectListIndex: index });
+  }
+
+  function activateSelectedProject() {
+    const projects = getProjects();
+    if (!projects.length) return false;
+    const index = Math.max(0, Math.min(stateData.projectListIndex || 0, projects.length - 1));
+    const project = projects[index];
+    if (!project) return false;
+    native?.switchProject?.(project.project_id);
+    pushLog(`project: ${project.name}`, 'voice');
+    transition(STATES.HOME);
+    return true;
+  }
+
   // === Surface identification (backward compat for render) ===
   function activeSurface() {
     switch (currentState) {
       case STATES.HOME:
+      case STATES.PROJECT_SWITCHER:
       case STATES.TELL_PRIMED:
       case STATES.LOG_OPEN:
         return 'home';
@@ -561,8 +608,7 @@
       const project = getProjectMemory();
       const hasContent = (project?.backlog?.length || 0) + (project?.insights?.length || 0) + (project?.captures?.length || 0) + (project?.open_questions?.length || 0);
       if (hasContent > 0) {
-        window.StructaHeartbeat.start(10);
-        pushLog('heartbeat started', 'system');
+        window.StructaHeartbeat.start(3);
       }
     }
   }
@@ -572,7 +618,7 @@
     const memory = getMemory();
     const project = getProjectMemory();
     const ui = getUIState();
-    const captures = memory.captures || [];
+    const captures = getCaptureList();
     const insights = project?.insights || [];
     const openQuestions = project?.open_questions || [];
     const backlog = project?.backlog || [];
@@ -784,11 +830,11 @@
 
   // === SVG rendering helpers ===
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 120, y: 48, scale: 1.5, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 106, y: 62, scale: 1.62, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 48 + (150 * 1.5) / 2;
-    var scales = [0.50, 0.69, 0.92];
-    var xPositions = [0, 40, 80];
+    var heroCenterY = 62 + (150 * 1.62) / 2;
+    var scales = [0.54, 0.74, 0.96];
+    var xPositions = [18, 46, 74];
     var stack = scales.map(function(s, i) {
       var cardH = 150 * s;
       return { x: xPositions[i], y: heroCenterY - cardH / 2, scale: s, opacity: 1, depth: i };
@@ -831,19 +877,132 @@
 
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
+    const project = getProjectMemory();
     image('assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(42, 40, 'structa', {
+    text(40, 34, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '35', 'letter-spacing': '0.0em'
+      'font-size': '34', 'letter-spacing': '0.0em'
+    });
+    text(14, 56, compactProjectName(projectDisplayName(project)), {
+      fill: '#f8c15d',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '15'
+    });
+    mk('rect', { x: 14, y: 62, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
+  }
+
+  function drawProjectSwitcher() {
+    if (currentState !== STATES.PROJECT_SWITCHER) return;
+    const projects = getProjects();
+    const activeId = getActiveProjectId();
+    const selected = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(projects.length - 1, 0)));
+    const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
+
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
+    image('assets/icons/png/5.png', {
+      x: 12, y: 14, width: 22, height: 22,
+      preserveAspectRatio: 'xMidYMid meet', opacity: 0.92,
+      style: 'filter: brightness(0) invert(0.96);'
+    });
+    text(40, 31, 'structa', {
+      fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '22'
+    });
+    text(14, 54, compactProjectName(activeProject?.name || 'Untitled Project'), {
+      fill: '#f8c15d',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '15'
+    });
+    text(226, 54, 'projects', {
+      fill: 'rgba(244,239,228,0.36)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+    mk('rect', { x: 14, y: 60, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
+
+    if (!projects.length) {
+      text(14, 120, 'no projects yet', {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      return;
+    }
+
+    const startY = 78;
+    const rowH = 54;
+    const visibleRows = 3;
+    const offset = Math.max(0, Math.min(selected - 1, Math.max(0, projects.length - visibleRows)));
+    projects.slice(offset, offset + visibleRows).forEach((project, visibleIndex) => {
+      const absoluteIndex = offset + visibleIndex;
+      const y = startY + (visibleIndex * rowH);
+      const isSelected = absoluteIndex === selected;
+      const isActive = project.project_id === activeId;
+      const tap = mk('g', { style: 'cursor: pointer;' });
+
+      mk('rect', {
+        x: 10,
+        y,
+        width: 220,
+        height: 42,
+        rx: 10,
+        ry: 10,
+        fill: isSelected ? 'rgba(248,193,93,0.10)' : 'rgba(255,255,255,0.025)',
+        stroke: isSelected ? 'rgba(248,193,93,0.28)' : 'rgba(255,255,255,0.05)',
+        'stroke-width': '1'
+      }, tap);
+
+      text(18, y + 16, compactProjectName(project.name || 'Untitled Project'), {
+        fill: isActive ? '#f8c15d' : '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '14'
+      }, tap);
+
+      text(18, y + 30, project.type || 'general', {
+        fill: 'rgba(244,239,228,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      }, tap);
+
+      text(220, y + 16, recentTimeLabel(project.updated_at), {
+        fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      }, tap);
+
+      const compactCount = [project.counts?.captures || 0, project.counts?.insights || 0].reduce((a, b) => a + b, 0);
+      text(220, y + 30, compactCount ? `${compactCount} items` : 'quiet', {
+        fill: 'rgba(244,239,228,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      }, tap);
+
+      if (isActive) {
+        mk('rect', { x: 18, y: y + 36, width: 20, height: 2, rx: 1, ry: 1, fill: '#f8c15d' }, tap);
+      }
+
+      tap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        stateData.projectListIndex = absoluteIndex;
+        if (isSelected) activateSelectedProject();
+        else render();
+      });
     });
   }
 
   function drawSurfaceHeader(card) {
+    const project = getProjectMemory();
+    drawColorBleed('rgba(255,255,255,0.08)', 0.08);
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24,
@@ -851,17 +1010,23 @@
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
-    text(42, 40, card.title, {
+    text(42, 36, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '40', 'letter-spacing': '0.0em'
     });
+    text(14, 58, compactProjectName(projectDisplayName(project)), {
+      fill: 'rgba(8,8,8,0.52)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    });
+    mk('rect', { x: 14, y: 62, width: 20, height: 2, rx: 1, ry: 1, fill: 'rgba(8,8,8,0.28)' });
   }
 
   function drawCard(card, index) {
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
-    const showStackIcon = !selected;
+    const stackLead = !selected && layout.depth === 0;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(layout.opacity), tabindex: '0', role: 'button',
@@ -869,7 +1034,7 @@
       'data-card-index': index
     });
 
-    const rect = mk('rect', {
+    mk('rect', {
       x: 0, y: 0, width: 150, height: 150, rx: 20, ry: 20,
       fill: card.color,
       stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
@@ -877,20 +1042,19 @@
     }, group);
 
     if (selected) {
+      mk('rect', { x: 0, y: 0, width: 150, height: 24, rx: 20, ry: 20, fill: 'rgba(255,255,255,0.10)' }, group);
+      mk('rect', { x: 0, y: 18, width: 150, height: 8, fill: 'rgba(255,255,255,0.10)' }, group);
       drawCardIcon(card, true, group);
-      text(18, 78, card.title, {
+      text(18, 80, card.title, {
         fill: 'rgba(8,8,8,0.98)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '22'
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '24'
       }, group);
 
-      // Glanceable stat — one big number that tells you what matters
-      const project = getProjectMemory();
-      const memory = getMemory();
       let statNumber = '';
       let statLabel = '';
-
+      const project = getProjectMemory();
       if (card.id === 'show') {
-        statNumber = String((memory.captures || []).length);
+        statNumber = String(getCaptureList().length);
         statLabel = 'frames';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
@@ -899,7 +1063,7 @@
         const qCount = (project?.open_questions || []).length;
         const iCount = (project?.insights || []).length;
         statNumber = qCount > 0 ? String(qCount) : String(iCount);
-        statLabel = qCount > 0 ? 'open asks' : 'signals';
+        statLabel = qCount > 0 ? 'asks' : 'signals';
       } else if (card.id === 'now') {
         const pCount = (project?.pending_decisions || []).length;
         const clarity = project?.clarity_score || 0;
@@ -908,72 +1072,47 @@
       }
 
       if (statNumber && statNumber !== '0') {
-        text(130, 78, statNumber, {
+        text(132, 82, statNumber, {
           fill: 'rgba(8,8,8,0.22)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '42',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '48',
           'text-anchor': 'end'
         }, group);
       }
 
-      // Role text
-      const displayRole = lower(card.roleShort || card.role);
-      const words = displayRole.split(/\s+/);
-      const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
-      const secondLine = words.slice(Math.ceil(words.length / 2)).join(' ');
-      text(18, 101, firstLine, {
-        fill: 'rgba(8,8,0,0.74)',
+      text(18, 112, lower(card.roleShort || card.role), {
+        fill: 'rgba(8,8,8,0.70)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12'
       }, group);
-      if (secondLine) {
-        text(18, 116, secondLine, {
-          fill: 'rgba(8,8,8,0.74)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12'
-        }, group);
-      }
 
-      // Stat label
       if (statLabel) {
-        text(18, 136, lower(statLabel), {
-          fill: 'rgba(8,8,8,0.38)',
+        text(18, 132, lower(statLabel), {
+          fill: 'rgba(8,8,8,0.40)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
         }, group);
       }
 
-      // Notification dots
       const pendingCount = (project?.pending_decisions || []).length;
       const questionCount = (project?.open_questions || []).length;
       if (pendingCount > 0 && card.id === 'now') {
-        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#ff8a65', opacity: '0.9' }, group);
-        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
-        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.86' }, group);
       }
       if (questionCount > 0 && card.id === 'know') {
-        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#f8c15d', opacity: '0.9' }, group);
-        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
-        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.86' }, group);
       }
-    } else if (showStackIcon) {
+    } else if (stackLead) {
       if (card.iconPath) {
         image(card.iconPath, {
           x: 18, y: 18, width: 30, height: 30,
           preserveAspectRatio: 'xMidYMid meet', opacity: 1,
           style: 'filter: brightness(0) saturate(100%);'
         }, group);
-      } else {
-        text(18, 42, card.iconFallback || '•', {
-          fill: 'rgba(8,8,8,0.96)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '28'
-        }, group);
       }
-      // Stack notification dots
       const project = getProjectMemory();
       if (card.id === 'now' && (project?.pending_decisions || []).length > 0) {
-        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.8' }, group);
-        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 130, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.8' }, group);
       }
       if (card.id === 'know' && (project?.open_questions || []).length > 0) {
-        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.8' }, group);
-        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 130, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.8' }, group);
       }
     }
 
@@ -988,7 +1127,7 @@
       if (event.key === 'Enter' || event.key === ' ') activate(event);
     });
 
-    return { group, rect };
+    return { group };
   }
 
   function drawSectionLabel(group, x, y, label) {
@@ -1069,20 +1208,20 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
-    text(14, 60, lower(model.title), {
+    text(14, 72, 'camera', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     });
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 89, 'capture', {
+    mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
+    text(24, 100, 'capture', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 89, model.captures.length ? `${model.captures.length}` : '', {
+    text(216, 100, model.captures.length ? `${model.captures.length}` : '', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1094,27 +1233,27 @@
       openCameraFromShow('touch');
     });
 
-    mk('rect', { x: 14, y: 106, width: 212, height: 100, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 118, width: 212, height: 94, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.imageHref) {
       image(model.imageHref, {
-        x: 14, y: 106, width: 212, height: 100, preserveAspectRatio: 'xMidYMid slice', opacity: 1
+        x: 14, y: 118, width: 212, height: 94, preserveAspectRatio: 'xMidYMid slice', opacity: 1
       });
-      mk('rect', { x: 14, y: 174, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
-      text(22, 188, 'last frame', {
+      mk('rect', { x: 14, y: 180, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
+      text(22, 194, recentTimeLabel(model.createdAt), {
         fill: 'rgba(244,239,228,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapText(undefined, model.summary.slice(0, 52), 22, 200, 190, 11, 'rgba(244,239,228,0.92)', '10');
+      wrapText(undefined, model.summary.slice(0, 52), 22, 206, 190, 11, 'rgba(244,239,228,0.92)', '10');
     } else {
-      text(14, 142, 'no frames', {
+      text(14, 154, 'no frames', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
     }
 
-    const thumbY = 212;
+    const thumbY = 218;
     const recent = model.captures.slice().reverse().slice(0, 3);
     recent.forEach((capture, i) => {
       const x = i * 80;
@@ -1164,20 +1303,20 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
-    text(14, 60, lower(model.title), {
+    text(14, 72, 'voice', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     });
 
     const actionBar = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, actionBar);
-    text(24, 89, 'record', {
+    mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, actionBar);
+    text(24, 100, 'record', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, actionBar);
-    text(216, 89, model.entries.length ? `${model.entries.length}` : '', {
+    text(216, 100, model.entries.length ? `${model.entries.length}` : '', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1189,16 +1328,16 @@
       openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
     });
 
-    mk('rect', { x: 14, y: 106, width: 212, height: 78, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 118, width: 212, height: 74, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 122, 'last entry', {
+      text(20, 134, `last entry · ${recentTimeLabel(model.current.created_at)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 140, 184, 13, 'rgba(8,8,8,0.96)', '13');
+      wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 152, 184, 13, 'rgba(8,8,8,0.96)', '13');
     } else {
-      text(20, 136, 'no entries', {
+      text(20, 148, 'no entries', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
@@ -1207,24 +1346,24 @@
 
     const visible = model.entries.slice(0, 3);
     visible.forEach((entry, index) => {
-      const y = 192 + (index * 30);
+      const y = 198 + (index * 28);
       const selected = index === model.currentIndex;
       const rowTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 14,
         y,
         width: 212,
-        height: 24,
+        height: 22,
         rx: 6,
         ry: 6,
         fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)'
       }, rowTap);
-      text(22, y + 14, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
+      text(22, y + 13, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
         fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.92)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '11'
       }, rowTap);
-      text(216, y + 14, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
+      text(216, y + 13, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
         fill: selected ? 'rgba(244,239,228,0.60)' : 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9',
@@ -1255,9 +1394,9 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
+    text(14, 72, 'project state', { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
-    const chainY = 78;
+    const chainY = 90;
     const phaseLabel = {
       observe: 'observing',
       research: 'researching',
@@ -1302,8 +1441,8 @@
       const boxH = pdOptions.length >= 2 ? 132 : 96;
       mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
-      const countLabel = pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : '';
-      text(18, boxY + 16, 'decision arena' + countLabel, {
+      const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
+      text(18, boxY + 16, 'decision' + countLabel, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1396,7 +1535,7 @@
     // Touchable lane tabs
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 44 },
-      { id: 'signals', label: 'signals', width: 52 },
+      { id: 'signals', label: 'signal', width: 48 },
       { id: 'decisions', label: 'decided', width: 52 },
       { id: 'open loops', label: 'loops', width: 42 }
     ];
@@ -1405,13 +1544,13 @@
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: 52, width: tab.width, height: 22, rx: 6, ry: 6,
+        x: tabX, y: 66, width: tab.width, height: 22, rx: 6, ry: 6,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: 52 + 22 / 2 + 4,
+        x: tabX + tab.width / 2, y: 66 + 22 / 2 + 4,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'middle'
       }, pillGroup);
@@ -1433,7 +1572,7 @@
     });
 
     // Filter chips row - touchable
-    const chipY = 80;
+    const chipY = 94;
     let chipX = 14;
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
     activeChips.forEach((c) => {
@@ -1465,14 +1604,14 @@
     });
 
     // Result count
-    text(226, chipY + 13, String(items.length), {
+    text(226, chipY + 13, items.length ? `${items.length}` : '', {
       fill: 'rgba(8,8,8,0.40)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10', 'text-anchor': 'end'
     });
 
     // Content area - directly below chips, no PTT needed
-    const contentY = 108;
+    const contentY = 122;
 
     if (currentState === STATES.KNOW_BROWSE) {
       // Item title
@@ -1573,7 +1712,7 @@
 
     const surface = activeSurface();
 
-    if (surface === 'home') {
+    if (surface === 'home' && currentState !== STATES.PROJECT_SWITCHER) {
       cards
         .map((card, index) => ({ card, index, layout: cardLayout(index) }))
         .sort((a, b) => {
@@ -1584,12 +1723,13 @@
         .forEach(({ card, index }) => drawCard(card, index));
     }
 
+    drawProjectSwitcher();
     drawShowSurface();
     drawTellSurface();
     drawNowPanel();
     drawInsightSurface();
 
-    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell';
+    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
@@ -1597,6 +1737,14 @@
 
   function handleScrollDirection(direction) {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER: {
+        const projects = getProjects();
+        if (!projects.length) break;
+        stateData.projectListIndex = ((stateData.projectListIndex || 0) + (direction > 0 ? 1 : -1) + projects.length) % projects.length;
+        render();
+        break;
+      }
+
       case STATES.SHOW_BROWSE: {
         const captures = getCaptureList();
         if (!captures.length) break;
@@ -1693,6 +1841,10 @@
 
   function handleSideClick() {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER:
+        activateSelectedProject();
+        break;
+
       case STATES.SHOW_BROWSE:
         openCameraFromShow('hardware');
         break;
@@ -1816,6 +1968,11 @@
 
   function handleNativeBack(event) {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER:
+        if (event) event.preventDefault?.();
+        transition(STATES.HOME);
+        return;
+
       case STATES.SHOW_BROWSE:
         if (event) event.preventDefault?.();
         goHome();
@@ -1968,7 +2125,7 @@
     }
   });
 
-  // Shake to go home
+  // Shake routing
   let lastShakeAt = 0;
   window.addEventListener('devicemotion', event => {
     const accel = event.accelerationIncludingGravity || event.acceleration;
@@ -1977,7 +2134,15 @@
     const now = Date.now();
     if (magnitude < 42 || now - lastShakeAt < 1400) return;
     lastShakeAt = now;
-    if (currentState !== STATES.HOME) goHome();
+    if (currentState === STATES.PROJECT_SWITCHER) {
+      transition(STATES.HOME);
+      return;
+    }
+    if (currentState === STATES.HOME) {
+      openProjectSwitcher();
+      return;
+    }
+    goHome();
   });
 
   // === Init ===
@@ -2072,7 +2237,7 @@
     // Init audio engine on first user gesture (required by browsers)
     if (window.StructaAudio) window.StructaAudio.init();
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
-      window.StructaImpactChain.start(4); // 4bpm = every 15s
+      window.StructaImpactChain.start(2); // 2bpm = every 30s
     }
   }
   ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {
@@ -2103,20 +2268,22 @@
     var cmd = e.detail;
 
     if (cmd.command === 'new-project') {
-      // Create new project — for now, just rename current if untitled
-      var project = getProjectMemory();
-      if (project && project.name === 'untitled project' && cmd.name) {
-        native?.setProjectName?.(cmd.name);
+      if (cmd.name && native?.createProject) {
+        native.createProject(cmd.name);
         pushLog('project: ' + cmd.name.slice(0, 30), 'voice');
-      } else {
-        pushLog('project rename requires fresh start', 'voice');
+        transition(STATES.HOME);
       }
       render();
     }
 
     if (cmd.command === 'switch-project') {
-      // Multi-project: for now, log the intent
-      pushLog('switch: ' + (cmd.name || '').slice(0, 30) + ' (coming soon)', 'voice');
+      var switched = native?.switchProject?.(cmd.name);
+      if (switched) {
+        pushLog('project: ' + ((switched.name || cmd.name || '').slice(0, 30)), 'voice');
+        transition(STATES.HOME);
+      } else {
+        pushLog('project not found: ' + (cmd.name || '').slice(0, 24), 'voice');
+      }
     }
   });
 

@@ -1008,6 +1008,12 @@
         'font-size': '10'
       }, tap);
 
+      text(128, y + 30, project.status || 'active', {
+        fill: isSelected ? 'rgba(248,193,93,0.58)' : 'rgba(244,239,228,0.28)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      }, tap);
+
       text(220, y + 16, recentTimeLabel(project.updated_at), {
         fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -1034,6 +1040,12 @@
         if (isSelected) activateSelectedProject();
         else render();
       });
+    });
+
+    text(14, 268, 'say: switch project / archive project / delete project', {
+      fill: 'rgba(244,239,228,0.34)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
     });
   }
 
@@ -2386,6 +2398,28 @@
       } else {
         pushLog('project not found: ' + (cmd.name || '').slice(0, 24), 'voice');
       }
+    }
+
+    if (cmd.command === 'archive-project') {
+      var archived = native?.archiveProject?.(cmd.name);
+      if (archived && archived.ok) {
+        pushLog('project archived', 'voice');
+        transition(STATES.HOME);
+      } else {
+        pushLog((archived && archived.error) || 'archive unavailable', 'voice');
+      }
+      render();
+    }
+
+    if (cmd.command === 'delete-project') {
+      var deleted = native?.deleteProject?.(cmd.name);
+      if (deleted && deleted.ok) {
+        pushLog('project deleted', 'voice');
+        transition(STATES.HOME);
+      } else {
+        pushLog((deleted && deleted.error) || 'delete unavailable', 'voice');
+      }
+      render();
     }
   });
 

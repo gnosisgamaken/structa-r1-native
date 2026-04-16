@@ -84,13 +84,14 @@
 
       var payload = {
         message: request.message,
-        useLLM: true,
+        useLLM: request.opts.useSerpAPI ? false : true,
         wantsR1Response: request.opts.speak || false,
         wantsJournalEntry: request.opts.journal || false
       };
 
       if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
       if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
+      if (request.opts.useSerpAPI) payload.useSerpAPI = true;
 
       if (typeof PluginMessageHandler !== 'undefined') {
         try {
@@ -513,25 +514,54 @@
    */
   function research(query) {
     var context = buildProjectContext({ deep: false });
-    var prompt = 'Search the web for: "' + query + '"\n\n' +
-      (context ? 'Project context: ' + context.slice(0, 120) + '\n\n' : '') +
-      'Return exactly 3 key findings. Each finding: 1 sentence, 10 words max. Number them 1-3.';
+    var formulationPrompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
+      (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
+      'Topic: "' + query + '"\n' +
+      'Write the best web search query only. 3 to 8 words.';
 
-    return sendToLLM(prompt, { speak: false, journal: false, timeout: 25000, priority: 'low' }).then(function(result) {
-      if (!result || !result.ok) return { ok: false, findings: [] };
-      var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
-      var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
-      // Store as research node
-      if (native && native.addNode && findings.length) {
-        native.addNode({
-          type: 'research', title: 'research: ' + query.slice(0, 40),
-          body: findings.join(' | '), source: 'serp',
-          research_findings: findings,
-          tags: query.toLowerCase().split(/\s+/).slice(0, 3)
+    return sendToLLM(formulationPrompt, { speak: false, journal: false, timeout: 15000, priority: 'high' })
+      .then(function(formulated) {
+        var searchQuery = (formulated && formulated.ok && formulated.clean) ? formulated.clean.replace(/^["']|["']$/g, '') : query;
+        return sendToLLM(JSON.stringify({
+          query: searchQuery,
+          tag: 'search',
+          useLocation: false
+        }), {
+          useSerpAPI: true,
+          speak: false,
+          journal: false,
+          timeout: 25000,
+          priority: 'high'
+        }).then(function(searchResult) {
+          return { searchQuery: searchQuery, searchResult: searchResult };
         });
-      }
-      return { ok: true, query: query, findings: findings, raw: result.clean };
-    });
+      })
+      .then(function(payload) {
+        if (!payload.searchResult || !payload.searchResult.ok) return { ok: false, findings: [] };
+        var rawResults = payload.searchResult.text || payload.searchResult.clean || '';
+        var synthesisPrompt = '🚫 DO NOT SEARCH AGAIN. DO NOT SAVE NOTES.\n' +
+          (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
+          'Search topic: "' + query + '"\n' +
+          'Search query used: "' + payload.searchQuery + '"\n\n' +
+          'Search results:\n' + String(rawResults).slice(0, 2400) + '\n\n' +
+          'Return exactly 3 numbered findings. Each finding must be 10 words max and useful for the project.';
+        return sendToLLM(synthesisPrompt, { speak: false, journal: false, timeout: 20000, priority: 'high' })
+          .then(function(result) {
+            if (!result || !result.ok) return { ok: false, findings: [] };
+            var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
+            var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
+            if (native && native.addNode && findings.length) {
+              native.addNode({
+                type: 'research', title: 'research: ' + query.slice(0, 40),
+                body: findings.join(' | '), source: 'serp',
+                research_findings: findings,
+                tags: query.toLowerCase().split(/\s+/).slice(0, 3),
+                meta: { search_query: payload.searchQuery }
+              });
+            }
+            return { ok: true, query: query, searchQuery: payload.searchQuery, findings: findings, raw: result.clean, serpRaw: rawResults };
+          });
+      });
   }
 
   // === Export generation ===

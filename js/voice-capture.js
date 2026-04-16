@@ -65,6 +65,8 @@
     { pattern: /^export\s+(brief|decisions|research|summary)/i, type: 'export' },
     { pattern: /^(?:new project|create project|start project)\s+(.+)/i, type: 'new-project' },
     { pattern: /^(?:switch to|open project|go to project)\s+(.+)/i, type: 'switch-project' },
+    { pattern: /^(?:archive project|park project)\s*(.*)/i, type: 'archive-project' },
+    { pattern: /^(?:delete project|remove project)\s*(.*)/i, type: 'delete-project' },
     { pattern: /^(?:set type|project type)\s+(architecture|software|design|film|music|writing|research|general)/i, type: 'set-type' },
     { pattern: /^(?:i am a|my role is|i'm a)\s+(.+)/i, type: 'set-role' }
   ];
@@ -123,6 +125,26 @@
           }));
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
             detail: { source: 'switch-project-command' }
+          }));
+          return true;
+
+        case 'archive-project':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'archive project: ' + (arg || 'active').slice(0, 30) });
+          window.dispatchEvent(new CustomEvent('structa-voice-command', {
+            detail: { command: 'archive-project', name: arg }
+          }));
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'archive-project-command' }
+          }));
+          return true;
+
+        case 'delete-project':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'delete project: ' + (arg || 'active').slice(0, 30) });
+          window.dispatchEvent(new CustomEvent('structa-voice-command', {
+            detail: { command: 'delete-project', name: arg }
+          }));
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'delete-project-command' }
           }));
           return true;
 

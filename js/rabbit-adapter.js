@@ -78,6 +78,7 @@
       created_at: input.created_at,
       meta: input.meta || {}
     });
+    project.status = input.status || 'active';
     project.structure = Array.isArray(input.structure) ? input.structure : [];
     project.backlog = Array.isArray(input.backlog) ? input.backlog : [];
     project.decisions = Array.isArray(input.decisions) ? input.decisions : [];
@@ -526,6 +527,7 @@
           project_id: project.project_id,
           name: project.name || 'untitled project',
           type: project.type || 'general',
+          status: project.status || 'active',
           user_role: project.user_role || '',
           updated_at: project.updated_at,
           created_at: project.created_at,
@@ -550,7 +552,11 @@
     var project = createDefaultProject({
       project_id: contracts.makeEntryId('project'),
       name: rawName,
-      type: contracts.projectTypes.includes(type) ? type : 'general'
+      type: contracts.projectTypes.includes(type) ? type : 'general',
+      status: 'active'
+    });
+    memory.projects.forEach(function(entry) {
+      if (entry.project_id !== project.project_id && entry.status !== 'archived') entry.status = 'parked';
     });
     memory.projects.unshift(project);
     memory.active_project_id = project.project_id;
@@ -571,6 +577,10 @@
       return lower(entry.name).includes(needle);
     });
     if (!project) return null;
+    memory.projects.forEach(function(entry) {
+      if (entry.project_id !== project.project_id && entry.status !== 'archived') entry.status = 'parked';
+    });
+    project.status = 'active';
     memory.active_project_id = project.project_id;
     syncActiveProjectAlias();
     rebuildLegacyViews();
@@ -579,6 +589,55 @@
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return project;
+  }
+
+  function archiveProject(projectIdOrName) {
+    ensureProjectRegistry();
+    var project = switchProject(projectIdOrName) || memory.projectMemory;
+    if (!project) return { ok: false, error: 'project not found' };
+    if (memory.projects.length <= 1) return { ok: false, error: 'cannot archive last project' };
+
+    project.status = 'archived';
+    var replacement = memory.projects.find(function(entry) {
+      return entry.project_id !== project.project_id && entry.status !== 'archived';
+    }) || memory.projects.find(function(entry) { return entry.project_id !== project.project_id; });
+    if (replacement) {
+      replacement.status = 'active';
+      memory.active_project_id = replacement.project_id;
+      syncActiveProjectAlias();
+      rebuildLegacyViews();
+    }
+    memory.uiState.last_event_summary = 'project archived';
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return { ok: true, project: project };
+  }
+
+  function deleteProject(projectIdOrName) {
+    ensureProjectRegistry();
+    var needle = lower(projectIdOrName || '').trim();
+    var project = memory.projects.find(function(entry) {
+      return entry.project_id === projectIdOrName || lower(entry.name) === needle;
+    }) || memory.projects.find(function(entry) {
+      return lower(entry.name).includes(needle);
+    }) || memory.projectMemory;
+    if (!project) return { ok: false, error: 'project not found' };
+    if (memory.projects.length <= 1) return { ok: false, error: 'cannot delete last project' };
+
+    memory.projects = memory.projects.filter(function(entry) { return entry.project_id !== project.project_id; });
+    if (memory.active_project_id === project.project_id) {
+      var replacement = memory.projects.find(function(entry) { return entry.status !== 'archived'; }) || memory.projects[0];
+      if (replacement) {
+        replacement.status = 'active';
+        memory.active_project_id = replacement.project_id;
+      }
+    }
+    syncActiveProjectAlias();
+    rebuildLegacyViews();
+    memory.uiState.last_event_summary = 'project deleted';
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return { ok: true, project_id: project.project_id };
   }
 
   function updateUIState(patch = {}) {
@@ -1195,6 +1254,8 @@
     getActiveProjectId,
     switchProject,
     createProject,
+    archiveProject,
+    deleteProject,
     getMemory,
     getUIState,
     updateUIState,

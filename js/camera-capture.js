@@ -349,7 +349,7 @@
       input_type: annotation ? 'image+voice' : 'image',
       image_asset: resolvedAsset,
       prompt_text: annotation || (facingMode === 'user' ? 'selfie capture' : 'camera capture'),
-      summary: 'analyzing...',
+      summary: annotation ? 'show+tell captured' : 'image captured',
       approval_state: 'draft',
       tags: annotation ? [facingMode, 'capture', 'show-tell'] : [facingMode, 'capture'],
       links: [],
@@ -357,14 +357,22 @@
         facingMode, width: w, height: h, voiceAnnotation: annotation,
         image_asset_id: resolvedAsset.entry_id || '',
         image_asset_name: resolvedAsset.name || '',
-        preview_data: dataUrl
+        preview_data: dataUrl,
+        analysis_status: 'pending'
       }
     });
 
     lastBundle = bundle;
     native?.storeCaptureBundle?.(bundle);
+    native?.updateUIState?.({
+      last_capture_entry_id: bundle?.entry_id || '',
+      last_capture_summary: annotation ? 'show+tell captured' : 'image captured'
+    });
+    window.dispatchEvent(new CustomEvent('structa-capture-stored', {
+      detail: { entryId: bundle?.entry_id || '', summary: bundle?.summary || '' }
+    }));
 
-    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'image saved' });
+    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell captured' : 'image captured' });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: annotation ? 'show-tell' : 'capture' }
     }));
@@ -375,12 +383,12 @@
       captureNode = native.addNode({
         type: 'capture',
         title: annotation ? 'show+tell: ' + annotation.slice(0, 40) : 'visual capture',
-        body: annotation || 'analyzing...',
+        body: annotation || 'visual capture',
         source: 'camera',
         capture_image: bundle?.entry_id || null,
         voice_annotation: annotation || null,
         tags: annotation ? ['show-tell', facingMode] : [facingMode],
-        meta: { bundle_id: bundle?.entry_id || null, facingMode: facingMode }
+        meta: { bundle_id: bundle?.entry_id || null, facingMode: facingMode, analysis_status: 'pending', preview_data: dataUrl }
       });
     }
 
@@ -388,6 +396,7 @@
 
     // Send to LLM with voice annotation context
     if (window.StructaLLM) {
+      native?.appendLogEntry?.({ kind: 'camera', message: 'visual analysis queued' });
       var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
       var analyze = function(attempt) {
         return window.StructaLLM.processImage(rawBase64, desc, {
@@ -403,6 +412,9 @@
                 cap.summary = result.clean;
                 cap.ai_analysis = result.clean;
                 cap.prompt_text = annotation || cap.prompt_text || '';
+                cap.preview_data = cap.preview_data || dataUrl;
+                cap.data = cap.data || dataUrl;
+                cap.meta = { ...(cap.meta || {}), analysis_status: 'ready', preview_data: cap.preview_data || dataUrl };
               }
               var nodes = project.nodes || [];
               var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
@@ -412,6 +424,7 @@
                 node.body = result.clean;
                 node.tags = Array.isArray(node.tags) ? node.tags : [];
                 if (annotation && node.tags.indexOf('show-tell') === -1) node.tags.push('show-tell');
+                node.meta = { ...(node.meta || {}), analysis_status: 'ready', preview_data: node.meta?.preview_data || dataUrl };
                 if (insightNode && insightNode.node_id) {
                   node.links = Array.isArray(node.links) ? node.links : [];
                   if (node.links.indexOf(insightNode.node_id) === -1) node.links.push(insightNode.node_id);
@@ -436,8 +449,11 @@
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
               if (cap) {
-                cap.summary = annotation ? 'show+tell saved' : 'image saved';
-                cap.ai_analysis = cap.summary;
+                cap.summary = annotation ? 'show+tell captured' : 'frame saved';
+                cap.ai_analysis = '';
+                cap.preview_data = cap.preview_data || dataUrl;
+                cap.data = cap.data || dataUrl;
+                cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
               }
             });
             native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
@@ -448,8 +464,11 @@
           native?.touchProjectMemory?.(function(project) {
             var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
             if (cap) {
-              cap.summary = annotation ? 'show+tell saved' : 'image saved';
-              cap.ai_analysis = cap.summary;
+                cap.summary = annotation ? 'show+tell captured' : 'frame saved';
+              cap.ai_analysis = '';
+              cap.preview_data = cap.preview_data || dataUrl;
+              cap.data = cap.data || dataUrl;
+              cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
             }
           });
           native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });

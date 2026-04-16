@@ -174,6 +174,10 @@
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
+    }).sort((a, b) => {
+      const aTime = new Date(a?.captured_at || a?.created_at || a?.meta?.captured_at || 0).getTime();
+      const bTime = new Date(b?.captured_at || b?.created_at || b?.meta?.captured_at || 0).getTime();
+      return aTime - bTime;
     });
   }
 
@@ -195,7 +199,7 @@
   }
 
   function getCaptureImageHref(capture) {
-    const direct = capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.preview_data || capture?.meta?.image_asset?.data || '';
+    const direct = capture?.preview_data || capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.preview_data || capture?.meta?.image_asset?.data || '';
     if (direct) return direct;
     const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
     const imageAssetId = capture?.image_asset?.entry_id || capture?.meta?.image_asset_id || '';
@@ -216,11 +220,45 @@
         item?.name === key ||
         item?.name === imageAssetName;
     });
-    return linked?.image_asset?.data || linked?.image_asset?.url || linked?.asset?.data || linked?.data || linked?.meta?.image_asset?.data || '';
+    return linked?.preview_data || linked?.image_asset?.data || linked?.image_asset?.url || linked?.asset?.data || linked?.data || linked?.meta?.preview_data || linked?.meta?.image_asset?.data || '';
+  }
+
+  function captureAnalysisReady(capture) {
+    if (!capture) return false;
+    const state = lower(capture?.meta?.analysis_status || '');
+    if (state === 'ready') return true;
+    const summary = lower(capture?.ai_analysis || capture?.summary || '');
+    if (!summary) return false;
+    return !summary.includes('analyzing') &&
+      !summary.includes('image captured') &&
+      !summary.includes('show+tell captured') &&
+      !summary.includes('image saved') &&
+      !summary.includes('frame saved') &&
+      !summary.includes('preview unavailable') &&
+      !summary.includes('visual capture');
+  }
+
+  function freshWorkspaceState() {
+    const ui = getUIState();
+    const projects = getProjects();
+    const project = getProjectMemory();
+    if (ui?.onboarded) return false;
+    if (projects.length !== 1) return false;
+    if (lower(project?.name || '') !== 'untitled project') return false;
+    const captures = (project?.captures || []).length;
+    const insights = (project?.insights || []).length;
+    const backlog = (project?.backlog || []).length;
+    const asks = (project?.open_questions || []).length;
+    const pending = (project?.pending_decisions || []).length;
+    const nodes = (project?.nodes || []).length;
+    return captures + insights + backlog + asks + pending + nodes === 0;
   }
 
   function getCaptureSummary(capture) {
-    return lower(capture?.ai_analysis || capture?.ai_response || capture?.summary || capture?.prompt_text || 'untitled capture');
+    const raw = String(capture?.ai_analysis || capture?.ai_response || capture?.summary || capture?.prompt_text || 'untitled capture');
+    const signalMatch = raw.match(/signal:\s*(.+)/i);
+    if (signalMatch && signalMatch[1]) return lower(signalMatch[1].trim());
+    return lower(raw);
   }
 
   function latestLogText() {
@@ -323,8 +361,12 @@
     const previousScroll = log.scrollTop;
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     if (!entries.length) {
-      log.innerHTML = '';
-      logPreview.textContent = '—';
+      if (logOpen) {
+        renderLogRows([], { includeStats: true });
+      } else {
+        log.innerHTML = '';
+      }
+      logPreview.textContent = getQueueLine();
       return;
     }
     renderLogRows(entries, { includeStats: logOpen });
@@ -706,6 +748,15 @@
     if (!allowStagingFlush() || !native?.flushMemory) return false;
     native.flushMemory().then(function() {
       stateData.projectFlushConfirm = false;
+      stateData.showCaptureEntryId = '';
+      stateData.showCaptureIndex = 0;
+      if (window.StructaHeartbeat?.stop) {
+        try { window.StructaHeartbeat.stop(); } catch (_) {}
+      }
+      if (window.StructaImpactChain?.pause) {
+        try { window.StructaImpactChain.pause('memory flush'); } catch (_) {}
+      }
+      chainStarted = false;
       selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
       transition(STATES.HOME);
     }).catch(function() {
@@ -768,12 +819,26 @@
   // === Heartbeat ===
   function maybeStartHeartbeat() {
     if (window.StructaHeartbeat && window.StructaHeartbeat.bpm === 0) {
-      const project = getProjectMemory();
-      const hasContent = (project?.backlog?.length || 0) + (project?.insights?.length || 0) + (project?.captures?.length || 0) + (project?.open_questions?.length || 0);
-      if (hasContent > 0) {
+      if (projectHasMeaningfulContent()) {
         window.StructaHeartbeat.start(3);
       }
     }
+  }
+
+  function projectHasMeaningfulContent() {
+    const project = getProjectMemory();
+    const captures = (project?.captures?.length || 0) + getCaptureList().length;
+    const voiceEntries = getVoiceEntries().length;
+    const count =
+      (project?.backlog?.length || 0) +
+      (project?.insights?.length || 0) +
+      (project?.open_questions?.length || 0) +
+      (project?.pending_decisions?.length || 0) +
+      (project?.decisions?.length || 0) +
+      (project?.nodes?.length || 0) +
+      captures +
+      voiceEntries;
+    return count > 0;
   }
 
   // === NOW card builder ===
@@ -1039,6 +1104,35 @@
     return el;
   }
 
+  function drawRasterFrame(href, attrs = {}, parent = svg) {
+    if (!href) return null;
+    const useForeignObject = /^data:image|^blob:/i.test(href);
+    if (!useForeignObject) return image(href, attrs, parent);
+
+    const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+    Object.entries(attrs).forEach(([key, value]) => fo.setAttribute(key, value));
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    wrapper.style.width = '100%';
+    wrapper.style.height = '100%';
+    wrapper.style.overflow = 'hidden';
+    wrapper.style.borderRadius = ((attrs.rx || 0) + 'px');
+    wrapper.style.opacity = attrs.opacity != null ? String(attrs.opacity) : '1';
+    const img = document.createElement('img');
+    img.src = href;
+    img.alt = '';
+    img.draggable = false;
+    img.style.width = '100%';
+    img.style.height = '100%';
+    img.style.display = 'block';
+    img.style.objectFit = 'cover';
+    img.style.objectPosition = 'center';
+    wrapper.appendChild(img);
+    fo.appendChild(wrapper);
+    parent.appendChild(fo);
+    return fo;
+  }
+
   let iconClipCounter = 0;
   function drawFramedIcon(href, frame, parent = svg, options = {}) {
     const inset = typeof options.inset === 'number' ? options.inset : 1.25;
@@ -1113,6 +1207,8 @@
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
     const selectedProject = projects[selected] || projects[0];
+    const isFreshWorkspace = freshWorkspaceState();
+    const headerTitle = isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project');
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
     if (recordingActive()) recordingDot(23, 25, 10, svg);
@@ -1129,7 +1225,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '22'
     });
-    text(14, 54, compactProjectName(selectedProject?.name || 'Untitled Project'), {
+    text(14, 54, headerTitle, {
       fill: '#f8c15d',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '15'
@@ -1142,11 +1238,22 @@
     });
     mk('rect', { x: 14, y: 60, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
 
-    if (!projects.length) {
-      text(14, 120, 'no projects yet', {
+    if (!projects.length || isFreshWorkspace) {
+      text(14, 118, isFreshWorkspace ? 'memory cleared' : 'no projects yet', {
         fill: '#f4efe4',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
+      });
+      text(14, 142, isFreshWorkspace ? 'fresh staging state' : 'start by naming a project', {
+        fill: 'rgba(244,239,228,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      });
+      text(226, 268, allowStagingFlush() ? 'flush resets onboarding' : 'ready for first project', {
+        fill: 'rgba(244,239,228,0.34)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
       });
       return;
     }
@@ -1394,7 +1501,13 @@
 
     const activate = event => {
       event.preventDefault();
-      if (selected && isHome()) openCard(card);
+      if (selected && isHome()) {
+        if (card.id === 'show' && event.type === 'pointerup') {
+          openCameraFromShow('touch');
+          return;
+        }
+        openCard(card);
+      }
       else if (isHome()) selectIndex(index);
     };
 
@@ -1485,8 +1598,12 @@
   function buildShowSummary() {
     const captures = getCaptureList();
     const project = getProjectMemory();
+    const preferredEntryId = stateData.showCaptureEntryId || getUIState().last_capture_entry_id || '';
+    const preferredIndex = preferredEntryId
+      ? captures.findIndex(capture => (capture?.entry_id || capture?.id || '') === preferredEntryId)
+      : -1;
     const safeIndex = captures.length
-      ? Math.max(0, Math.min(typeof stateData.showCaptureIndex === 'number' ? stateData.showCaptureIndex : captures.length - 1, captures.length - 1))
+      ? Math.max(0, Math.min(preferredIndex >= 0 ? preferredIndex : (typeof stateData.showCaptureIndex === 'number' ? stateData.showCaptureIndex : captures.length - 1), captures.length - 1))
       : 0;
     stateData.showCaptureIndex = safeIndex;
     const current = captures[safeIndex] || null;
@@ -1499,6 +1616,8 @@
       status: stateData.showStatus || (captures.length ? 'reviewing' : 'empty'),
       summary: current ? getCaptureSummary(current) : 'no frames',
       imageHref: current ? getCaptureImageHref(current) : '',
+      analysisReady: current ? captureAnalysisReady(current) : false,
+      analysisState: lower(current?.meta?.analysis_status || ''),
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null
     };
   }
@@ -1508,6 +1627,7 @@
     const showCard = cards.find(c => c.id === 'show');
     const model = buildShowSummary();
     const inlineListening = recordingActive() && activeSurface() === 'show';
+    const canReprompt = !!(model.current && model.analysisReady);
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
@@ -1518,7 +1638,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, inlineListening ? 'release reprompt' : 'ptt in lens', {
+    text(216, 92, inlineListening ? 'release reprompt' : 'ptt narrates in lens', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1543,8 +1663,8 @@
         'font-size': '10'
       });
     } else if (model.imageHref) {
-      image(model.imageHref, {
-        x: 14, y: 112, width: 212, height: 112, preserveAspectRatio: 'xMidYMid slice', opacity: 1
+      drawRasterFrame(model.imageHref, {
+        x: 14, y: 112, width: 212, height: 112, preserveAspectRatio: 'xMidYMid slice', opacity: 1, rx: 12, ry: 12
       });
       mk('rect', { x: 14, y: 192, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
       text(22, 206, recentTimeLabel(model.createdAt), {
@@ -1552,8 +1672,16 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, model.summary.slice(0, 52), 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
-      if (inlineListening) {
+      wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : 'processing visual note', 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      if (!model.analysisReady) {
+        text(210, 129, 'processing', {
+          fill: 'rgba(244,239,228,0.88)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10',
+          'text-anchor': 'end'
+        });
+      }
+      if (inlineListening && canReprompt) {
         mk('rect', { x: 18, y: 118, width: 132, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.78)' });
         text(28, 130, 'release to reprompt', {
           fill: 'rgba(244,239,228,0.96)',
@@ -1562,19 +1690,24 @@
         });
       }
     } else if (model.captures.length) {
-      wrapTextBlock(undefined, lower(String(model.summary || 'visual capture stored')), 20, 148, 186, 13, 'rgba(8,8,8,0.88)', '13', 4);
-      text(20, 206, 'frame stored · preview unavailable', {
+      text(20, 148, 'frame saved', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      wrapTextBlock(undefined, lower(String(model.summary || 'processing visual note')), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      text(20, 206, model.analysisState === 'pending' ? 'processing visual note' : 'saved without preview', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
     } else {
-      text(20, 148, 'ready to capture', {
+      text(20, 150, 'no frames yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 172, 'touch to start camera', {
+      text(20, 172, 'touch open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1598,7 +1731,7 @@
       const active = capture === model.current;
       mk('rect', { x, y: thumbY, width: 62, height: 42, rx: 8, ry: 8, fill: active ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.10)' });
       if (href) {
-        image(href, { x, y: thumbY, width: 62, height: 42, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68 });
+        drawRasterFrame(href, { x, y: thumbY, width: 62, height: 42, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68, rx: 8, ry: 8 });
       } else {
         text(x + 8, thumbY + 24, `${i + 1}`, {
           fill: 'rgba(8,8,8,0.48)',
@@ -1616,6 +1749,7 @@
         event.stopPropagation();
         const absoluteIndex = model.captures.indexOf(capture);
         stateData.showCaptureIndex = absoluteIndex >= 0 ? absoluteIndex : 0;
+        stateData.showCaptureEntryId = capture?.entry_id || capture?.id || '';
         stateData.showStatus = 'visual memory';
         render();
       });
@@ -2208,6 +2342,8 @@
         if (!captures.length) break;
         const max = captures.length;
         stateData.showCaptureIndex = ((stateData.showCaptureIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
+        const capture = captures[stateData.showCaptureIndex] || null;
+        stateData.showCaptureEntryId = capture?.entry_id || capture?.id || '';
         stateData.showStatus = 'reviewing';
         render();
         break;
@@ -2386,6 +2522,10 @@
         break;
 
       case STATES.SHOW_BROWSE:
+        if (!captureAnalysisReady(buildShowSummary().current)) {
+          pushLog('wait for visual note', 'camera');
+          break;
+        }
         voiceReturnState = STATES.SHOW_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
@@ -2607,9 +2747,33 @@
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       const returnState = cameraReturnState;
       cameraReturnState = STATES.HOME;
+      const captures = getCaptureList();
+      if (captures.length) {
+        const lastCapture = captures[captures.length - 1];
+        stateData.showCaptureIndex = captures.length - 1;
+        stateData.showCaptureEntryId = lastCapture?.entry_id || lastCapture?.id || '';
+      }
       transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, {
         showStatus: 'latest visual memory'
       });
+    }
+    refreshLogFromMemory();
+  });
+
+  window.addEventListener('structa-capture-stored', event => {
+    const entryId = event && event.detail ? event.detail.entryId : '';
+    const captures = getCaptureList();
+    const index = entryId ? captures.findIndex(capture => (capture?.entry_id || capture?.id || '') === entryId) : -1;
+    if (index >= 0) {
+      stateData.showCaptureIndex = index;
+      stateData.showCaptureEntryId = entryId;
+    } else if (captures.length) {
+      stateData.showCaptureIndex = captures.length - 1;
+      stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
+    }
+    if (currentState === STATES.SHOW_BROWSE) {
+      stateData.showStatus = 'processing visual note';
+      render();
     }
     refreshLogFromMemory();
   });
@@ -2639,6 +2803,10 @@
     refreshLogFromMemory();
     render();
     maybeStartHeartbeat();
+    if (!chainStarted && projectHasMeaningfulContent() && window.StructaImpactChain && !window.StructaImpactChain.active) {
+      chainStarted = true;
+      window.StructaImpactChain.start(2);
+    }
   });
 
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
@@ -2758,16 +2926,16 @@
   // Start chain after first user interaction + init audio
   let chainStarted = false;
   function startChainOnInteraction() {
-    if (chainStarted) return;
-    chainStarted = true;
     // Init audio engine on first user gesture (required by browsers)
     if (window.StructaAudio) window.StructaAudio.init();
+    if (chainStarted || !projectHasMeaningfulContent()) return;
+    chainStarted = true;
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
       window.StructaImpactChain.start(2); // 2bpm = every 30s
     }
   }
   ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {
-    window.addEventListener(evt, startChainOnInteraction, { once: true });
+    window.addEventListener(evt, startChainOnInteraction);
   });
 
   function pulseCardElement(cardEl, options) {

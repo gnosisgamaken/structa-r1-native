@@ -422,14 +422,15 @@
     probeListenerAttached = true;
 
     try { window.localStorage?.setItem('structa-probe', '1'); } catch (_) {}
+    memory.probeEvents = [];
     memory.logs = memory.logs.filter(function(entry) { return entry.kind !== 'probe'; });
 
     appendProbeEvent({ source: 'probe', name: 'started' });
     appendProbeEvent({ source: 'probe', name: 'mode active' });
     const eventLabels = {
       sideClick: 'ptt click',
-      scrollUp: 'scroll down',
-      scrollDown: 'scroll up',
+      scrollUp: 'scroll up',
+      scrollDown: 'scroll down',
       longPressStart: 'ptt hold',
       longPressEnd: 'ptt release',
       backbutton: 'back',
@@ -687,6 +688,9 @@
     if (window.StructaLLM?.resetHistory) {
       try { window.StructaLLM.resetHistory(); } catch (_) {}
     }
+    if (window.StructaImpactChain?.pause) {
+      try { window.StructaImpactChain.pause('memory flush'); } catch (_) {}
+    }
 
     try {
       window.localStorage?.removeItem(cacheKey);
@@ -741,7 +745,7 @@
     if (raw === 'camera opened' || raw.endsWith('camera open')) return 'camera ready';
     if (raw === 'capture capture') return 'capturing image';
     if (raw === 'camera image captured' || raw === 'image captured') return 'image captured';
-    if (raw === 'image saved') return 'image saved';
+    if (raw === 'image saved') return 'frame saved';
     if (raw === 'voice saved') return 'voice saved';
     if (raw === 'question answered') return 'question answered';
     if (raw === 'insight extracted') return 'insight added';
@@ -828,10 +832,21 @@
     if (entry.visible === false) return false;
     if (!entry.visible_message) return false;
 
-    if (probeMode && kind === 'probe') return true;
-
-    // Suppress ALL probe messages outside probe mode
-    if (kind === 'probe') return false;
+    if (kind === 'probe') {
+      if (!probeMode) return false;
+      if (
+        message.includes('probe started') ||
+        message.includes('probe mode active') ||
+        message.includes('window focus') ||
+        message.includes('window blur') ||
+        message.includes('viewport:') ||
+        message.includes('screen:') ||
+        message.includes('pluginmessagehandler') ||
+        message.includes('onpluginmessage: function') ||
+        message.includes('postmessage=')
+      ) return false;
+      return true;
+    }
 
     // Suppress UI noise
     if (kind === 'ui') {
@@ -900,9 +915,16 @@
         ai_analysis: lower(bundle.ai_analysis || bundle.ai_response || bundle.summary || bundle.prompt_text || 'capture'),
         image_asset: bundle.image_asset || null,
         prompt_text: bundle.prompt_text || '',
+        voice_annotation: bundle.meta?.voiceAnnotation || '',
+        preview_data: bundle.meta?.preview_data || '',
+        data: bundle.meta?.preview_data || '',
         created_at: bundle.captured_at || new Date().toISOString(),
         project_id: memory.active_project_id,
-        meta: { ...(bundle.meta || {}), image_asset: bundle.image_asset || null }
+        meta: {
+          ...(bundle.meta || {}),
+          image_asset: bundle.image_asset || null,
+          analysis_status: bundle.meta?.analysis_status || 'pending'
+        }
       });
       project.structure = [
         { title: 'captures', count: project.captures.length },
@@ -1012,7 +1034,11 @@
     }
     const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.captures, payload);
-    appendLogEntry({ kind: payload.input_type, message: payload.summary || payload.prompt_text || 'capture stored', linked_capture_id: payload.entry_id });
+    appendLogEntry({
+      kind: 'camera',
+      message: payload.input_type === 'image+voice' ? 'show+tell captured' : 'image captured',
+      linked_capture_id: payload.entry_id
+    });
     updateProjectFromCapture(payload);
     persist();
     return { ok: true, payload };

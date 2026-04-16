@@ -134,18 +134,7 @@
     }
 
     // Try to extract the LLM response text
-    var responseText = '';
-    if (data) {
-      responseText = data.message || data.content || data.response || data.transcript || '';
-      if (!responseText && data.data) {
-        try {
-          var parsed = JSON.parse(data.data);
-          responseText = parsed.message || parsed.content || parsed.response || parsed.transcript || '';
-        } catch (e) {
-          responseText = data.data;
-        }
-      }
-    }
+    var responseText = extractResponseText(data);
 
     if (activeRequest && responseText) {
       var cb = activeRequest;
@@ -175,6 +164,58 @@
       try { previousHandler(data); } catch (e) {}
     }
   };
+
+  function extractResponseText(payload) {
+    if (!payload) return '';
+    if (typeof payload === 'string') return payload;
+    if (Array.isArray(payload)) {
+      for (var i = 0; i < payload.length; i += 1) {
+        var candidate = extractResponseText(payload[i]);
+        if (candidate) return candidate;
+      }
+      return '';
+    }
+    if (typeof payload !== 'object') return String(payload || '');
+
+    var directKeys = ['message', 'content', 'response', 'transcript', 'text', 'output', 'answer'];
+    for (var k = 0; k < directKeys.length; k += 1) {
+      var value = payload[directKeys[k]];
+      if (typeof value === 'string' && value.trim()) return value;
+      if (value && typeof value === 'object') {
+        var nested = extractResponseText(value);
+        if (nested) return nested;
+      }
+    }
+
+    if (payload.data) {
+      if (typeof payload.data === 'string') {
+        try {
+          var parsed = JSON.parse(payload.data);
+          var parsedText = extractResponseText(parsed);
+          if (parsedText) return parsedText;
+        } catch (e) {
+          return payload.data;
+        }
+      } else {
+        var dataText = extractResponseText(payload.data);
+        if (dataText) return dataText;
+      }
+    }
+
+    if (payload.results) {
+      var resultText = extractResponseText(payload.results);
+      if (resultText) return resultText;
+    }
+    if (payload.choices) {
+      var choiceText = extractResponseText(payload.choices);
+      if (choiceText) return choiceText;
+    }
+    if (payload.result) {
+      var nestedResult = extractResponseText(payload.result);
+      if (nestedResult) return nestedResult;
+    }
+    return '';
+  }
 
   // === Sanitization ===
   var DRIFT = [
@@ -350,34 +391,31 @@
 
     var voiceAnnotation = meta && meta.voiceAnnotation ? meta.voiceAnnotation : '';
 
-    var prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n';
-    if (context) prompt += '[PROJECT CONTEXT]\n' + context + '\n\n';
-
+    var prompt = 'DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT EMAIL THE USER.\n' +
+      'Use only the image, the project context, and the optional narration.\n\n';
+    if (context) prompt += '[PROJECT]\n' + context + '\n\n';
+    prompt += '[CAPTURE]\n' + (description || 'camera capture') + '\n';
+    prompt += 'camera: ' + (meta && meta.facingMode || 'environment') + '\n';
     if (voiceAnnotation) {
-      prompt += '[VOICE ANNOTATION]\n"' + voiceAnnotation + '"\n\n';
-      prompt += '[IMAGE]\n' + (description || 'camera capture') + '\n';
-      prompt += 'Camera: ' + (meta && meta.facingMode || 'environment') + '\n\n';
-      prompt += 'The user described this image while capturing it. ' +
-        'Combine the voice context with what you see. ' +
-        'What is the key ' + (vocab.insight || 'insight') + '? 10 words max.';
-    } else {
-      prompt += '[IMAGE]\n' + (description || 'camera capture') + '\n';
-      prompt += 'Camera: ' + (meta && meta.facingMode || 'environment') + '\n\n';
-
-      // Project-type-specific analysis framing
-      var analysisFrame = {
-        architecture: 'Analyze as architectural documentation. Note materials, spatial relationships, structural elements.',
-        software: 'Analyze as software/technical capture. Note UI patterns, error states, data flows.',
-        design: 'Analyze as design reference. Note composition, color palette, typography, spatial hierarchy.',
-        film: 'Analyze as production reference. Note framing, lighting, mood, narrative potential.',
-        music: 'Analyze as studio/performance reference. Note equipment, setup, acoustic context.',
-        writing: 'Analyze as research reference. Note subject matter, textual content, context clues.',
-        research: 'Analyze as research data. Note observable patterns, measurements, conditions.',
-        general: 'What does this tell us about the project?'
-      }[projectType] || 'What does this tell us?';
-
-      prompt += analysisFrame + ' 1-2 key elements. 8 words max.';
+      prompt += 'narration: "' + voiceAnnotation + '"\n';
     }
+    prompt += '\n[MODE]\n';
+    prompt += ({
+      architecture: 'Treat the image as project-site or architectural reference.',
+      software: 'Treat the image as interface or technical project reference.',
+      design: 'Treat the image as visual design reference.',
+      film: 'Treat the image as production or framing reference.',
+      music: 'Treat the image as studio or performance reference.',
+      writing: 'Treat the image as story or research reference.',
+      research: 'Treat the image as observed project evidence.',
+      general: 'Treat the image as project reference.'
+    }[projectType] || 'Treat the image as project reference.') + '\n\n';
+    prompt += '[TASK]\n' +
+      'Return exactly three short lines:\n' +
+      'FACTS: visible factual description only.\n' +
+      'SIGNAL: project-relevant meaning.\n' +
+      'NEXT: one short next step.\n' +
+      'Keep the total under 45 words.';
 
     return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false, priority: 'high' });
   }

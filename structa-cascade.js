@@ -28,6 +28,7 @@
   // === Constants ===
   const STATES = Object.freeze({
     HOME: 'home',
+    PROJECT_SWITCHER: 'project_switcher',
     TELL_BROWSE: 'tell_browse',
     SHOW_BROWSE: 'show_browse',
     SHOW_PRIMED: 'show_primed',
@@ -83,18 +84,28 @@
     return native?.getProjectMemory?.() || getMemory().projectMemory || null;
   }
 
+  function getProjects() {
+    return native?.getProjects?.() || [];
+  }
+
+  function getActiveProjectId() {
+    return native?.getActiveProjectId?.() || getProjectMemory()?.project_id || '';
+  }
+
   function getUIState() {
     return native?.getUIState?.() || getMemory().uiState || {};
   }
 
   function getCaptureList() {
-    return (getMemory().captures || []).filter(Boolean);
+    const activeProjectId = getActiveProjectId();
+    return (getMemory().captures || []).filter(capture => capture && (!capture.project_id || capture.project_id === activeProjectId));
   }
 
   function getVoiceEntries() {
+    const activeProjectId = getActiveProjectId();
     const journals = (getMemory().journals || []).filter(Boolean);
     return journals
-      .filter(entry => lower(entry?.source_type || '') === 'voice')
+      .filter(entry => lower(entry?.source_type || '') === 'voice' && (!entry.project_id || entry.project_id === activeProjectId))
       .slice()
       .reverse();
   }
@@ -200,6 +211,20 @@
 
   stateExitHandlers[STATES.HOME] = function(data) {
     // nothing specific
+  };
+
+  // --- PROJECT_SWITCHER ---
+  stateEnterHandlers[STATES.PROJECT_SWITCHER] = function(data) {
+    document.title = 'projects';
+    setLogDrawer(false);
+    const projects = getProjects();
+    const activeId = getActiveProjectId();
+    const activeIndex = Math.max(0, projects.findIndex(project => project.project_id === activeId));
+    stateData.projectListIndex = typeof data.projectListIndex === 'number' ? data.projectListIndex : activeIndex;
+  };
+
+  stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
+    // no-op
   };
 
   // --- TELL_BROWSE ---
@@ -487,10 +512,31 @@
     return true;
   }
 
+  function openProjectSwitcher() {
+    const projects = getProjects();
+    if (!projects.length) return;
+    const activeId = getActiveProjectId();
+    const index = Math.max(0, projects.findIndex(project => project.project_id === activeId));
+    transition(STATES.PROJECT_SWITCHER, { projectListIndex: index });
+  }
+
+  function activateSelectedProject() {
+    const projects = getProjects();
+    if (!projects.length) return false;
+    const index = Math.max(0, Math.min(stateData.projectListIndex || 0, projects.length - 1));
+    const project = projects[index];
+    if (!project) return false;
+    native?.switchProject?.(project.project_id);
+    pushLog(`project: ${project.name}`, 'voice');
+    transition(STATES.HOME);
+    return true;
+  }
+
   // === Surface identification (backward compat for render) ===
   function activeSurface() {
     switch (currentState) {
       case STATES.HOME:
+      case STATES.PROJECT_SWITCHER:
       case STATES.TELL_PRIMED:
       case STATES.LOG_OPEN:
         return 'home';
@@ -544,7 +590,7 @@
     const memory = getMemory();
     const project = getProjectMemory();
     const ui = getUIState();
-    const captures = memory.captures || [];
+    const captures = getCaptureList();
     const insights = project?.insights || [];
     const openQuestions = project?.open_questions || [];
     const backlog = project?.backlog || [];
@@ -815,6 +861,93 @@
     });
   }
 
+  function drawProjectSwitcher() {
+    if (currentState !== STATES.PROJECT_SWITCHER) return;
+    const projects = getProjects();
+    const activeId = getActiveProjectId();
+    const selected = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(projects.length - 1, 0)));
+
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
+    text(14, 34, 'projects', {
+      fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '30'
+    });
+    text(14, 50, 'shake or back to close', {
+      fill: 'rgba(244,239,228,0.42)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+
+    if (!projects.length) {
+      text(14, 108, 'no projects yet', {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      return;
+    }
+
+    const startY = 74;
+    const rowH = 44;
+    const visibleRows = 4;
+    const offset = Math.max(0, Math.min(selected - 1, Math.max(0, projects.length - visibleRows)));
+    projects.slice(offset, offset + visibleRows).forEach((project, visibleIndex) => {
+      const absoluteIndex = offset + visibleIndex;
+      const y = startY + (visibleIndex * rowH);
+      const isSelected = absoluteIndex === selected;
+      const isActive = project.project_id === activeId;
+      const tap = mk('g', { style: 'cursor: pointer;' });
+
+      mk('rect', {
+        x: 10,
+        y,
+        width: 220,
+        height: 34,
+        rx: 4,
+        ry: 4,
+        fill: isSelected ? 'rgba(244,239,228,0.12)' : 'rgba(255,255,255,0.03)',
+        stroke: isSelected ? 'rgba(244,239,228,0.42)' : 'rgba(255,255,255,0.06)',
+        'stroke-width': '1'
+      }, tap);
+
+      text(18, y + 14, lower(project.name || 'untitled project'), {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '14'
+      }, tap);
+
+      const meta = [project.type || 'general'];
+      const captures = project.counts?.captures || 0;
+      const insights = project.counts?.insights || 0;
+      if (captures) meta.push(`${captures} cap`);
+      if (insights) meta.push(`${insights} ins`);
+      if (isActive) meta.push('open');
+      text(18, y + 27, meta.join(' · '), {
+        fill: isSelected ? 'rgba(244,239,228,0.68)' : 'rgba(244,239,228,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      }, tap);
+
+      if (isActive) {
+        text(220, y + 14, '●', {
+          fill: '#f8c15d',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10',
+          'text-anchor': 'end'
+        }, tap);
+      }
+
+      tap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        stateData.projectListIndex = absoluteIndex;
+        if (isSelected) activateSelectedProject();
+        else render();
+      });
+    });
+  }
+
   function drawSurfaceHeader(card) {
     if (card.iconPath) {
       image(card.iconPath, {
@@ -857,12 +990,11 @@
 
       // Glanceable stat — one big number that tells you what matters
       const project = getProjectMemory();
-      const memory = getMemory();
       let statNumber = '';
       let statLabel = '';
 
       if (card.id === 'show') {
-        statNumber = String((memory.captures || []).length);
+        statNumber = String(getCaptureList().length);
         statLabel = 'captures today';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
@@ -1550,7 +1682,7 @@
 
     const surface = activeSurface();
 
-    if (surface === 'home') {
+    if (surface === 'home' && currentState !== STATES.PROJECT_SWITCHER) {
       cards
         .map((card, index) => ({ card, index, layout: cardLayout(index) }))
         .sort((a, b) => {
@@ -1561,12 +1693,13 @@
         .forEach(({ card, index }) => drawCard(card, index));
     }
 
+    drawProjectSwitcher();
     drawShowSurface();
     drawTellSurface();
     drawNowPanel();
     drawInsightSurface();
 
-    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell';
+    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
@@ -1574,6 +1707,14 @@
 
   function handleScrollDirection(direction) {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER: {
+        const projects = getProjects();
+        if (!projects.length) break;
+        stateData.projectListIndex = ((stateData.projectListIndex || 0) + (direction > 0 ? 1 : -1) + projects.length) % projects.length;
+        render();
+        break;
+      }
+
       case STATES.SHOW_BROWSE: {
         const captures = getCaptureList();
         if (!captures.length) break;
@@ -1670,6 +1811,10 @@
 
   function handleSideClick() {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER:
+        activateSelectedProject();
+        break;
+
       case STATES.SHOW_BROWSE:
         openCameraFromShow('hardware');
         break;
@@ -1793,6 +1938,11 @@
 
   function handleNativeBack(event) {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER:
+        if (event) event.preventDefault?.();
+        transition(STATES.HOME);
+        return;
+
       case STATES.SHOW_BROWSE:
         if (event) event.preventDefault?.();
         goHome();
@@ -1945,7 +2095,7 @@
     }
   });
 
-  // Shake to go home
+  // Shake routing
   let lastShakeAt = 0;
   window.addEventListener('devicemotion', event => {
     const accel = event.accelerationIncludingGravity || event.acceleration;
@@ -1954,7 +2104,15 @@
     const now = Date.now();
     if (magnitude < 42 || now - lastShakeAt < 1400) return;
     lastShakeAt = now;
-    if (currentState !== STATES.HOME) goHome();
+    if (currentState === STATES.PROJECT_SWITCHER) {
+      transition(STATES.HOME);
+      return;
+    }
+    if (currentState === STATES.HOME) {
+      openProjectSwitcher();
+      return;
+    }
+    goHome();
   });
 
   // === Init ===
@@ -2080,20 +2238,22 @@
     var cmd = e.detail;
 
     if (cmd.command === 'new-project') {
-      // Create new project — for now, just rename current if untitled
-      var project = getProjectMemory();
-      if (project && project.name === 'untitled project' && cmd.name) {
-        native?.setProjectName?.(cmd.name);
+      if (cmd.name && native?.createProject) {
+        native.createProject(cmd.name);
         pushLog('project: ' + cmd.name.slice(0, 30), 'voice');
-      } else {
-        pushLog('project rename requires fresh start', 'voice');
+        transition(STATES.HOME);
       }
       render();
     }
 
     if (cmd.command === 'switch-project') {
-      // Multi-project: for now, log the intent
-      pushLog('switch: ' + (cmd.name || '').slice(0, 30) + ' (coming soon)', 'voice');
+      var switched = native?.switchProject?.(cmd.name);
+      if (switched) {
+        pushLog('project: ' + ((switched.name || cmd.name || '').slice(0, 30)), 'voice');
+        transition(STATES.HOME);
+      } else {
+        pushLog('project not found: ' + (cmd.name || '').slice(0, 24), 'voice');
+      }
     }
   });
 

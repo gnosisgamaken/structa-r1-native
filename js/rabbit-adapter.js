@@ -64,6 +64,31 @@
 
   const MAX_NODES = 60;
 
+  function createDefaultProject(input = {}) {
+    const project = contracts.createProject({
+      project_id: input.project_id || contracts.baseProjectCode,
+      device_scope_key: deviceScopeKey,
+      name: input.name || 'untitled project',
+      type: input.type || 'general',
+      user_role: input.user_role || '',
+      nodes: input.nodes || [],
+      impact_chain: input.impact_chain || [],
+      exports: input.exports || [],
+      clarity_score: input.clarity_score || 0,
+      created_at: input.created_at,
+      meta: input.meta || {}
+    });
+    project.structure = Array.isArray(input.structure) ? input.structure : [];
+    project.backlog = Array.isArray(input.backlog) ? input.backlog : [];
+    project.decisions = Array.isArray(input.decisions) ? input.decisions : [];
+    project.pending_decisions = Array.isArray(input.pending_decisions) ? input.pending_decisions : [];
+    project.captures = Array.isArray(input.captures) ? input.captures : [];
+    project.insights = Array.isArray(input.insights) ? input.insights : [];
+    project.open_questions = Array.isArray(input.open_questions) ? input.open_questions : [];
+    project.schema_version = input.schema_version || 3;
+    return project;
+  }
+
   const memory = {
     messages: [],
     journals: [],
@@ -81,28 +106,61 @@
       last_event_summary: '',
       onboarded: false
     },
-    projectMemory: {
-      project_id: contracts.baseProjectCode,
-      device_scope_key: deviceScopeKey,
-      name: 'untitled project',
-      type: 'general',
-      user_role: '',
-      nodes: [],
-      impact_chain: [],
-      exports: [],
-      clarity_score: 0,
-      // Legacy compat views (computed from nodes)
-      structure: [],
-      backlog: [],
-      decisions: [],
-      pending_decisions: [],
-      captures: [],
-      insights: [],
-      open_questions: [],
-      updated_at: new Date().toISOString(),
-      schema_version: 3
-    }
+    active_project_id: contracts.baseProjectCode,
+    projects: [],
+    projectMemory: null
   };
+
+  memory.projects = [createDefaultProject({ project_id: contracts.baseProjectCode })];
+  memory.projectMemory = memory.projects[0];
+
+  function syncActiveProjectAlias() {
+    var active = Array.isArray(memory.projects)
+      ? memory.projects.find(function(project) { return project.project_id === memory.active_project_id; })
+      : null;
+    if (!active) {
+      if (!Array.isArray(memory.projects) || !memory.projects.length) {
+        memory.projects = [createDefaultProject({ project_id: contracts.baseProjectCode })];
+      }
+      active = memory.projects[0];
+      memory.active_project_id = active.project_id;
+    }
+    memory.projectMemory = active;
+    return active;
+  }
+
+  function ensureProjectRegistry() {
+    if (!Array.isArray(memory.projects) || !memory.projects.length) {
+      var legacyProject = memory.projectMemory && typeof memory.projectMemory === 'object'
+        ? memory.projectMemory
+        : createDefaultProject({ project_id: contracts.baseProjectCode });
+      memory.projects = [createDefaultProject(legacyProject)];
+      memory.active_project_id = legacyProject.project_id || contracts.baseProjectCode;
+    }
+
+    memory.projects = memory.projects.map(function(project, index) {
+      var hydrated = createDefaultProject(project || {});
+      if (!hydrated.project_id) hydrated.project_id = index === 0 ? contracts.baseProjectCode : contracts.makeEntryId('project');
+      if (!hydrated.device_scope_key) hydrated.device_scope_key = deviceScopeKey;
+      if (!hydrated.schema_version || hydrated.schema_version < 3) migrateV2toV3(hydrated);
+      return hydrated;
+    });
+
+    if (!memory.active_project_id || !memory.projects.some(function(project) { return project.project_id === memory.active_project_id; })) {
+      memory.active_project_id = memory.projects[0].project_id;
+    }
+
+    var activeProjectId = memory.active_project_id;
+    memory.captures = (memory.captures || []).map(function(capture) {
+      return capture && !capture.project_id ? { ...capture, project_id: activeProjectId } : capture;
+    });
+    memory.journals = (memory.journals || []).map(function(journal) {
+      return journal && !journal.project_id ? { ...journal, project_id: activeProjectId } : journal;
+    });
+
+    syncActiveProjectAlias();
+    return memory.projectMemory;
+  }
 
   // === Node helpers ===
   function addNode(input) {
@@ -344,14 +402,8 @@
       const parsed = JSON.parse(raw);
       Object.assign(memory, parsed.memory || {});
     } catch (_) {}
-    // Migrate v2 → v3 if needed
-    if (memory.projectMemory && (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3)) {
-      migrateV2toV3(memory.projectMemory);
-      rebuildLegacyViews();
-      persist();
-    } else if (memory.projectMemory && memory.projectMemory.nodes) {
-      rebuildLegacyViews();
-    }
+    ensureProjectRegistry();
+    rebuildLegacyViews();
   }
 
   // Async hydrate from StructaStorage (runs after sync hydrate)
@@ -362,13 +414,14 @@
       var data = await window.StructaStorage.load();
       if (data && data.memory) {
         // Only use if newer than localStorage version
-        var storedTime = new Date(data.memory?.projectMemory?.updated_at || 0).getTime();
+        var storedActive = Array.isArray(data.memory?.projects)
+          ? data.memory.projects.find(function(project) { return project.project_id === data.memory.active_project_id; })
+          : data.memory?.projectMemory;
+        var storedTime = new Date(storedActive?.updated_at || 0).getTime();
         var localTime = new Date(memory.projectMemory?.updated_at || 0).getTime();
         if (storedTime > localTime) {
           Object.assign(memory, data.memory);
-          if (!memory.projectMemory.schema_version || memory.projectMemory.schema_version < 3) {
-            migrateV2toV3(memory.projectMemory);
-          }
+          ensureProjectRegistry();
           rebuildLegacyViews();
           persist();
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
@@ -399,12 +452,74 @@
   }
 
   function touchProjectMemory(mutator) {
+    ensureProjectRegistry();
     mutator(memory.projectMemory);
     memory.projectMemory.updated_at = new Date().toISOString();
     rebuildLegacyViews();
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return memory.projectMemory;
+  }
+
+  function getProjects() {
+    ensureProjectRegistry();
+    return memory.projects.map(function(project) {
+      return {
+        project_id: project.project_id,
+        name: project.name || 'untitled project',
+        type: project.type || 'general',
+        user_role: project.user_role || '',
+        updated_at: project.updated_at,
+        created_at: project.created_at,
+        counts: {
+          captures: (project.captures || []).length,
+          insights: (project.insights || []).length,
+          backlog: (project.backlog || []).length,
+          questions: (project.open_questions || []).length
+        },
+        is_active: project.project_id === memory.active_project_id
+      };
+    });
+  }
+
+  function createProject(name, type) {
+    ensureProjectRegistry();
+    var normalizedName = lower((name || '').trim() || 'untitled project');
+    var existing = memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
+    if (existing) return switchProject(existing.project_id);
+
+    var project = createDefaultProject({
+      project_id: contracts.makeEntryId('project'),
+      name: normalizedName,
+      type: contracts.projectTypes.includes(type) ? type : 'general'
+    });
+    memory.projects.unshift(project);
+    memory.active_project_id = project.project_id;
+    syncActiveProjectAlias();
+    updateUIState({ last_event_summary: 'project created', last_surface: 'home' });
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return project;
+  }
+
+  function switchProject(projectIdOrName) {
+    ensureProjectRegistry();
+    var needle = lower(projectIdOrName || '').trim();
+    if (!needle) return null;
+    var project = memory.projects.find(function(entry) {
+      return entry.project_id === projectIdOrName || lower(entry.name) === needle;
+    }) || memory.projects.find(function(entry) {
+      return lower(entry.name).includes(needle);
+    });
+    if (!project) return null;
+    memory.active_project_id = project.project_id;
+    syncActiveProjectAlias();
+    rebuildLegacyViews();
+    memory.uiState.last_event_summary = 'project opened';
+    memory.uiState.last_surface = 'home';
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return project;
   }
 
   function updateUIState(patch = {}) {
@@ -654,7 +769,7 @@
       emit('validation_failed', { kind: 'journal', errors: verdict.errors, raw });
       return { ok: false, error: validation.validationMessage('journal entry', verdict.errors), payload: verdict.value };
     }
-    const payload = verdict.value;
+    const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.journals, payload);
     appendLogEntry({ kind: 'journal', message: payload.title });
     touchProjectMemory(project => {
@@ -687,7 +802,7 @@
       emit('validation_failed', { kind: 'capture_bundle', errors: verdict.errors, raw });
       return { ok: false, error: validation.validationMessage('capture bundle', verdict.errors), payload: verdict.value };
     }
-    const payload = verdict.value;
+    const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.captures, payload);
     appendLogEntry({ kind: payload.input_type, message: payload.summary || payload.prompt_text || 'capture stored', linked_capture_id: payload.entry_id });
     updateProjectFromCapture(payload);
@@ -699,7 +814,7 @@
     const body = lower(raw.body || raw.note || 'prepare export');
     appendLogEntry({ kind: 'withdraw', message: body });
     return sendStructuredMessage({
-      project_code: raw.project_code || contracts.baseProjectCode,
+      project_code: raw.project_code || memory.active_project_id,
       entry_id: raw.entry_id || contracts.makeEntryId('withdraw'),
       source_type: raw.source_type || 'voice',
       input_type: 'withdrawal',
@@ -726,6 +841,7 @@
       name,
       body,
       created_at: new Date().toISOString(),
+      project_id: memory.active_project_id,
       device_scope_key: deviceScopeKey,
       items
     };
@@ -788,6 +904,7 @@
   }
 
   function getMemory() {
+    ensureProjectRegistry();
     return {
       ...memory,
       messages: [...memory.messages],
@@ -806,7 +923,13 @@
   }
 
   function getProjectMemory() {
+    ensureProjectRegistry();
     return JSON.parse(JSON.stringify(memory.projectMemory));
+  }
+
+  function getActiveProjectId() {
+    ensureProjectRegistry();
+    return memory.active_project_id;
   }
 
   function returnHome() {
@@ -901,7 +1024,8 @@
     if (idx < questionNodes.length) {
       resolveNode(questionNodes[idx].node_id, { question_answer: answer });
       pushLimited(memory.journals, {
-        project_code: contracts.baseProjectCode,
+        project_code: memory.active_project_id,
+        project_id: memory.active_project_id,
         entry_id: contracts.makeEntryId('answer'),
         source_type: 'voice',
         title: 'answered: ' + (questionNodes[idx].body || '').slice(0, 30),
@@ -918,7 +1042,8 @@
       if (idx >= project.open_questions.length) return;
       var question = project.open_questions.splice(idx, 1)[0];
       pushLimited(memory.journals, {
-        project_code: contracts.baseProjectCode,
+        project_code: memory.active_project_id,
+        project_id: memory.active_project_id,
         entry_id: contracts.makeEntryId('answer'),
         source_type: 'voice',
         title: 'answered: ' + (question || '').slice(0, 30),
@@ -993,6 +1118,10 @@
     isVisibleLogEntry,
     exportLatestLogs,
     getProjectMemory,
+    getProjects,
+    getActiveProjectId,
+    switchProject,
+    createProject,
     getMemory,
     getUIState,
     updateUIState,

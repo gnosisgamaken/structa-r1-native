@@ -128,7 +128,17 @@
 
   function getCaptureList() {
     const activeProjectId = getActiveProjectId();
-    return (getMemory().captures || []).filter(capture => capture && (!capture.project_id || capture.project_id === activeProjectId));
+    const memoryCaptures = (getMemory().captures || []).filter(capture => capture && (!capture.project_id || capture.project_id === activeProjectId));
+    const projectCaptures = ((getProjectMemory()?.captures) || []).filter(Boolean).map(capture => {
+      return capture && !capture.project_id ? { ...capture, project_id: activeProjectId } : capture;
+    });
+    const seen = new Set();
+    return memoryCaptures.concat(projectCaptures).filter(capture => {
+      const key = capture?.entry_id || capture?.id || capture?.node_id || '';
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   function getVoiceEntries() {
@@ -141,7 +151,7 @@
   }
 
   function getCaptureImageHref(capture) {
-    return capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || '';
+    return capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.image_asset?.data || '';
   }
 
   function getCaptureSummary(capture) {
@@ -292,6 +302,7 @@
 
   // --- SHOW_PRIMED (legacy invisible warm state) ---
   stateEnterHandlers[STATES.SHOW_PRIMED] = function(data) {
+    document.title = 'show';
     native?.setActiveNode?.('show');
     native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
     window.StructaVoice?.close?.();
@@ -472,8 +483,9 @@
   function openCameraFromShow(source = 'touch', options = {}) {
     cameraReturnState = STATES.SHOW_BROWSE;
     const wantsNarration = !!options.narrate;
-    if (currentState !== STATES.SHOW_BROWSE && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
-      transition(STATES.SHOW_BROWSE, {
+    const entryState = wantsNarration ? STATES.SHOW_PRIMED : STATES.SHOW_BROWSE;
+    if (currentState !== entryState && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
+      transition(entryState, {
         showStatus: wantsNarration ? 'opening show + tell' : 'opening lens',
         pendingShowNarration: wantsNarration
       });
@@ -1047,7 +1059,7 @@
       });
     });
 
-    text(14, 268, 'say: switch project / archive project / delete project', {
+    text(14, 268, 'scroll to browse · side or hold to open', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
@@ -1276,7 +1288,7 @@
   }
 
   function drawShowSurface() {
-    if (currentState !== STATES.SHOW_BROWSE) return;
+    if (currentState !== STATES.SHOW_BROWSE && currentState !== STATES.SHOW_PRIMED) return;
     const showCard = cards.find(c => c.id === 'show');
     const model = buildShowSummary();
 
@@ -1290,7 +1302,7 @@
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 78, width: 212, height: 26, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 95, 'capture', {
+    text(24, 95, currentState === STATES.SHOW_PRIMED ? 'opening lens' : 'capture', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
@@ -1308,7 +1320,18 @@
     });
 
     mk('rect', { x: 14, y: 112, width: 212, height: 90, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
-    if (model.imageHref) {
+    if (currentState === STATES.SHOW_PRIMED) {
+      text(20, 148, 'arming camera', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '18'
+      });
+      text(20, 170, 'release to stay in show', {
+        fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+    } else if (model.imageHref) {
       image(model.imageHref, {
         x: 14, y: 112, width: 212, height: 90, preserveAspectRatio: 'xMidYMid slice', opacity: 1
       });
@@ -1325,6 +1348,14 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
+    }
+
+    if (currentState === STATES.SHOW_PRIMED) {
+      text(14, 276, `${model.captures.length} stored · hold side to narrate`, {
+        fill: 'rgba(8,8,8,0.34)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9'
+      });
+      return;
     }
 
     const thumbY = 214;
@@ -1994,6 +2025,10 @@
 
   function handleLongPressStart() {
     switch (currentState) {
+      case STATES.PROJECT_SWITCHER:
+        activateSelectedProject();
+        break;
+
       case STATES.HOME: {
         const card = currentCard();
         if (card.id === 'show') {
@@ -2059,6 +2094,12 @@
     document.body.classList.remove('input-locked');
 
     switch (currentState) {
+      case STATES.SHOW_PRIMED:
+        showHoldIntentActive = false;
+        stateData.pendingShowNarration = false;
+        transition(STATES.SHOW_BROWSE, { showStatus: 'capture ready' });
+        break;
+
       case STATES.SHOW_BROWSE:
         showHoldIntentActive = false;
         stateData.pendingShowNarration = false;

@@ -682,6 +682,8 @@
     if (raw === 'insight unavailable' || raw === 'insight failed') return 'insight unavailable';
     if (raw === 'visual insight ready') return 'visual note ready';
     if (raw === 'visual insight unavailable' || raw === 'visual insight failed') return 'visual note unavailable';
+    if (raw.startsWith('bridge-in onpluginmessage')) return null;
+    if (raw.startsWith('bridge-out pluginmessagehandler.postmessage')) return null;
     if (raw.startsWith('answering:')) return 'answering question';
     if (raw.startsWith('answered:')) return 'question answered';
     if (raw.startsWith('saved 33 logs')) return 'log export saved';
@@ -819,7 +821,12 @@
         id: bundle.entry_id,
         type: bundle.input_type,
         summary: lower(bundle.summary || bundle.prompt_text || 'capture'),
-        created_at: bundle.captured_at || new Date().toISOString()
+        ai_analysis: lower(bundle.ai_analysis || bundle.ai_response || bundle.summary || bundle.prompt_text || 'capture'),
+        image_asset: bundle.image_asset || null,
+        prompt_text: bundle.prompt_text || '',
+        created_at: bundle.captured_at || new Date().toISOString(),
+        project_id: memory.active_project_id,
+        meta: { image_asset: bundle.image_asset || null }
       });
       project.structure = [
         { title: 'captures', count: project.captures.length },

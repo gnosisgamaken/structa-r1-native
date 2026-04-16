@@ -108,8 +108,6 @@
     return formatTimeLabel(raw);
   }
 
-  function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {}
-
   function currentCard() {
     return cards[selectedIndex];
   }
@@ -861,6 +859,12 @@
     return filtered.length ? filtered : lane.items;
   }
 
+  function getKnowHintText(item, lane, itemsCount) {
+    if (!item) return itemsCount > 1 ? 'scroll: items · side: detail' : 'side: detail';
+    if (item.source === 'question') return 'scroll: items · side: answer';
+    return itemsCount > 1 ? 'scroll: items · side: detail' : 'hold side: ask know';
+  }
+
   // === SVG rendering helpers ===
   function cardLayout(index) {
     if (index === selectedIndex) return { x: 106, y: 62, scale: 1.62, opacity: 1, depth: -1 };
@@ -1077,7 +1081,6 @@
 
   function drawSurfaceHeader(card) {
     const project = getProjectMemory();
-    drawColorBleed('rgba(255,255,255,0.08)', 0.08);
     if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
@@ -1737,36 +1740,39 @@
     });
 
     // Filter chips row - touchable
-    const chipY = 102;
-    let chipX = 14;
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
-    activeChips.forEach((c) => {
-      const realIndex = model.chips.indexOf(c);
-      const isActive = realIndex === safeChipIdx;
-      const chipWidth = Math.max(40, c.label.length * 7 + 16);
-      const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
-      mk('rect', {
-        x: chipX, y: chipY, width: chipWidth, height: 18, rx: 5, ry: 5,
-        fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.12)',
-        stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
-      }, chipGroup);
-      const chipText = mk('text', {
-        x: chipX + chipWidth / 2, y: chipY + 13,
-        fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
-      }, chipGroup);
-      chipText.textContent = lower(c.label);
+    const showChipRow = activeChips.length > 1;
+    const chipY = 102;
+    if (showChipRow) {
+      let chipX = 14;
+      activeChips.forEach((c) => {
+        const realIndex = model.chips.indexOf(c);
+        const isActive = realIndex === safeChipIdx;
+        const chipWidth = Math.max(40, c.label.length * 7 + 16);
+        const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
+        mk('rect', {
+          x: chipX, y: chipY, width: chipWidth, height: 18, rx: 5, ry: 5,
+          fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.12)',
+          stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
+        }, chipGroup);
+        const chipText = mk('text', {
+          x: chipX + chipWidth / 2, y: chipY + 13,
+          fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
+        }, chipGroup);
+        chipText.textContent = lower(c.label);
 
-      chipGroup.addEventListener('pointerup', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        stateData.knowChipIndex = realIndex;
-        stateData.knowItemIndex = 0;
-        render();
+        chipGroup.addEventListener('pointerup', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          stateData.knowChipIndex = realIndex;
+          stateData.knowItemIndex = 0;
+          render();
+        });
+
+        chipX += chipWidth + 4;
       });
-
-      chipX += chipWidth + 4;
-    });
+    }
 
     // Content area - directly below chips, no PTT needed
     text(226, 58, `${items.length} items`, {
@@ -1776,7 +1782,7 @@
       'text-anchor': 'end'
     });
 
-    const contentY = 136;
+    const contentY = showChipRow ? 136 : 118;
 
     if (currentState === STATES.KNOW_BROWSE) {
       const titleText = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1818,13 +1824,12 @@
       }
 
       // Scroll hint
-      if (items.length > 1) {
-        text(14, 274, (itemIdx + 1) + '/' + items.length, {
-          fill: 'rgba(8,8,8,0.32)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9'
-        });
-      }
+      text(226, 276, `${getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
+        fill: 'rgba(8,8,8,0.34)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
 
       // Touchable content area - tap opens detail
       const contentGroup = mk('g', { style: 'cursor: pointer;' });
@@ -1870,6 +1875,13 @@
         wrapTextBlock(undefined, nextText, 14, nextY + 16, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
       }
     }
+
+    text(226, 276, `${getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
+      fill: 'rgba(8,8,8,0.34)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
   }
 
   // === Main render ===
@@ -1946,13 +1958,9 @@
 
       case STATES.KNOW_BROWSE: {
         const model = buildKnowModel();
-        if (!model.lanes.length) break;
-        stateData.knowLaneIndex = (stateData.knowLaneIndex + (direction > 0 ? 1 : -1) + model.lanes.length) % model.lanes.length;
-        stateData.knowItemIndex = 0;
-        const lane = model.lanes[stateData.knowLaneIndex];
-        const activeChip = model.chips[stateData.knowChipIndex]?.id;
-        const hasChipItems = lane?.items?.some(item => item.chips.includes(activeChip));
-        if (!hasChipItems) stateData.knowChipIndex = lane?.availableChipIndexes?.[0] ?? 0;
+        const items = getKnowVisibleItems(model);
+        if (!items.length) break;
+        stateData.knowItemIndex = ((stateData.knowItemIndex || 0) + (direction > 0 ? 1 : -1) + items.length) % items.length;
         render();
         break;
       }
@@ -1993,13 +2001,7 @@
       }
 
       case STATES.HOME:
-      case STATES.LOG_OPEN:
-        if (currentState === STATES.HOME) {
-          selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
-        } else if (currentState === STATES.LOG_OPEN) {
-          const delta = direction > 0 ? 28 : -28;
-          log.scrollTop += delta;
-        }
+        selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
         break;
 
       default:
@@ -2027,7 +2029,12 @@
         break;
 
       case STATES.VOICE_OPEN:
-        if (!window.StructaVoice?.listening) goHome();
+        if (window.StructaVoice?.listening) {
+          window.StructaVoice?.stopListening?.(true);
+          transition(STATES.VOICE_PROCESSING);
+        } else {
+          goHome();
+        }
         break;
 
       case STATES.KNOW_BROWSE:
@@ -2048,7 +2055,10 @@
       }
 
       case STATES.NOW_BROWSE: {
-        if (approveCurrentNowDecision()) return;
+        if (approveCurrentNowDecision()) {
+          if (window.StructaAudio?.play) window.StructaAudio.play('approve');
+          return;
+        }
         pushLog('hold side to answer blocker', 'project');
         break;
       }
@@ -2128,6 +2138,24 @@
         exportLogsFromHardware();
         break;
 
+      case STATES.KNOW_BROWSE:
+        voiceReturnState = STATES.KNOW_BROWSE;
+        transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'ask know' });
+        break;
+
+      case STATES.KNOW_DETAIL: {
+        const model = buildKnowModel();
+        const items = getKnowVisibleItems(model);
+        const item = items[stateData.knowItemIndex || 0];
+        if (item && item.source === 'question' && item.questionIndex !== undefined) {
+          transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
+        } else {
+          voiceReturnState = STATES.KNOW_DETAIL;
+          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'ask know' });
+        }
+        break;
+      }
+
       default:
         break;
     }
@@ -2195,16 +2223,6 @@
         return;
 
       case STATES.NOW_BROWSE: {
-        const project = getProjectMemory();
-        const pending = project?.pending_decisions || [];
-        if (pending.length && stateData.decisionIndex < pending.length) {
-          native?.dismissPendingDecision?.(stateData.decisionIndex);
-          pushLog('decision skipped', 'decision');
-          stateData.decisionIndex = 0;
-          render();
-          if (event) event.preventDefault?.();
-          return;
-        }
         if (event) event.preventDefault?.();
         goHome();
         return;

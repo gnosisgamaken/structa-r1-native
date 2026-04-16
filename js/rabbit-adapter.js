@@ -403,7 +403,10 @@
       'popstate'
     ].forEach(function(eventName) {
       window.addEventListener(eventName, function() {
-        appendProbeEvent({ source: 'window', name: eventName });
+        var label = eventName;
+        if (eventName === 'scrollUp') label = 'scrollDown';
+        if (eventName === 'scrollDown') label = 'scrollUp';
+        appendProbeEvent({ source: 'window', name: label });
       });
     });
 

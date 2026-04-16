@@ -59,7 +59,7 @@
     body {
       display: grid;
       place-items: center;
-      background: radial-gradient(circle at 50% 0%, rgba(255,255,255,0.04), transparent 28%), var(--bg);
+      background: var(--bg);
     }
 
     button, input, textarea, select {
@@ -603,7 +603,7 @@
     <section id="camera-overlay" class="overlay" aria-hidden="true">
       <video id="camera-preview" autoplay playsinline muted></video>
       <canvas id="camera-canvas"></canvas>
-      <div id="camera-hint"><span>tap to shoot</span><span>hold to narrate</span></div>
+      <div id="camera-hint"><span>side click to shoot</span><span>hold side to narrate</span></div>
       <div class="capture-center">
         <div class="capture-glyph" id="camera-glyph" aria-hidden="true"></div>
       </div>

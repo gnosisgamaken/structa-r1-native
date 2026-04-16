@@ -98,9 +98,7 @@
     return formatTimeLabel(raw);
   }
 
-  function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {
-    mk('rect', { x: -12, y: -24, width: 264, height: 112, fill, opacity: String(opacity) });
-  }
+  function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {}
 
   function currentCard() {
     return cards[selectedIndex];
@@ -448,6 +446,7 @@
   // === Open a card's primary surface ===
   function openCard(card) {
     if (card.surface === 'camera') {
+      primeCameraForShowIntent().catch(function() {});
       transition(STATES.SHOW_BROWSE);
       return;
     }
@@ -469,14 +468,6 @@
     cameraReturnState = STATES.SHOW_BROWSE;
     stateData.showStatus = 'opening lens';
     render();
-
-    if (source !== 'touch' && !window.StructaCamera?.primed && !window.__STRUCTA_PRIMED_STREAM__?.active) {
-      stateData.showStatus = 'lens requires tap';
-      pushLog('lens requires tap', 'show');
-      render();
-      return false;
-    }
-
     window.StructaCamera?.openFromGesture?.('environment');
     return true;
   }
@@ -1969,7 +1960,7 @@
 
       case STATES.NOW_BROWSE: {
         if (approveCurrentNowDecision()) return;
-        openNowNextMove();
+        pushLog('hold side to answer blocker', 'project');
         break;
       }
 
@@ -1991,7 +1982,13 @@
       case STATES.HOME: {
         const card = currentCard();
         if (card.id === 'show') {
-          transition(STATES.SHOW_BROWSE);
+          stateData.pendingShowNarration = true;
+          primeCameraForShowIntent().then(function() {
+            openCameraFromShow('touch');
+          }).catch(function() {
+            stateData.pendingShowNarration = false;
+            transition(STATES.SHOW_BROWSE);
+          });
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           voiceReturnState = STATES.TELL_BROWSE;
@@ -2005,10 +2002,34 @@
         transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
         break;
 
+      case STATES.SHOW_BROWSE:
+        stateData.pendingShowNarration = true;
+        primeCameraForShowIntent().then(function() {
+          openCameraFromShow('touch');
+        }).catch(function() {
+          openCameraFromShow('hardware');
+        });
+        break;
+
       case STATES.CAMERA_OPEN:
         // PTT while camera is open = SHOW+TELL voice strip
         window.StructaCamera?.startVoiceStrip?.();
         break;
+
+      case STATES.NOW_BROWSE: {
+        const project = getProjectMemory();
+        const openQuestions = project?.open_questions || [];
+        voiceReturnState = STATES.NOW_BROWSE;
+        if (openQuestions.length) {
+          transition(STATES.VOICE_OPEN, {
+            answeringQuestion: { index: 0, text: openQuestions[0] },
+            fromPTT: true
+          });
+        } else {
+          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
+        }
+        break;
+      }
 
       case STATES.VOICE_OPEN:
         // PTT while voice is already open — no-op
@@ -2148,6 +2169,12 @@
     if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
       transition(STATES.CAMERA_OPEN);
     }
+    if (stateData.pendingShowNarration) {
+      stateData.pendingShowNarration = false;
+      setTimeout(function() {
+        if (currentState === STATES.CAMERA_OPEN) window.StructaCamera?.startVoiceStrip?.();
+      }, 60);
+    }
   });
 
   window.addEventListener('structa-camera-close', () => {
@@ -2191,8 +2218,8 @@
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
 
   // Hardware inputs
-  window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(-1); });
-  window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(1); });
+  window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(1); });
+  window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(-1); });
   window.addEventListener('sideClick', event => { event.preventDefault?.(); handleSideClick(); });
   window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
   window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
@@ -2266,18 +2293,22 @@
     native?.appendLogEntry?.({ kind: 'probe', message: `screen: ${screen.width}x${screen.height}` });
   })();
 
-  // Prime camera on first touch
+  // Prime camera only when the user explicitly invokes SHOW
   let cameraPrimed = false;
-  function primeCameraOnFirstTouch() {
-    if (cameraPrimed) return;
+  function primeCameraForShowIntent() {
+    if (cameraPrimed && window.__STRUCTA_PRIMED_STREAM__?.active) return Promise.resolve(true);
     cameraPrimed = true;
-    if (navigator.mediaDevices?.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { max: 640 }, height: { max: 480 } } })
-        .then(stream => { window.__STRUCTA_PRIMED_STREAM__ = stream; })
-        .catch(() => {});
-    }
+    if (!navigator.mediaDevices?.getUserMedia) return Promise.resolve(false);
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { max: 640 }, height: { max: 480 } } })
+      .then(function(stream) {
+        window.__STRUCTA_PRIMED_STREAM__ = stream;
+        return true;
+      })
+      .catch(function() {
+        cameraPrimed = false;
+        return false;
+      });
   }
-  svg.addEventListener('pointerup', () => primeCameraOnFirstTouch(), { once: true });
 
   // === Impact Chain event wiring ===
 
@@ -2426,7 +2457,7 @@
   // === BPM control: detect rapid scroll ticks ===
   let rapidScrollCount = 0;
   let rapidScrollTimer = null;
-  window.addEventListener('scrollUp', function() {
+  window.addEventListener('scrollDown', function() {
     rapidScrollCount++;
     clearTimeout(rapidScrollTimer);
     rapidScrollTimer = setTimeout(function() {
@@ -2441,7 +2472,7 @@
     }, 600);
   });
 
-  window.addEventListener('scrollDown', function() {
+  window.addEventListener('scrollUp', function() {
     rapidScrollCount++;
     clearTimeout(rapidScrollTimer);
     rapidScrollTimer = setTimeout(function() {

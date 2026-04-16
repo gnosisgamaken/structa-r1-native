@@ -45,7 +45,7 @@
       native?.setCameraFacing?.(facingMode);
     }
     streamReady = true;
-    setStatus('tap to capture · hold to narrate');
+    setStatus('side click to shoot · hold side to narrate');
     showOverlay();
     showOverlayReady();
     return true;

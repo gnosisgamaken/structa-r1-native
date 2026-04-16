@@ -790,7 +790,7 @@
     openQuestions.slice(0, 5).forEach((question, index) => {
       questions.push(makeItem({
         lane: 'questions', title: `ask ${index + 1}`, body: question,
-        next: 'side button to answer', created_at: new Date().toISOString(),
+        next: 'ptt button to answer', created_at: new Date().toISOString(),
         source: 'question', chips: ['asks'], questionIndex: index
       }));
     });
@@ -891,9 +891,9 @@
   }
 
   function getKnowHintText(item, lane, itemsCount) {
-    if (!item) return itemsCount > 1 ? 'scroll: items · side: detail' : 'side: detail';
-    if (item.source === 'question') return 'scroll: items · side: answer';
-    return itemsCount > 1 ? 'scroll: items · side: detail' : 'hold side: ask know';
+    if (!item) return itemsCount > 1 ? 'scroll: items · ptt: detail' : 'ptt: detail';
+    if (item.source === 'question') return 'scroll: items · ptt: answer';
+    return itemsCount > 1 ? 'scroll: items · ptt: detail' : 'hold ptt: ask know';
   }
 
   // === SVG rendering helpers ===
@@ -1102,7 +1102,7 @@
       });
     });
 
-    text(226, 268, projects.length > 1 ? 'scroll to browse · side opens' : '1 project loaded · say new project', {
+    text(226, 268, projects.length > 1 ? 'scroll to browse · ptt opens' : '1 project loaded · say new project', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1369,7 +1369,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, 176, 'once open: side shoots · hold narrates', {
+      text(20, 176, 'once open: ptt shoots · hold narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1484,7 +1484,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, actionBar);
-    text(216, 92, model.current ? recentTimeLabel(model.current.created_at) : 'hold side', {
+    text(216, 92, model.current ? recentTimeLabel(model.current.created_at) : 'hold ptt', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1505,7 +1505,7 @@
       });
       wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 138), 20, 143, 184, 13, 'rgba(8,8,8,0.96)', '13', 3);
     } else {
-      text(20, 142, 'hold side to speak', {
+      text(20, 142, 'hold ptt to speak', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
@@ -1680,7 +1680,7 @@
       drawSectionLabel(undefined, 18, boxY + 18, 'blocker ask');
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 140)), 18, boxY + 36, 194, 13, 'rgba(8,8,8,0.96)', '13', 6);
-      text(18, boxY + 36 + blockerRows * 13 + 18, 'hold side to answer', {
+      text(18, boxY + 36 + blockerRows * 13 + 18, 'hold ptt to answer', {
         fill: 'rgba(8,8,8,0.48)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1893,7 +1893,7 @@
     if (item.source === 'question') {
       const actionY = Math.min(234, detailBodyY + (detailRows * 13) + 16);
       mk('rect', { x: 10, y: actionY - 6, width: 220, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.12)' });
-      drawSquaredPill(18, actionY, 96, 14, 'side → answer', true, 'light');
+      drawSquaredPill(18, actionY, 96, 14, 'ptt → answer', true, 'light');
       text(136, actionY + 11, 'voice answer', {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2094,7 +2094,7 @@
           if (window.StructaAudio?.play) window.StructaAudio.play('approve');
           return;
         }
-        pushLog('hold side to answer blocker', 'project');
+        pushLog('hold ptt to answer blocker', 'project');
         break;
       }
 

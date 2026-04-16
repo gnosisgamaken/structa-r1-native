@@ -46,7 +46,7 @@
 
   const IC = window.StructaIcons || {};
   const cards = [
-    { id: 'show', title: 'show', iconPath: IC['4'] || 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
+    { id: 'show', title: 'show', iconPath: IC['4'] || 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
     { id: 'tell', title: 'tell', iconPath: IC['3'] || 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: IC['7'] || 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: IC['6'] || 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }

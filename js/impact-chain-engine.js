@@ -30,7 +30,7 @@
     lastDecisionAt: 0,
     lastUserActivity: Date.now(),
     maxImpactsPerChain: 3,      // observe + clarify × N before decision
-    cooldownMs: 60000,          // 60s cooldown after decision
+    cooldownMs: 30000,          // 30s cooldown after decision
     idleTimeoutMs: 300000,      // 5 min auto-pause
     timerId: null,
     chainId: 0,

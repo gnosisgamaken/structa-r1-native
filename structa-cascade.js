@@ -60,7 +60,6 @@
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
   let transitionTargetState = null;
-  let showHoldIntentActive = false;
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
@@ -532,6 +531,22 @@
       window.StructaVoice.setBuildContext(data.buildContext);
     }
 
+    // Show context label on voice overlay for all voice opens
+    const voiceContextLabel = document.getElementById('voice-context-label');
+    if (voiceContextLabel) {
+      const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision' };
+      const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
+      if (data.answeringQuestion) {
+        voiceContextLabel.textContent = 'answering ask';
+        voiceContextLabel.style.display = 'block';
+      } else if (surface && surfaceMap[surface]) {
+        voiceContextLabel.textContent = surfaceMap[surface];
+        voiceContextLabel.style.display = 'block';
+      } else {
+        voiceContextLabel.style.display = 'none';
+      }
+    }
+
     if (data.fromPTT) {
       document.body.classList.add('input-locked');
       window.StructaVoice?.startListening?.();
@@ -547,6 +562,8 @@
     if (transitionTargetState !== STATES.VOICE_PROCESSING) {
       stateData.inlinePTTSurface = '';
     }
+    const voiceContextLabel = document.getElementById('voice-context-label');
+    if (voiceContextLabel) voiceContextLabel.style.display = 'none';
   };
 
   // --- VOICE_PROCESSING ---
@@ -797,11 +814,7 @@
   }
 
   function surfaceIsVisible(surface) {
-    if (!surface) return false;
-    if (currentState === STATES.VOICE_OPEN || currentState === STATES.VOICE_PROCESSING) {
-      return activeSurface() === surface;
-    }
-    return activeSurface() === surface;
+    return !!surface && activeSurface() === surface;
   }
 
   // === Notification system (spring-jump) ===
@@ -1398,10 +1411,10 @@
         x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
       }, svg, { inset: 1.35 });
     }
-    text(42, 36, card.title, {
+    text(42, 34, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '40', 'letter-spacing': '0.0em'
+      'font-size': '32', 'letter-spacing': '0.0em'
     });
     text(14, 58, compactProjectName(projectDisplayName(project)), {
       fill: 'rgba(8,8,8,0.52)',
@@ -1457,9 +1470,9 @@
       }
 
       if (statNumber && statNumber !== '0') {
-        text(132, 82, statNumber, {
-          fill: 'rgba(8,8,8,0.22)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '48',
+        text(132, 80, statNumber, {
+          fill: 'rgba(8,8,8,0.20)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '38',
           'text-anchor': 'end'
         }, group);
       }
@@ -1882,16 +1895,34 @@
       });
       wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 180), 20, 110, 186, 13, 'rgba(8,8,8,0.96)', '13', 4);
     } else {
-      text(20, 102, 'ready for voice', {
+      const project = getProjectMemory();
+      const openQ = (project?.open_questions || [])[0] || '';
+      const lastSignal = (project?.insights || [])[0]?.body || '';
+      text(20, 96, 'ready for voice', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 126, 'hold ptt to begin', {
+      text(20, 114, 'hold ptt to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
+      if (openQ) {
+        text(20, 136, 'open ask:', {
+          fill: 'rgba(8,8,8,0.38)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+        wrapTextBlock(undefined, lower(openQ.slice(0, 80)), 20, 150, 186, 12, 'rgba(8,8,8,0.76)', '11', 3);
+      } else if (lastSignal) {
+        text(20, 136, 'latest signal:', {
+          fill: 'rgba(8,8,8,0.38)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+        wrapTextBlock(undefined, lower(lastSignal.slice(0, 80)), 20, 150, 186, 12, 'rgba(8,8,8,0.76)', '11', 3);
+      }
     }
 
     const relatedIndexes = [];
@@ -2062,8 +2093,10 @@
           'text-anchor': 'end'
         });
       }
+      // Gold accent bar — signals this is Structa speaking
+      mk('rect', { x: 10, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 18, boxY + 40, 194, 14, 'rgba(8,8,8,0.96)', '14', 6);
+      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
       const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);
       mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
       text(30, ctaY + 16, inlineListening ? 'release answer now' : 'hold ptt to answer', {
@@ -2080,10 +2113,33 @@
       }
     } else {
       drawSectionLabel(undefined, 14, 112, 'next move');
-      wrapTextBlock(undefined, lower(data.next), 14, 132, 212, 13, 'rgba(8,8,8,0.96)', '13', 5);
+      wrapTextBlock(undefined, lower(data.next || 'capture or tell to build context'), 14, 132, 212, 13, 'rgba(8,8,8,0.96)', '13', 5);
+
+      // Chain status line
+      const chainStatusY = 196;
+      if (data.chainActive || data.chainPhase !== 'idle') {
+        text(14, chainStatusY, phaseLabel, {
+          fill: 'rgba(8,8,8,0.46)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '11'
+        });
+      }
+
+      // Project stats grid
+      const statsY = data.chainActive ? chainStatusY + 18 : chainStatusY;
+      text(14, statsY, `${data.captures} frames · ${data.insights} signals`, {
+        fill: 'rgba(8,8,8,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(14, statsY + 14, `${data.openQuestions} asks · ${data.decisions} locked`, {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
       if (data.totalImpacts > 0) {
-        text(14, 224, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
-          fill: 'rgba(8,8,8,0.36)',
+        text(14, statsY + 28, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
+          fill: 'rgba(8,8,8,0.28)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10'
         });
@@ -2236,7 +2292,7 @@
 
       // Scroll hint
       text(226, 276, `${recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
-        fill: 'rgba(8,8,8,0.34)',
+        fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
         'text-anchor': 'end'
@@ -2359,6 +2415,11 @@
         break;
       }
 
+      case STATES.SHOW_PRIMED:
+        // Scroll while primed — open camera
+        openCameraFromShow('touch');
+        break;
+
       case STATES.CAMERA_OPEN:
         window.StructaCamera?.flip?.();
         break;
@@ -2402,9 +2463,8 @@
           stateData.decisionIndex = (stateData.decisionIndex + (direction > 0 ? 1 : -1) + pending.length) % pending.length;
           stateData.selectedOption = 0;
           render();
-        } else {
-          goHome();
         }
+        // no-op when no decisions and no options — don't eject to HOME
         break;
       }
 
@@ -2430,13 +2490,16 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        transition(STATES.SHOW_PRIMED, {
-          showStatus: 'touch to start camera',
-          pendingShowNarration: false
-        });
+        openCameraFromShow('touch');
         break;
 
       case STATES.TELL_BROWSE:
+        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
+        break;
+
+      case STATES.SHOW_PRIMED:
+        // Side while primed — open camera
+        openCameraFromShow('touch');
         break;
 
       case STATES.CAMERA_OPEN:
@@ -2500,7 +2563,6 @@
 
       case STATES.HOME: {
         const card = currentCard();
-        selectedIndex = cards.findIndex(entry => entry.id === 'tell');
         voiceReturnState = STATES.HOME;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
@@ -2610,13 +2672,11 @@
 
     switch (currentState) {
       case STATES.SHOW_PRIMED:
-        showHoldIntentActive = false;
         stateData.pendingShowNarration = false;
         transition(STATES.SHOW_BROWSE, { showStatus: 'capture ready' });
         break;
 
       case STATES.SHOW_BROWSE:
-        showHoldIntentActive = false;
         stateData.pendingShowNarration = false;
         if (stateData.showStatus && stateData.showStatus.indexOf('opening') === 0) {
           stateData.showStatus = 'lens warming';
@@ -2626,7 +2686,6 @@
 
       case STATES.CAMERA_OPEN:
         // PTT released = finalize voice strip and capture with annotation
-        showHoldIntentActive = false;
         if (window.StructaCamera?.voiceStripActive) {
           window.StructaCamera?.finalizeVoiceStripCapture?.();
           transition(STATES.CAMERA_CAPTURE);
@@ -2645,7 +2704,6 @@
   }
 
   function goHome() {
-    const prev = currentState;
     transition(STATES.HOME);
   }
 
@@ -2733,14 +2791,7 @@
     if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
       transition(STATES.CAMERA_OPEN);
     }
-    if (stateData.pendingShowNarration && showHoldIntentActive) {
-      stateData.pendingShowNarration = false;
-      setTimeout(function() {
-        if (currentState === STATES.CAMERA_OPEN) window.StructaCamera?.startVoiceStrip?.();
-      }, 60);
-    } else {
-      stateData.pendingShowNarration = false;
-    }
+    stateData.pendingShowNarration = false;
   });
 
   window.addEventListener('structa-camera-close', () => {
@@ -2841,7 +2892,7 @@
     if (!accel) return;
     const magnitude = Math.abs(accel.x || 0) + Math.abs(accel.y || 0) + Math.abs(accel.z || 0);
     const now = Date.now();
-    if (magnitude < 42 || now - lastShakeAt < 1400) return;
+    if (magnitude < 55 || now - lastShakeAt < 2500) return;
     lastShakeAt = now;
     if (currentState === STATES.PROJECT_SWITCHER) {
       transition(STATES.HOME);
@@ -2910,10 +2961,14 @@
     phaseText.textContent = labels[chain.phase] || chain.phase;
   }
 
-  // Re-render NOW panel on each impact
-  window.addEventListener('structa-impact', function() {
+  // Re-render NOW panel on each impact + notify relevant cards
+  window.addEventListener('structa-impact', function(e) {
     updateChainBadge();
     if (currentState === STATES.NOW_BROWSE) render();
+    // Soft notification on home to show app is working
+    if (currentState === STATES.HOME) {
+      notifyCard('know', 'soft');
+    }
   });
 
   // Show spring notification when decision created
@@ -2959,9 +3014,9 @@
   window.addEventListener('structa-heartbeat', function() {
     if (currentState === STATES.HOME) {
       Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
-        var driftX = index === selectedIndex ? 0.08 : (index % 2 === 0 ? -0.05 : 0.05);
-        var driftY = index === selectedIndex ? -0.06 : 0.04;
-        pulseCardElement(cardEl, { x: driftX, y: driftY, scale: 1.0015, duration: 160 });
+        var driftX = index === selectedIndex ? 0.32 : (index % 2 === 0 ? -0.18 : 0.18);
+        var driftY = index === selectedIndex ? -0.24 : 0.14;
+        pulseCardElement(cardEl, { x: driftX, y: driftY, scale: 1.006, duration: 200 });
       });
     }
   });
@@ -3041,38 +3096,26 @@
     }
   });
 
-  // === BPM control: detect rapid scroll ticks ===
+  // === BPM control: detect rapid scroll ticks (HOME and LOG_OPEN only) ===
   let rapidScrollCount = 0;
   let rapidScrollTimer = null;
-  window.addEventListener('scrollDown', function() {
+  function onRapidScrollTick(direction) {
+    if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     rapidScrollCount++;
     clearTimeout(rapidScrollTimer);
     rapidScrollTimer = setTimeout(function() {
       if (rapidScrollCount >= 3 && window.StructaImpactChain) {
         var chain = window.StructaImpactChain;
-        var newBpm = Math.min(20, chain.bpm + 2);
+        var newBpm = direction > 0 ? Math.min(20, chain.bpm + 2) : Math.max(1, chain.bpm - 2);
         chain.bpm = newBpm;
-        if (window.StructaAudio) window.StructaAudio.play('bpmUp');
+        if (window.StructaAudio) window.StructaAudio.play(direction > 0 ? 'bpmUp' : 'bpmDown');
         pushLog('chain speed: ' + newBpm + 'bpm', 'system');
       }
       rapidScrollCount = 0;
     }, 600);
-  });
-
-  window.addEventListener('scrollUp', function() {
-    rapidScrollCount++;
-    clearTimeout(rapidScrollTimer);
-    rapidScrollTimer = setTimeout(function() {
-      if (rapidScrollCount >= 3 && window.StructaImpactChain) {
-        var chain = window.StructaImpactChain;
-        var newBpm = Math.max(1, chain.bpm - 2);
-        chain.bpm = newBpm;
-        if (window.StructaAudio) window.StructaAudio.play('bpmDown');
-        pushLog('chain speed: ' + newBpm + 'bpm', 'system');
-      }
-      rapidScrollCount = 0;
-    }, 600);
-  });
+  }
+  window.addEventListener('scrollDown', function() { onRapidScrollTick(-1); });
+  window.addEventListener('scrollUp', function() { onRapidScrollTick(1); });
 
   // === Public API ===
   window.StructaPanel = Object.freeze({

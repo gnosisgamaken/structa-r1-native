@@ -313,6 +313,9 @@
     });
 
     native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'image saved' });
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: annotation ? 'show-tell' : 'capture' }
+    }));
 
     // Also store as node if available
     if (native?.addNode) {
@@ -332,11 +335,11 @@
     // Send to LLM with voice annotation context
     if (window.StructaLLM) {
       var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
-      window.StructaLLM.processImage(rawBase64, desc, {
-        facingMode: facingMode,
-        voiceAnnotation: annotation
-      })
-        .then(function(result) {
+      var analyze = function(attempt) {
+        return window.StructaLLM.processImage(rawBase64, desc, {
+          facingMode: facingMode,
+          voiceAnnotation: annotation
+        }).then(function(result) {
           if (result && result.ok && result.clean) {
             window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
             native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
@@ -351,14 +354,21 @@
                 last_insight_summary: result.clean
               });
             });
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'visual-insight' }
+            }));
             window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           } else {
+            if (attempt === 0) return analyze(1);
             native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
           }
         })
         .catch(function() {
+          if (attempt === 0) return analyze(1);
           native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });
         });
+      };
+      analyze(0);
     }
 
     return bundle;

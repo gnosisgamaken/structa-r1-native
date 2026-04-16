@@ -89,6 +89,9 @@
               window.dispatchEvent(new CustomEvent('structa-memory-updated'));
             });
           }
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'research-command' }
+          }));
           return true;
 
         case 'export':
@@ -108,12 +111,18 @@
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'new-project', name: arg }
           }));
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'new-project-command' }
+          }));
           return true;
 
         case 'switch-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'switch to: ' + arg.slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'switch-project', name: arg }
+          }));
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'switch-project-command' }
           }));
           return true;
 
@@ -166,6 +175,9 @@
 
       // Store the answer in project memory
       native?.resolveQuestion?.(question.index, text);
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'question-answer' }
+      }));
 
       // Send to LLM for structured extraction (answer mode)
       if (window.StructaLLM) {
@@ -198,6 +210,9 @@
       source_type: 'voice',
       meta: { entry_mode: 'auto' }
     });
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'voice-entry' }
+    }));
 
     // Try to detect project name from first meaningful voice input
     if (text.length > 3 && text.length < 50) {

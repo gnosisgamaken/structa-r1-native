@@ -100,7 +100,6 @@
 
   function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {
     mk('rect', { x: -12, y: -24, width: 264, height: 112, fill, opacity: String(opacity) });
-    mk('rect', { x: 0, y: 58, width: 240, height: 1, fill: 'rgba(255,255,255,0.16)' });
   }
 
   function currentCard() {
@@ -552,11 +551,15 @@
   function activateSelectedProject() {
     const projects = getProjects();
     if (!projects.length) return false;
-    const index = Math.max(0, Math.min(stateData.projectListIndex || 0, projects.length - 1));
+    const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
+    const index = Math.max(0, Math.min(selectedIndexValue, projects.length - 1));
     const project = projects[index];
     if (!project) return false;
     native?.switchProject?.(project.project_id);
     pushLog(`project: ${project.name}`, 'voice');
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'project-switch' }
+    }));
     transition(STATES.HOME);
     return true;
   }
@@ -641,6 +644,8 @@
 
     // Latest impact chain from storage
     const storedImpacts = project?.impact_chain || [];
+    const blockerQuestion = openQuestions[0] || '';
+    const blockerCount = pendingDecisions.length + openQuestions.length;
 
     return {
       title: project?.name || 'new project',
@@ -656,6 +661,8 @@
       pendingDecisionText: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? pendingDecisions[0] : pendingDecisions[0].text) : null,
       pendingDecisionIndex: decIdx,
       pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
+      blockerCount,
+      blockerQuestion,
       chainPhase,
       chainActive,
       chainImpacts,
@@ -901,7 +908,8 @@
     if (currentState !== STATES.PROJECT_SWITCHER) return;
     const projects = getProjects();
     const activeId = getActiveProjectId();
-    const selected = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(projects.length - 1, 0)));
+    const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
+    const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
     const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
@@ -1399,6 +1407,7 @@
 
     const chainY = 90;
     const phaseLabel = {
+      blocked: 'waiting on blocker',
       observe: 'observing',
       research: 'researching',
       evaluate: 'evaluating',
@@ -1443,7 +1452,7 @@
       mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
       const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
-      text(18, boxY + 16, 'decision' + countLabel, {
+      text(18, boxY + 16, 'blocker' + countLabel, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1493,6 +1502,21 @@
 
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
+    } else if (data.openQuestions > 0) {
+      drawSectionLabel(undefined, 14, 146, 'blocker ask');
+      wrapText(undefined, lower(data.blockerQuestion.slice(0, 68)), 14, 162, 212, 14, 'rgba(8,8,8,0.96)', '14');
+      text(14, 208, 'side button answers this blocker', {
+        fill: 'rgba(8,8,8,0.48)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      if (data.blockerCount > 1) {
+        text(14, 224, `${data.blockerCount} blockers waiting`, {
+          fill: 'rgba(8,8,8,0.36)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9'
+        });
+      }
     } else {
       drawSectionLabel(undefined, 14, 146, 'next move');
       wrapText(undefined, lower(data.next), 14, 162, 212, 14, 'rgba(8,8,8,0.96)', '14');
@@ -1741,7 +1765,8 @@
       case STATES.PROJECT_SWITCHER: {
         const projects = getProjects();
         if (!projects.length) break;
-        stateData.projectListIndex = ((stateData.projectListIndex || 0) + (direction > 0 ? 1 : -1) + projects.length) % projects.length;
+        const currentIndex = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
+        stateData.projectListIndex = Math.max(0, Math.min(currentIndex + (direction > 0 ? 1 : -1), projects.length - 1));
         render();
         break;
       }
@@ -2248,10 +2273,15 @@
   // === Heartbeat visual micro-pulse ===
   window.addEventListener('structa-heartbeat', function() {
     if (currentState === STATES.HOME) {
-      svg.classList.remove('heartbeat-pulse');
-      void svg.offsetWidth; // force reflow
-      svg.classList.add('heartbeat-pulse');
-      setTimeout(function() { svg.classList.remove('heartbeat-pulse'); }, 320);
+      Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
+        var baseTransform = cardEl.getAttribute('transform') || '';
+        var driftX = index === selectedIndex ? 0.25 : (index % 2 === 0 ? -0.18 : 0.18);
+        var driftY = index === selectedIndex ? -0.2 : 0.12;
+        cardEl.setAttribute('transform', baseTransform + ' translate(' + driftX + ' ' + driftY + ')');
+        setTimeout(function() {
+          if (cardEl.isConnected) cardEl.setAttribute('transform', baseTransform);
+        }, 180);
+      });
     }
   });
 

@@ -14,12 +14,14 @@
  */
 (function() {
   var native = window.StructaNative;
-  var pendingCallbacks = {};
+  var requestQueue = [];
+  var activeRequest = null;
   var requestId = 0;
   var conversationHistory = [];
   var MAX_HISTORY = 10;
   var lastCallTime = 0;
-  var MIN_GAP_MS = 5000;
+  var MIN_GAP_MS = 1200;
+  var dispatchTimer = null;
 
   function getNextId() {
     requestId++;
@@ -37,49 +39,75 @@
     var id = getNextId();
 
     return new Promise(function(resolve) {
-      // Rate limit
-      var now = Date.now();
-      var elapsed = now - lastCallTime;
-      var delay = elapsed < MIN_GAP_MS ? MIN_GAP_MS - elapsed : 0;
+      var request = {
+        id: id,
+        message: message,
+        opts: opts,
+        resolve: resolve
+      };
 
-      setTimeout(function() {
-        lastCallTime = Date.now();
+      if (opts.priority === 'low') {
+        requestQueue.push(request);
+      } else {
+        var firstLowIndex = requestQueue.findIndex(function(entry) { return entry.opts && entry.opts.priority === 'low'; });
+        if (firstLowIndex === -1) requestQueue.push(request);
+        else requestQueue.splice(firstLowIndex, 0, request);
+      }
 
-        // Store callback for when response arrives
-        pendingCallbacks[id] = {
-          resolve: resolve,
-          timeout: setTimeout(function() {
-            delete pendingCallbacks[id];
-            resolve({ ok: false, error: 'timeout' });
-          }, opts.timeout || 30000)
-        };
-
-        // Build payload — R1 Create SDK format
-        var payload = {
-          message: message,
-          useLLM: true,
-          wantsR1Response: opts.speak || false,
-          wantsJournalEntry: opts.journal || false
-        };
-
-        // Multimodal: attach raw base64 image
-        if (opts.imageBase64) payload.imageBase64 = opts.imageBase64;
-        if (opts.pluginId) payload.pluginId = opts.pluginId;
-
-        // Send via native bridge
-        if (typeof PluginMessageHandler !== 'undefined') {
-          try {
-            PluginMessageHandler.postMessage(JSON.stringify(payload));
-          } catch (err) {
-            delete pendingCallbacks[id];
-            resolve({ ok: false, error: 'postMessage failed: ' + err.message });
-          }
-        } else {
-          delete pendingCallbacks[id];
-          resolve({ ok: false, error: 'PluginMessageHandler not available' });
-        }
-      }, delay);
+      processQueue();
     });
+  }
+
+  function processQueue() {
+    if (activeRequest || !requestQueue.length || dispatchTimer) return;
+
+    var now = Date.now();
+    var elapsed = now - lastCallTime;
+    var delay = elapsed < MIN_GAP_MS ? MIN_GAP_MS - elapsed : 0;
+
+    dispatchTimer = setTimeout(function() {
+      dispatchTimer = null;
+      if (activeRequest || !requestQueue.length) return;
+
+      var request = requestQueue.shift();
+      if (!request) return;
+
+      lastCallTime = Date.now();
+      activeRequest = request;
+      activeRequest.timeout = setTimeout(function() {
+        if (!activeRequest || activeRequest.id !== request.id) return;
+        var timedOut = activeRequest;
+        activeRequest = null;
+        timedOut.resolve({ ok: false, error: 'timeout' });
+        processQueue();
+      }, request.opts.timeout || 30000);
+
+      var payload = {
+        message: request.message,
+        useLLM: true,
+        wantsR1Response: request.opts.speak || false,
+        wantsJournalEntry: request.opts.journal || false
+      };
+
+      if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
+      if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
+
+      if (typeof PluginMessageHandler !== 'undefined') {
+        try {
+          PluginMessageHandler.postMessage(JSON.stringify(payload));
+        } catch (err) {
+          clearTimeout(activeRequest.timeout);
+          activeRequest = null;
+          request.resolve({ ok: false, error: 'postMessage failed: ' + err.message });
+          processQueue();
+        }
+      } else {
+        clearTimeout(activeRequest.timeout);
+        activeRequest = null;
+        request.resolve({ ok: false, error: 'PluginMessageHandler not available' });
+        processQueue();
+      }
+    }, delay);
   }
 
   // === Response handler ===
@@ -111,14 +139,11 @@
       }
     }
 
-    // Route LLM response to the most recent pending callback
-    var callbackIds = Object.keys(pendingCallbacks);
-    if (callbackIds.length > 0 && responseText) {
-      var oldestId = callbackIds[0];
-      var cb = pendingCallbacks[oldestId];
+    if (activeRequest && responseText) {
+      var cb = activeRequest;
       if (cb) {
         clearTimeout(cb.timeout);
-        delete pendingCallbacks[oldestId];
+        activeRequest = null;
         var clean = sanitizeResponse(responseText);
         cb.resolve({
           ok: true,
@@ -126,6 +151,7 @@
           clean: clean,
           structured: extractFields(clean)
         });
+        processQueue();
         return;
       }
     }
@@ -142,7 +168,9 @@
     /can.t access.*web|unable to.*web/gi,
     /dlam|rabbit\.tech/gi,
     /web search|look up online/gi,
-    /I can.t help/gi
+    /I can.t help/gi,
+    /let'?s calculate(?:\s+what\s+is|\s+what's)?\s+\d+/gi,
+    /\bone plus one\b|\btwo plus two\b|\bthree plus three\b/gi
   ];
 
   function sanitizeResponse(text) {
@@ -409,7 +437,7 @@
       existing.map(function(n, i) { return (i + 1) + '. "' + (n.title + ' ' + n.body).slice(0, 50) + '" (' + n.type + ')'; }).join('\n') +
       '\n\nWhich items (by number) are related? Return ONLY comma-separated numbers, or "none".';
 
-    return sendToLLM(prompt, { speak: false, journal: false, timeout: 15000 }).then(function(result) {
+    return sendToLLM(prompt, { speak: false, journal: false, timeout: 15000, priority: 'low' }).then(function(result) {
       if (!result || !result.ok || !result.clean) return [];
       var matches = result.clean.match(/\d+/g);
       if (!matches) return [];
@@ -447,7 +475,7 @@
       (context ? 'Project context: ' + context.slice(0, 120) + '\n\n' : '') +
       'Return exactly 3 key findings. Each finding: 1 sentence, 10 words max. Number them 1-3.';
 
-    return sendToLLM(prompt, { speak: false, journal: false, timeout: 25000 }).then(function(result) {
+    return sendToLLM(prompt, { speak: false, journal: false, timeout: 25000, priority: 'low' }).then(function(result) {
       if (!result || !result.ok) return { ok: false, findings: [] };
       var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
       var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
@@ -520,7 +548,7 @@
     research: research,
     generateExport: generateExport,
     resetHistory: resetHistory,
-    get pendingCount() { return Object.keys(pendingCallbacks).length; },
+    get pendingCount() { return requestQueue.length + (activeRequest ? 1 : 0); },
     get historyLength() { return conversationHistory.length; }
   });
 })();

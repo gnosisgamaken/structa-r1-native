@@ -566,7 +566,7 @@
     if (raw === 'insight extracted') return 'insight added';
     if (raw === 'insight unavailable' || raw === 'insight failed') return 'insight unavailable';
     if (raw === 'visual insight ready') return 'visual note ready';
-    if (raw === 'visual insight failed') return 'visual note unavailable';
+    if (raw === 'visual insight unavailable' || raw === 'visual insight failed') return 'visual note unavailable';
     if (raw.startsWith('answering:')) return 'answering question';
     if (raw.startsWith('answered:')) return 'question answered';
     if (raw.startsWith('saved 33 logs')) return 'log export saved';
@@ -974,6 +974,9 @@
         useLLM: false,
         wantsJournalEntry: true
       });
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'decision-approved' }
+      }));
       return memory.projectMemory;
     }
 
@@ -995,6 +998,9 @@
         decision_options: pendingOptions, selected_option: resolvedOpt,
         resolved_at: new Date().toISOString()
       });
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'decision-approved' }
+      }));
     });
   }
 
@@ -1009,6 +1015,9 @@
       rebuildLegacyViews();
       persist();
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'decision-dismissed' }
+      }));
       return memory.projectMemory;
     }
     return touchProjectMemory(function(project) {
@@ -1040,6 +1049,9 @@
         meta: { answered: true }
       });
       appendLogEntry({ kind: 'journal', message: 'answered: ' + (questionNodes[idx].body || '').slice(0, 40) });
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'question-resolved' }
+      }));
       return memory.projectMemory;
     }
     // Legacy fallback

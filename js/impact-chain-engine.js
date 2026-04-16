@@ -26,7 +26,7 @@
     bpm: 2,                    // beats per minute (2 = every 30s)
     beatCount: 0,
     impacts: [],
-    currentPhase: 'idle',       // idle | observe | research | evaluate | decision | cooldown
+    currentPhase: 'idle',       // idle | blocked | observe | research | evaluate | decision | cooldown
     lastDecisionAt: 0,
     lastUserActivity: Date.now(),
     maxImpactsPerChain: 3,      // observe + research × N before decision
@@ -104,6 +104,9 @@
       var pd = typeof pending[0] === 'string' ? pending[0] : (pending[0].text || '');
       parts.push('Pending decision: ' + pd.slice(0, 50));
     }
+    if (pending.length || openQuestions.length) {
+      parts.push('Blockers: ' + (pending.length + openQuestions.length));
+    }
 
     // Last impact summary
     var lastImpact = chain.impacts[chain.impacts.length - 1];
@@ -120,7 +123,8 @@
       'You are Structa, a project cognition system. You ONLY process what you are given.\n\n' +
       '[CONTEXT]\n' + context + '\n\n' +
       '[TASK]\n' +
-      'In exactly 5 words, state what is most missing from this project right now.';
+      'In exactly 5 words, state what is most missing from this project right now. ' +
+      'Do not use math drills, counting exercises, or toy examples.';
   }
 
   function researchPrompt(context, observation) {
@@ -257,7 +261,21 @@
       '[TASK]\n' +
       'Ask ONE concrete, specific question that would help define this project. ' +
       'Make it actionable — something the user can answer in one sentence. ' +
+      'Do not ask arithmetic, counting, or classroom-style questions. ' +
       'Return ONLY the question, 12 words max.';
+  }
+
+  function getBlockers() {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var pending = project.pending_decisions || [];
+    var openQuestions = project.open_questions || [];
+    return {
+      pendingCount: pending.length,
+      questionCount: openQuestions.length,
+      total: pending.length + openQuestions.length,
+      topDecision: pending.length ? (typeof pending[0] === 'string' ? pending[0] : (pending[0].text || 'decision waiting')) : '',
+      topQuestion: openQuestions.length ? String(openQuestions[0] || '') : ''
+    };
   }
 
   // === Beat logic ===
@@ -302,9 +320,16 @@
 
     chain.beatCount++;
 
+    var blockers = getBlockers();
+    if (blockers.total > 0 && chain.currentPhase !== 'cooldown') {
+      chain.currentPhase = 'blocked';
+      window.dispatchEvent(new CustomEvent('structa-blocked', { detail: blockers }));
+      return;
+    }
+
     // === Discovery mode: ask shaping questions when project is new ===
     if (isDiscoveryMode() && chain.currentPhase === 'observe') {
-      llm.sendToLLM(discoveryPrompt(context), { speak: true, journal: false, timeout: 20000 })
+      llm.sendToLLM(discoveryPrompt(context), { speak: false, journal: false, timeout: 20000, priority: 'low' })
         .then(function(result) {
           if (!chain.active) return;
           if (result && result.ok && result.clean) {
@@ -330,7 +355,7 @@
 
             chain.currentPhase = 'cooldown';
             chain.lastDecisionAt = Date.now();
-            chain.cooldownMs = 45000; // shorter cooldown in discovery
+            chain.cooldownMs = 35000;
 
             // Notify
             window.dispatchEvent(new CustomEvent('structa-discovery-question', {
@@ -345,9 +370,10 @@
 
     switch (chain.currentPhase) {
       case 'idle':
+      case 'blocked':
       case 'observe':
         chain.currentPhase = 'observe';
-        llm.sendToLLM(observePrompt(context), { speak: false, journal: false, timeout: 20000 })
+        llm.sendToLLM(observePrompt(context), { speak: false, journal: false, timeout: 20000, priority: 'low' })
           .then(function(result) {
             if (!chain.active) return;
             if (result && result.ok && result.clean) {
@@ -367,7 +393,7 @@
           chain.currentPhase = 'evaluate';
           // Fall through to evaluate
         } else {
-          llm.sendToLLM(researchPrompt(context, observation), { speak: false, journal: false, timeout: 20000 })
+          llm.sendToLLM(researchPrompt(context, observation), { speak: false, journal: false, timeout: 20000, priority: 'low' })
             .then(function(result) {
               if (!chain.active) return;
               if (result && result.ok && result.clean) {
@@ -392,7 +418,7 @@
         // Intentional fall-through to evaluate when max impacts reached
 
       case 'evaluate':
-        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { speak: false, journal: false, timeout: 25000 })
+        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { speak: false, journal: false, timeout: 25000, priority: 'low' })
           .then(function(result) {
             if (!chain.active) return;
             if (result && result.ok && result.clean) {
@@ -467,12 +493,27 @@
     chain.lastUserActivity = Date.now();
   }
 
+  var immediateBeatTimer = null;
+  function requestImmediateBeat() {
+    if (!chain.active) return;
+    clearTimeout(immediateBeatTimer);
+    immediateBeatTimer = setTimeout(function() {
+      immediateBeatTimer = null;
+      if (window.StructaLLM && window.StructaLLM.pendingCount > 0) {
+        requestImmediateBeat();
+        return;
+      }
+      beat();
+    }, 120);
+  }
+
   // === Public API ===
   window.StructaImpactChain = Object.freeze({
     start: start,
     pause: pause,
     resume: resume,
     touchActivity: touchActivity,
+    requestImmediateBeat: requestImmediateBeat,
     get active() { return chain.active; },
     get phase() { return chain.currentPhase; },
     get bpm() { return chain.bpm; },
@@ -503,6 +544,12 @@
       touchActivity();
       if (!chain.active) resume();
     }
+  });
+
+  window.addEventListener('structa-fast-feedback', function() {
+    touchActivity();
+    if (!chain.active) resume();
+    requestImmediateBeat();
   });
 
 })();

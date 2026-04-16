@@ -486,9 +486,9 @@
     }
 
     @keyframes calm-emphasis {
-      0% { transform: scale(1); opacity: 1; }
-      45% { transform: scale(1.03); opacity: 0.96; }
-      100% { transform: scale(1); opacity: 1; }
+      0% { transform: translate(0, 0) scale(1); opacity: 1; }
+      45% { transform: translate(0.4px, -0.4px) scale(1.012); opacity: 0.985; }
+      100% { transform: translate(0, 0) scale(1); opacity: 1; }
     }
 
     /* Surface enter animation — cards slide in */
@@ -572,16 +572,7 @@
       text-overflow: ellipsis;
     }
 
-    /* === Heartbeat visual micro-pulse === */
-    @keyframes heartbeat-pulse {
-      0% { transform: translate(0, 0); }
-      50% { transform: translate(0.5px, -0.5px); }
-      100% { transform: translate(0, 0); }
-    }
-
-    svg.heartbeat-pulse {
-      animation: heartbeat-pulse 300ms ease-out;
-    }
+    /* Heartbeat motion is applied per-card in JS to avoid shifting the whole scene. */
   </style>
 </head>
 <body>

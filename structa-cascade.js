@@ -45,10 +45,10 @@
   });
 
   const cards = [
-    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture commands', roleShort: 'speak update', color: 'var(--tell)', surface: 'voice' },
+    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'capture frame', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture commands', roleShort: 'voice note', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'generate insights', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'catch up fast', color: 'var(--now)', surface: 'project' }
+    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'decide next', color: 'var(--now)', surface: 'project' }
   ];
 
   // === State machine ===
@@ -73,7 +73,10 @@
   }
 
   function projectDisplayName(project = getProjectMemory()) {
-    return String(project?.name || 'Untitled Project');
+    const value = String(project?.name || '').trim();
+    if (!value) return 'Project';
+    if (lower(value) === 'untitled project') return 'Project';
+    return value;
   }
 
   function compactProjectName(name = '') {
@@ -147,7 +150,7 @@
 
   function latestLogText() {
     const row = log.lastElementChild;
-    return row ? lower(row.textContent || '') : 'no logs yet';
+    return row ? lower(row.textContent || '') : 'log';
   }
 
   // === Transition ===
@@ -180,7 +183,7 @@
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     log.innerHTML = '';
     if (!entries.length) {
-      logPreview.textContent = 'no logs yet';
+      logPreview.textContent = 'log';
       return;
     }
     entries.forEach(entry => {
@@ -829,11 +832,11 @@
 
   // === SVG rendering helpers ===
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 120, y: 68, scale: 1.5, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 106, y: 62, scale: 1.62, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 68 + (150 * 1.5) / 2;
-    var scales = [0.50, 0.69, 0.92];
-    var xPositions = [0, 40, 80];
+    var heroCenterY = 62 + (150 * 1.62) / 2;
+    var scales = [0.54, 0.74, 0.96];
+    var xPositions = [18, 46, 74];
     var stack = scales.map(function(s, i) {
       var cardH = 150 * s;
       return { x: xPositions[i], y: heroCenterY - cardH / 2, scale: s, opacity: 1, depth: i };
@@ -877,28 +880,22 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    const ui = getUIState();
     image('assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(42, 36, 'structa', {
+    text(40, 34, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '35', 'letter-spacing': '0.0em'
+      'font-size': '34', 'letter-spacing': '0.0em'
     });
-    text(14, 60, compactProjectName(projectDisplayName(project)), {
+    text(14, 56, compactProjectName(projectDisplayName(project)), {
       fill: '#f8c15d',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '18'
+      'font-size': '15'
     });
-    text(226, 60, lower(ui.last_event_summary || 'ready'), {
-      fill: 'rgba(244,239,228,0.44)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
+    mk('rect', { x: 14, y: 62, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
   }
 
   function drawProjectSwitcher() {
@@ -909,7 +906,6 @@
     const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
-    mk('rect', { x: 0, y: 0, width: 240, height: 78, fill: 'rgba(255,255,255,0.03)' });
     image('assets/icons/png/5.png', {
       x: 12, y: 14, width: 22, height: 22,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.92,
@@ -923,17 +919,18 @@
     text(14, 54, compactProjectName(activeProject?.name || 'Untitled Project'), {
       fill: '#f8c15d',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '16'
+      'font-size': '15'
     });
-    text(226, 54, `${projects.length} active`, {
-      fill: 'rgba(244,239,228,0.42)',
+    text(226, 54, 'projects', {
+      fill: 'rgba(244,239,228,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
     });
+    mk('rect', { x: 14, y: 60, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
 
     if (!projects.length) {
-      text(14, 108, 'no projects yet', {
+      text(14, 120, 'no projects yet', {
         fill: '#f4efe4',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
@@ -941,9 +938,9 @@
       return;
     }
 
-    const startY = 86;
-    const rowH = 46;
-    const visibleRows = 4;
+    const startY = 78;
+    const rowH = 54;
+    const visibleRows = 3;
     const offset = Math.max(0, Math.min(selected - 1, Math.max(0, projects.length - visibleRows)));
     projects.slice(offset, offset + visibleRows).forEach((project, visibleIndex) => {
       const absoluteIndex = offset + visibleIndex;
@@ -956,40 +953,43 @@
         x: 10,
         y,
         width: 220,
-        height: 36,
-        rx: 8,
-        ry: 8,
-        fill: isSelected ? 'rgba(248,193,93,0.12)' : 'rgba(255,255,255,0.025)',
-        stroke: isSelected ? 'rgba(248,193,93,0.34)' : 'rgba(255,255,255,0.06)',
+        height: 42,
+        rx: 10,
+        ry: 10,
+        fill: isSelected ? 'rgba(248,193,93,0.10)' : 'rgba(255,255,255,0.025)',
+        stroke: isSelected ? 'rgba(248,193,93,0.28)' : 'rgba(255,255,255,0.05)',
         'stroke-width': '1'
       }, tap);
 
-      text(18, y + 15, compactProjectName(project.name || 'Untitled Project'), {
+      text(18, y + 16, compactProjectName(project.name || 'Untitled Project'), {
         fill: isActive ? '#f8c15d' : '#f4efe4',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '14'
       }, tap);
 
-      const meta = [project.type || 'general'];
-      const captures = project.counts?.captures || 0;
-      const insights = project.counts?.insights || 0;
-      if (captures) meta.push(`${captures} cap`);
-      if (insights) meta.push(`${insights} ins`);
-      text(18, y + 28, meta.join(' · '), {
-        fill: isSelected ? 'rgba(244,239,228,0.70)' : 'rgba(244,239,228,0.42)',
+      text(18, y + 30, project.type || 'general', {
+        fill: 'rgba(244,239,228,0.40)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       }, tap);
 
-      text(220, y + 15, recentTimeLabel(project.updated_at), {
-        fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.42)',
+      text(220, y + 16, recentTimeLabel(project.updated_at), {
+        fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      }, tap);
+
+      const compactCount = [project.counts?.captures || 0, project.counts?.insights || 0].reduce((a, b) => a + b, 0);
+      text(220, y + 30, compactCount ? `${compactCount} items` : 'quiet', {
+        fill: 'rgba(244,239,228,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
         'text-anchor': 'end'
       }, tap);
 
       if (isActive) {
-        mk('rect', { x: 206, y: y + 22, width: 14, height: 2, rx: 1, ry: 1, fill: '#f8c15d' }, tap);
+        mk('rect', { x: 18, y: y + 36, width: 20, height: 2, rx: 1, ry: 1, fill: '#f8c15d' }, tap);
       }
 
       tap.addEventListener('pointerup', event => {
@@ -1004,7 +1004,7 @@
 
   function drawSurfaceHeader(card) {
     const project = getProjectMemory();
-    drawColorBleed('rgba(255,255,255,0.10)', 0.10);
+    drawColorBleed('rgba(255,255,255,0.08)', 0.08);
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24,
@@ -1022,19 +1022,13 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     });
-    text(226, 58, lower(card.roleShort || card.role), {
-      fill: 'rgba(8,8,8,0.42)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
+    mk('rect', { x: 14, y: 62, width: 20, height: 2, rx: 1, ry: 1, fill: 'rgba(8,8,8,0.28)' });
   }
 
   function drawCard(card, index) {
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
-    const showStackIcon = !selected;
-    const project = getProjectMemory();
+    const stackLead = !selected && layout.depth === 0;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(layout.opacity), tabindex: '0', role: 'button',
@@ -1042,7 +1036,7 @@
       'data-card-index': index
     });
 
-    const rect = mk('rect', {
+    mk('rect', {
       x: 0, y: 0, width: 150, height: 150, rx: 20, ry: 20,
       fill: card.color,
       stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
@@ -1050,111 +1044,77 @@
     }, group);
 
     if (selected) {
-      mk('rect', { x: 0, y: 0, width: 150, height: 26, rx: 20, ry: 20, fill: 'rgba(255,255,255,0.12)' }, group);
-      mk('rect', { x: 0, y: 20, width: 150, height: 10, fill: 'rgba(255,255,255,0.12)' }, group);
-    }
-
-    if (selected) {
+      mk('rect', { x: 0, y: 0, width: 150, height: 24, rx: 20, ry: 20, fill: 'rgba(255,255,255,0.10)' }, group);
+      mk('rect', { x: 0, y: 18, width: 150, height: 8, fill: 'rgba(255,255,255,0.10)' }, group);
       drawCardIcon(card, true, group);
-      text(18, 78, card.title, {
+      text(18, 80, card.title, {
         fill: 'rgba(8,8,8,0.98)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '22'
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '24'
       }, group);
 
-      text(18, 32, compactProjectName(projectDisplayName(project)), {
-        fill: 'rgba(8,8,8,0.54)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
-      }, group);
-
-      // Glanceable stat — one big number that tells you what matters
       let statNumber = '';
       let statLabel = '';
-
+      const project = getProjectMemory();
       if (card.id === 'show') {
         statNumber = String(getCaptureList().length);
-        statLabel = 'captures today';
+        statLabel = 'captures';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
-        statLabel = 'voice entries';
+        statLabel = 'voice';
       } else if (card.id === 'know') {
         const qCount = (project?.open_questions || []).length;
         const iCount = (project?.insights || []).length;
         statNumber = qCount > 0 ? String(qCount) : String(iCount);
-        statLabel = qCount > 0 ? 'open asks' : 'insights';
+        statLabel = qCount > 0 ? 'asks' : 'insights';
       } else if (card.id === 'now') {
         const pCount = (project?.pending_decisions || []).length;
         const clarity = project?.clarity_score || 0;
         statNumber = pCount > 0 ? String(pCount) : (clarity > 0 ? clarity + '%' : '0');
-        statLabel = pCount > 0 ? 'pending decisions' : 'clarity';
+        statLabel = pCount > 0 ? 'pending' : 'clarity';
       }
 
       if (statNumber && statNumber !== '0') {
-        text(130, 78, statNumber, {
+        text(132, 82, statNumber, {
           fill: 'rgba(8,8,8,0.22)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '42',
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '48',
           'text-anchor': 'end'
         }, group);
       }
 
-      // Role text
-      const displayRole = lower(card.roleShort || card.role);
-      const words = displayRole.split(/\s+/);
-      const firstLine = words.slice(0, Math.ceil(words.length / 2)).join(' ');
-      const secondLine = words.slice(Math.ceil(words.length / 2)).join(' ');
-      text(18, 101, firstLine, {
-        fill: 'rgba(8,8,0,0.74)',
+      text(18, 112, lower(card.roleShort || card.role), {
+        fill: 'rgba(8,8,8,0.70)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12'
       }, group);
-      if (secondLine) {
-        text(18, 116, secondLine, {
-          fill: 'rgba(8,8,8,0.74)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12'
-        }, group);
-      }
 
-      // Stat label
       if (statLabel) {
-        text(18, 136, lower(statLabel), {
-          fill: 'rgba(8,8,8,0.38)',
+        text(18, 132, lower(statLabel), {
+          fill: 'rgba(8,8,8,0.40)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
         }, group);
       }
 
-      // Notification dots
       const pendingCount = (project?.pending_decisions || []).length;
       const questionCount = (project?.open_questions || []).length;
       if (pendingCount > 0 && card.id === 'now') {
-        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#ff8a65', opacity: '0.9' }, group);
-        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
-        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.86' }, group);
       }
       if (questionCount > 0 && card.id === 'know') {
-        const dot = mk('circle', { cx: 138, cy: 18, r: 5, fill: '#f8c15d', opacity: '0.9' }, group);
-        mk('animate', { attributeName: 'r', values: '4;7;4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
-        mk('animate', { attributeName: 'opacity', values: '0.5;1;0.5', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.86' }, group);
       }
-    } else if (showStackIcon) {
+    } else if (stackLead) {
       if (card.iconPath) {
         image(card.iconPath, {
           x: 18, y: 18, width: 30, height: 30,
           preserveAspectRatio: 'xMidYMid meet', opacity: 1,
           style: 'filter: brightness(0) saturate(100%);'
         }, group);
-      } else {
-        text(18, 42, card.iconFallback || '•', {
-          fill: 'rgba(8,8,8,0.96)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '28'
-        }, group);
       }
-      // Stack notification dots
       const project = getProjectMemory();
       if (card.id === 'now' && (project?.pending_decisions || []).length > 0) {
-        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.8' }, group);
-        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 130, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.8' }, group);
       }
       if (card.id === 'know' && (project?.open_questions || []).length > 0) {
-        const dot = mk('circle', { cx: 130, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.8' }, group);
-        mk('animate', { attributeName: 'opacity', values: '0.4;0.9;0.4', dur: '1.2s', repeatCount: 'indefinite' }, dot);
+        mk('circle', { cx: 130, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.8' }, group);
       }
     }
 
@@ -1169,7 +1129,7 @@
       if (event.key === 'Enter' || event.key === ' ') activate(event);
     });
 
-    return { group, rect };
+    return { group };
   }
 
   function drawSectionLabel(group, x, y, label) {
@@ -1250,7 +1210,7 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
-    text(14, 72, `${model.captures.length} visual memories`, {
+    text(14, 72, 'camera', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
@@ -1263,7 +1223,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 100, model.captures.length ? `${model.captures.length} saved` : 'start', {
+    text(216, 100, model.captures.length ? `${model.captures.length}` : 'new', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1281,19 +1241,19 @@
         x: 14, y: 118, width: 212, height: 94, preserveAspectRatio: 'xMidYMid slice', opacity: 1
       });
       mk('rect', { x: 14, y: 180, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
-      text(22, 194, 'latest frame', {
+      text(22, 194, recentTimeLabel(model.createdAt), {
         fill: 'rgba(244,239,228,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
       wrapText(undefined, model.summary.slice(0, 52), 22, 206, 190, 11, 'rgba(244,239,228,0.92)', '10');
     } else {
-      text(14, 154, 'no captures yet', {
+      text(14, 154, 'no capture yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'open camera to capture the first visual reference for this project', 14, 174, 196, 14, 'rgba(8,8,8,0.62)', '12');
+      wrapText(undefined, 'open camera for the first visual memory', 14, 174, 196, 14, 'rgba(8,8,8,0.62)', '12');
     }
 
     const thumbY = 218;
@@ -1346,7 +1306,7 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
-    text(14, 72, `${model.entries.length} voice memories`, {
+    text(14, 72, 'voice', {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
@@ -1359,7 +1319,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, actionBar);
-    text(216, 100, model.entries.length ? `${model.entries.length} saved` : 'new', {
+    text(216, 100, model.entries.length ? `${model.entries.length}` : 'new', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1385,7 +1345,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'hold the side button to save the first spoken update for this project', 20, 166, 184, 13, 'rgba(8,8,8,0.60)', '11');
+      wrapText(undefined, 'hold the side button for the first spoken update', 20, 166, 184, 13, 'rgba(8,8,8,0.60)', '11');
     }
 
     const visible = model.entries.slice(0, 3);
@@ -1422,7 +1382,7 @@
       });
     });
 
-    text(14, 284, `${model.entries.length} voice · ${model.insights} insights · ${model.questions} asks · ${lower(model.status)}`, {
+    text(14, 284, lower(model.status), {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
@@ -1438,7 +1398,7 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    text(14, 72, `${data.pendingDecisions.length} pending · ${data.chainPhase}`, { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
+    text(14, 72, 'project state', { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
     const chainY = 90;
     const phaseLabel = {
@@ -1485,8 +1445,8 @@
       const boxH = pdOptions.length >= 2 ? 132 : 96;
       mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
-      const countLabel = pdCount > 1 ? ` (${data.pendingDecisionIndex + 1}/${pdCount})` : '';
-      text(18, boxY + 16, 'decision arena' + countLabel, {
+      const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
+      text(18, boxY + 16, 'decision' + countLabel, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1540,7 +1500,7 @@
       drawSectionLabel(undefined, 14, 146, 'next move');
       wrapText(undefined, lower(data.next), 14, 162, 212, 14, 'rgba(8,8,8,0.96)', '14');
       if (data.totalImpacts > 0) {
-        text(14, 184, `${data.totalImpacts} impacts · ${data.totalDecisions} chain decisions`, {
+        text(14, 184, `${data.totalImpacts} impacts · ${data.totalDecisions} decisions`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'
@@ -1548,7 +1508,7 @@
       }
     }
 
-    text(14, 282, `${data.captures} caps · ${data.insights} insights · ${data.openQuestions} asks · ${data.decisions} done`, {
+    text(14, 282, `${data.captures} cap · ${data.insights} ins · ${data.openQuestions} ask`, {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
     });
@@ -1582,7 +1542,7 @@
     // Touchable lane tabs
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 44 },
-      { id: 'signals', label: 'signals', width: 52 },
+      { id: 'signals', label: 'signal', width: 48 },
       { id: 'decisions', label: 'decided', width: 52 },
       { id: 'open loops', label: 'loops', width: 42 }
     ];
@@ -1651,7 +1611,7 @@
     });
 
     // Result count
-    text(226, chipY + 13, String(items.length), {
+    text(226, chipY + 13, items.length ? `${items.length}` : '', {
       fill: 'rgba(8,8,8,0.40)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10', 'text-anchor': 'end'
@@ -1703,7 +1663,7 @@
 
       // Scroll hint
       if (items.length > 1) {
-        text(14, 280, (itemIdx + 1) + '/' + items.length + ' · scroll or tap detail', {
+        text(14, 280, (itemIdx + 1) + '/' + items.length + ' · detail', {
           fill: 'rgba(8,8,8,0.32)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'

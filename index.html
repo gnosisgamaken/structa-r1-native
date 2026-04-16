@@ -149,9 +149,10 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      color: rgba(244, 239, 228, 0.78);
-      font-size: 12px;
-      letter-spacing: 0;
+      color: rgba(244, 239, 228, 0.58);
+      font-size: 10px;
+      letter-spacing: 0.03em;
+      text-transform: lowercase;
     }
 
     #log-drawer.open #log-preview {
@@ -592,7 +593,7 @@
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
       <button id="log-handle" aria-label="toggle log">
         <span id="log-grip"></span>
-        <span id="log-preview">no logs yet</span>
+        <span id="log-preview">audit</span>
         <span id="log-chain-badge" class="idle"><span class="chain-dot"></span><span id="chain-phase-text">idle</span></span>
       </button>
       <div id="log"></div>

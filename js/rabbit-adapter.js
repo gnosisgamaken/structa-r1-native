@@ -701,6 +701,11 @@
     const k = lower(kind || 'event');
     const raw = normalizeSpacing(message || 'event');
     if (!raw || raw === 'event' || raw === 'no event') return null;
+    function compact(text = '', maxWords = 7) {
+      const words = String(text || '').split(/\s+/).filter(Boolean);
+      if (words.length <= maxWords) return words.join(' ');
+      return words.slice(0, maxWords).join(' ') + '…';
+    }
 
     if (raw.startsWith('stt:')) return null;
     if (raw.startsWith('beat ')) return null;
@@ -736,13 +741,20 @@
     if (k === 'heartbeat') return null;
     if (k === 'chain' && raw.startsWith('observe:')) return null;
     if (k === 'chain' && raw.startsWith('research:')) return null;
+    if (k === 'chain' && raw.startsWith('clarify:')) return null;
     if (k === 'chain' && raw.startsWith('evaluate:')) return null;
     if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
 
-    return raw
+    if (k === 'insight') return compact('insight ' + raw.replace(/^new\s+/i, ''));
+    if (k === 'voice') return compact(raw);
+    if (k === 'camera') return compact(raw);
+    if (k === 'question') return compact(raw);
+    if (k === 'decision') return compact(raw);
+
+    return compact(raw
       .replace(/[`*_#{}[\]|]+/g, ' ')
       .replace(/\s+/g, ' ')
-      .trim();
+      .trim());
   }
 
   function isDuplicateVisibleMessage(message = '', createdAt = Date.now()) {

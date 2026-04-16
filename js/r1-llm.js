@@ -37,11 +37,18 @@
   function sendToLLM(message, options) {
     var opts = options || {};
     var id = getNextId();
+    var protectedMessage = message;
+    if (!opts.useSerpAPI && typeof protectedMessage === 'string' && !/DO NOT SEARCH/i.test(protectedMessage)) {
+      protectedMessage =
+        '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+        'Reason only from the provided context.\n\n' +
+        protectedMessage;
+    }
 
     return new Promise(function(resolve) {
       var request = {
         id: id,
-        message: message,
+        message: protectedMessage,
         opts: opts,
         resolve: resolve
       };

@@ -15,6 +15,7 @@
 
   const HEARTBEAT = {
     observe:  { freq: 60,  dur: 80,  gain: 0.08 },
+    clarify:  { freq: 80,  dur: 80,  gain: 0.08 },
     research: { freq: 80,  dur: 80,  gain: 0.08 },
     evaluate: { freq: 120, dur: 80,  gain: 0.10 },
     decision: { freq: 200, dur: 120, gain: 0.12, freq2: 300 },

@@ -68,7 +68,7 @@
 
   // === Utility ===
   function stamp() {
-    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).toLowerCase();
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
   function lower(text = '') {
@@ -106,6 +106,14 @@
     if (diff < day) return `${Math.max(1, Math.floor(diff / hour))}h`;
     if (diff < 7 * day) return `${Math.max(1, Math.floor(diff / day))}d`;
     return formatTimeLabel(raw);
+  }
+
+  function formatLogTime(raw) {
+    return new Date(raw || Date.now()).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
   }
 
   function currentCard() {
@@ -190,8 +198,48 @@
   }
 
   function latestLogText() {
-    const row = log.lastElementChild;
-    return row ? lower(row.textContent || '') : '—';
+    const entries = native?.getRecentLogEntries?.(1, { visible_only: true }) || [];
+    const latest = entries[entries.length - 1];
+    return lower(latest?.visible_message || latest?.message || '—');
+  }
+
+  function getStatsLine() {
+    const project = getProjectMemory() || {};
+    const captures = getCaptureList().length;
+    const notes = getVoiceEntries().length;
+    const asks = (project.open_questions || []).length;
+    const locked = (project.decisions || []).length;
+    const pending = (project.pending_decisions || []).length;
+    const signals = (project.insights || []).length;
+    return `stats ${notes} notes · ${captures} frames · ${signals} signals · ${asks} asks · ${pending} waiting · ${locked} locked`;
+  }
+
+  function renderLogRows(entries, options = {}) {
+    log.innerHTML = '';
+    if (options.includeStats) {
+      const statsRow = document.createElement('div');
+      statsRow.className = 'entry';
+      const label = document.createElement('span');
+      label.className = 'muted';
+      label.textContent = '[stats]';
+      statsRow.appendChild(label);
+      const message = document.createElement('span');
+      message.textContent = getStatsLine();
+      statsRow.appendChild(message);
+      log.appendChild(statsRow);
+    }
+    entries.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = 'entry';
+      const time = document.createElement('span');
+      time.className = 'muted';
+      time.textContent = `[${formatLogTime(entry.created_at)}]`;
+      row.appendChild(time);
+      const message = document.createElement('span');
+      message.textContent = lower(entry.message || 'event');
+      row.appendChild(message);
+      log.appendChild(row);
+    });
   }
 
   // === Transition ===
@@ -224,23 +272,12 @@
     const limit = logOpen ? 33 : 5;
     const previousScroll = log.scrollTop;
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
-    log.innerHTML = '';
     if (!entries.length) {
+      log.innerHTML = '';
       logPreview.textContent = '—';
       return;
     }
-    entries.forEach(entry => {
-      const row = document.createElement('div');
-      row.className = 'entry';
-      const time = document.createElement('span');
-      time.className = 'muted';
-      time.textContent = `[${lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}]`;
-      row.appendChild(time);
-      const message = document.createElement('span');
-      message.textContent = lower(entry.message || 'event');
-      row.appendChild(message);
-      log.appendChild(row);
-    });
+    renderLogRows(entries, { includeStats: logOpen });
     logPreview.textContent = latestLogText();
     if (logOpen) log.scrollTop = previousScroll;
   }
@@ -251,19 +288,7 @@
     logDrawer.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
     if (logOpen) {
       const entries = native?.getRecentLogEntries?.(33, { visible_only: true }) || [];
-      log.innerHTML = '';
-      entries.forEach(entry => {
-        const row = document.createElement('div');
-        row.className = 'entry';
-        const time = document.createElement('span');
-        time.className = 'muted';
-        time.textContent = `[${lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}]`;
-        row.appendChild(time);
-        const message = document.createElement('span');
-        message.textContent = lower(entry.message || 'event');
-        row.appendChild(message);
-        log.appendChild(row);
-      });
+      renderLogRows(entries, { includeStats: true });
       log.scrollTop = log.scrollHeight;
     } else {
       refreshLogFromMemory();
@@ -1611,6 +1636,7 @@
     const phaseLabel = {
       blocked: 'waiting on blocker',
       observe: 'observing',
+      clarify: 'clarifying',
       research: 'researching',
       evaluate: 'evaluating',
       decision: 'deciding',
@@ -2532,6 +2558,7 @@
     badge.className = '';
     const labels = {
       observe: 'obs',
+      clarify: 'clar',
       research: 'res',
       evaluate: 'eval',
       decision: 'dec',

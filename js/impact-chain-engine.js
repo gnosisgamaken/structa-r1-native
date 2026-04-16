@@ -4,11 +4,11 @@
  * Structa quietly reviews the project in the background.
  * Each "impact" is a self-contained LLM call that:
  * 1. Reads current project context
- * 2. Decides: research more, or create a decision for the user
+ * 2. Decides: clarify further, or create a decision for the user
  * 3. Stores the result tagged for the next chain step
  * 4. Updates the NOW card with the latest impact
  *
- * Phases: observe → research → research → decision
+ * Phases: observe → clarify → clarify → decision
  * After decision: 60s cooldown, then restart
  * Auto-pauses after 5 min of no user interaction
  * Resumes on any hardware event
@@ -26,10 +26,10 @@
     bpm: 2,                    // beats per minute (2 = every 30s)
     beatCount: 0,
     impacts: [],
-    currentPhase: 'idle',       // idle | blocked | observe | research | evaluate | decision | cooldown
+    currentPhase: 'idle',       // idle | blocked | observe | clarify | evaluate | decision | cooldown
     lastDecisionAt: 0,
     lastUserActivity: Date.now(),
-    maxImpactsPerChain: 3,      // observe + research × N before decision
+    maxImpactsPerChain: 3,      // observe + clarify × N before decision
     cooldownMs: 60000,          // 60s cooldown after decision
     idleTimeoutMs: 300000,      // 5 min auto-pause
     timerId: null,
@@ -120,7 +120,7 @@
 
   // === Prompt templates ===
   function observePrompt(context) {
-    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
       'You are Structa, a project cognition system. You ONLY process what you are given.\n\n' +
       '[CONTEXT]\n' + context + '\n\n' +
       '[TASK]\n' +
@@ -128,11 +128,14 @@
       'Do not use math drills, counting exercises, or toy examples.';
   }
 
-  function researchPrompt(context, observation) {
-    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-      'You are Structa. Based on the observation "' + observation + '", ' +
-      'formulate ONE specific question that would resolve this gap. ' +
-      'Return ONLY the question, nothing else. 10 words max.';
+  function clarifyPrompt(context, observation) {
+    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+      'You are Structa. You must reason ONLY from the supplied project memory.\n\n' +
+      '[CONTEXT]\n' + context + '\n\n' +
+      '[OBSERVATION]\n' + observation + '\n\n' +
+      '[TASK]\n' +
+      'Write ONE short clarification angle that tightens project direction. ' +
+      'Stay inside the project context provided. Return ONLY the clarification. 8 words max.';
   }
 
   function evaluatePrompt(context, impacts) {
@@ -140,11 +143,11 @@
       return (i + 1) + '. ' + String(imp.output).slice(0, 80);
     }).join('\n');
 
-    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
+    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
       'You are Structa. Based on these impacts:\n' +
       impactSummaries + '\n\n' +
-      'Decide: should we continue researching, or create a decision?\n' +
-      'If research is still needed, respond with "RESEARCH: " followed by a 5-word research direction.\n' +
+      'Decide: should we keep clarifying, or create a decision?\n' +
+      'If clarification is still needed, respond with "CLARIFY: " followed by a 5-word clarification direction.\n' +
       'If we have enough, respond with JSON only: {"decision": "...", "options": ["...", "...", "..."]}\n' +
       'The decision must be 10 words max. Each option must be 6 words max.';
   }
@@ -256,7 +259,7 @@
   }
 
   function discoveryPrompt(context) {
-    return '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
+    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES.\n' +
       'You are Structa, helping shape a new project.\n\n' +
       '[CONTEXT]\n' + context + '\n\n' +
       '[TASK]\n' +
@@ -379,35 +382,35 @@
             if (!chain.active) return;
             if (result && result.ok && result.clean) {
               var impact = storeImpact('observe', 'inspect', context, result.clean);
-              chain.currentPhase = 'research';
+              chain.currentPhase = 'clarify';
               panel && panel.render && panel.render();
             }
           });
         break;
 
-      case 'research':
+      case 'clarify':
         var lastObserve = chain.impacts.filter(function(i) { return i.type === 'observe'; });
         var observation = lastObserve.length ? lastObserve[0].output : 'project status';
 
-        // Decide: continue research or evaluate?
+        // Decide: continue clarifying or evaluate?
         if (chain.impacts.length >= chain.maxImpactsPerChain) {
           chain.currentPhase = 'evaluate';
           // Fall through to evaluate
         } else {
-          llm.sendToLLM(researchPrompt(context, observation), { speak: false, journal: false, timeout: 20000, priority: 'low' })
+          llm.sendToLLM(clarifyPrompt(context, observation), { speak: false, journal: false, timeout: 20000, priority: 'low' })
             .then(function(result) {
               if (!chain.active) return;
               if (result && result.ok && result.clean) {
-                // Check if LLM wants to continue researching
-                var isResearchContinue = /^RESEARCH:/i.test(result.clean);
-                if (isResearchContinue) {
-                  var direction = result.clean.replace(/^RESEARCH:\s*/i, '').trim();
-                  storeImpact('research', 'research', observation, direction);
+                // Check if LLM wants to continue clarifying
+                var isClarifyContinue = /^CLARIFY:/i.test(result.clean);
+                if (isClarifyContinue) {
+                  var direction = result.clean.replace(/^CLARIFY:\s*/i, '').trim();
+                  storeImpact('clarify', 'clarify', observation, direction);
                 } else {
-                  storeImpact('research', 'research', observation, result.clean);
+                  storeImpact('clarify', 'clarify', observation, result.clean);
                 }
 
-                // After enough research, move to evaluate
+                // After enough clarification, move to evaluate
                 if (chain.impacts.length >= chain.maxImpactsPerChain) {
                   chain.currentPhase = 'evaluate';
                 }
@@ -431,7 +434,7 @@
                 storeDecision(parsed.decision, parsed.options);
                 panel && panel.render && panel.render();
               } else {
-                // LLM wants more research
+                // LLM wants more clarification
                 storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.clean);
 
                 // If we've been going too long, force a decision anyway
@@ -440,7 +443,7 @@
                   storeDecision(fallback, ['approve', 'skip', 'revise']);
                 }
 
-                chain.currentPhase = 'research';
+                chain.currentPhase = 'clarify';
                 panel && panel.render && panel.render();
               }
             }

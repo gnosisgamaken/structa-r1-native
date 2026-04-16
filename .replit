@@ -23,7 +23,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 -m http.server 5000"
+args = "bash -lc 'pkill -f \"python3 -m http.server 5000\" || true; exec python3 -m http.server 5000 --bind 0.0.0.0'"
 waitForPort = 5000
 
 [workflows.workflow.metadata]

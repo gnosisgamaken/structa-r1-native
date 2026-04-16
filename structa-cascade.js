@@ -45,10 +45,10 @@
   });
 
   const cards = [
-    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'capture image', roleShort: 'capture frame', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'capture commands', roleShort: 'voice note', color: 'var(--tell)', surface: 'voice' },
-    { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'generate insights', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'project structure', roleShort: 'decide next', color: 'var(--now)', surface: 'project' }
+    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
   ];
 
   // === State machine ===
@@ -150,7 +150,7 @@
 
   function latestLogText() {
     const row = log.lastElementChild;
-    return row ? lower(row.textContent || '') : 'log';
+    return row ? lower(row.textContent || '') : '—';
   }
 
   // === Transition ===
@@ -183,7 +183,7 @@
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     log.innerHTML = '';
     if (!entries.length) {
-      logPreview.textContent = 'log';
+      logPreview.textContent = '—';
       return;
     }
     entries.forEach(entry => {
@@ -270,7 +270,7 @@
     }
     stateData.tellEntryIndex = Math.min(stateData.tellEntryIndex, maxIndex);
     if (!stateData.tellStatus) {
-      stateData.tellStatus = entries.length ? 'hold to speak' : 'hold to record';
+      stateData.tellStatus = entries.length ? 'ready' : 'empty';
     }
   };
 
@@ -284,7 +284,7 @@
     const maxIndex = Math.max(0, captures.length - 1);
     stateData.showCaptureIndex = Math.min(stateData.showCaptureIndex || 0, maxIndex);
     if (!stateData.showStatus) {
-      stateData.showStatus = captures.length ? 'ready for another frame' : 'tap to start';
+      stateData.showStatus = captures.length ? 'reviewing' : 'empty';
     }
   };
 
@@ -331,7 +331,7 @@
         const returnState = cameraReturnState;
         cameraReturnState = STATES.HOME;
         transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, {
-          showStatus: 'latest visual memory'
+          showStatus: 'captured'
         });
       }
     }, 300);
@@ -386,7 +386,7 @@
         const returnState = voiceReturnState;
         voiceReturnState = STATES.HOME;
         transition(returnState || STATES.HOME, {
-          tellStatus: 'voice saved'
+          tellStatus: 'saved'
         });
       }
     }, 300);
@@ -448,11 +448,11 @@
   // === Open a card's primary surface ===
   function openCard(card) {
     if (card.surface === 'camera') {
-      transition(STATES.SHOW_BROWSE, { showStatus: 'tap to start' });
+      transition(STATES.SHOW_BROWSE);
       return;
     }
     if (card.surface === 'voice') {
-      transition(STATES.TELL_BROWSE, { tellStatus: 'hold to speak' });
+      transition(STATES.TELL_BROWSE, { tellStatus: 'ready' });
       return;
     }
     if (card.surface === 'insight') {
@@ -467,14 +467,12 @@
 
   function openCameraFromShow(source = 'touch') {
     cameraReturnState = STATES.SHOW_BROWSE;
-    stateData.showStatus = source === 'touch'
-      ? 'opening lens'
-      : 'opening lens';
+    stateData.showStatus = 'opening lens';
     render();
 
     if (source !== 'touch' && !window.StructaCamera?.primed && !window.__STRUCTA_PRIMED_STREAM__?.active) {
-      stateData.showStatus = 'tap camera to enable lens';
-      pushLog('tap camera to enable lens', 'show');
+      stateData.showStatus = 'lens requires tap';
+      pushLog('lens requires tap', 'show');
       render();
       return false;
     }
@@ -644,11 +642,11 @@
     const storedImpacts = project?.impact_chain || [];
 
     return {
-      title: project?.name || 'untitled project',
-      changed: ui.last_event_summary || 'ready to resume',
-      capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || 'no capture yet'),
-      insight: ui.last_insight_summary || (insights[0]?.body || 'no insight yet'),
-      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : 'use tell to add the next update'),
+      title: project?.name || 'new project',
+      changed: ui.last_event_summary || '',
+      capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
+      insight: ui.last_insight_summary || (insights[0]?.body || ''),
+      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : ''),
       openQuestions: openQuestions.length,
       captures: captures.length,
       insights: insights.length,
@@ -707,8 +705,8 @@
     const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex }) => classify({
       lane,
       title: lower(title || lane),
-      body: lower(body || 'no detail yet'),
-      next: lower(next || 'capture the next useful update'),
+      body: lower(body || ''),
+      next: lower(next || ''),
       created_at: created_at || new Date().toISOString(),
       source: source || lane,
       chips: chipHints.slice(),
@@ -729,16 +727,16 @@
     // Questions lane
     openQuestions.slice(0, 5).forEach((question, index) => {
       questions.push(makeItem({
-        lane: 'questions', title: `question ${index + 1}`, body: question,
-        next: 'side = answer this now', created_at: new Date().toISOString(),
+        lane: 'questions', title: `ask ${index + 1}`, body: question,
+        next: 'side button to answer', created_at: new Date().toISOString(),
         source: 'question', chips: ['asks'], questionIndex: index
       }));
     });
 
     if (!questions.length) {
       questions.push(makeItem({
-        lane: 'questions', title: 'all clear', body: 'no open questions right now',
-        next: 'use tell to add something that needs an answer',
+        lane: 'questions', title: 'all clear', body: 'no open asks',
+        next: '',
         created_at: new Date().toISOString(), source: 'empty', chips: ['latest']
       }));
     }
@@ -748,7 +746,7 @@
       signals.push(makeItem({
         lane: 'signals', title: 'latest signal',
         body: ui.last_insight_summary || ui.last_capture_summary,
-        next: backlog[0]?.title || 'open now or tell to keep momentum',
+        next: backlog[0]?.title || '',
         created_at: new Date().toISOString(), source: 'ui', chips: ['latest', 'next']
       }));
     }
@@ -756,17 +754,17 @@
     insights.slice(0, 4).forEach((insight, index) => {
       signals.push(makeItem({
         lane: 'signals', title: insight.title || `signal ${index + 1}`,
-        body: insight.body || 'captured insight',
-        next: backlog[0]?.title || 'capture the next concrete task with tell',
+        body: insight.body || 'extracted',
+        next: backlog[0]?.title || '',
         created_at: insight.created_at, source: 'insight', chips: index < 2 ? ['latest'] : []
       }));
     });
 
     captures.slice(-4).reverse().forEach((capture, index) => {
       signals.push(makeItem({
-        lane: 'signals', title: capture.type === 'image' ? 'visual capture' : 'recent capture',
-        body: capture.summary || 'capture stored',
-        next: backlog[0]?.title || 'review the capture and decide the next move',
+        lane: 'signals', title: capture.type === 'image' ? 'frame' : 'capture',
+        body: capture.summary || 'stored',
+        next: backlog[0]?.title || '',
         created_at: capture.created_at,
         source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : []
       }));
@@ -775,19 +773,19 @@
     // Decisions
     decisions.slice(0, 5).forEach((decision, index) => {
       const decisionTitle = typeof decision === 'string' ? decision : (decision.title || `decision ${index + 1}`);
-      const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'decision recorded');
+      const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'locked');
       decisionsLane.push(makeItem({
         lane: 'decisions', title: decisionTitle, body: decisionBody,
-        next: backlog[0]?.title || 'act on the decision',
+        next: backlog[0]?.title || '',
         created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : []
       }));
     });
 
     if (!decisionsLane.length) {
       decisionsLane.push(makeItem({
-        lane: 'decisions', title: 'no locked decisions',
-        body: 'use tell to state a decision — it will appear here once approved',
-        next: backlog[0]?.title || 'speak a clear decision with tell',
+        lane: 'decisions', title: 'no decisions locked',
+        body: '',
+        next: '',
         created_at: new Date().toISOString(), source: 'decision-gap', chips: []
       }));
     }
@@ -795,18 +793,18 @@
     // Loops
     backlog.slice(0, 5).forEach((item, index) => {
       loops.push(makeItem({
-        lane: 'open loops', title: item.title || `open loop ${index + 1}`,
-        body: item.body || item.state || 'still open',
-        next: item.title || 'move this loop forward with tell',
+        lane: 'open loops', title: item.title || `loop ${index + 1}`,
+        body: item.body || item.state || 'open',
+        next: item.title || '',
         created_at: item.created_at, source: 'backlog', chips: ['next']
       }));
     });
 
     const lanes = [
-      { id: 'questions', label: 'asks', summary: 'questions waiting for an answer', emptyTitle: 'all clear', emptyBody: 'no open questions', emptyNext: 'use tell to add something that needs an answer', items: questions },
-      { id: 'signals', label: 'signals', summary: 'what changed and why it matters', emptyTitle: 'no signals yet', emptyBody: 'capture something with show or tell', emptyNext: 'use tell to add one update', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals yet', body: 'capture something with show or tell', next: 'use tell to add one update', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
-      { id: 'decisions', label: 'decided', summary: 'what is locked and ready to act on', emptyTitle: 'no decisions yet', emptyBody: 'speak a decision with tell — approve it in now', emptyNext: 'use tell to state a decision', items: decisionsLane },
-      { id: 'open loops', label: 'loops', summary: 'unresolved tasks and items', emptyTitle: 'no open loops', emptyBody: 'this project has no open loops', emptyNext: 'capture the next question or task', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no open loops', body: 'clean slate', next: 'capture the next task', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
+      { id: 'questions', label: 'asks', summary: 'open asks', items: questions },
+      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: '', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
+      { id: 'decisions', label: 'decided', summary: 'locked decisions', items: decisionsLane },
+      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'clear', body: '', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
       lane.items
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
@@ -1057,15 +1055,15 @@
       const project = getProjectMemory();
       if (card.id === 'show') {
         statNumber = String(getCaptureList().length);
-        statLabel = 'captures';
+        statLabel = 'frames';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
-        statLabel = 'voice';
+        statLabel = 'spoken';
       } else if (card.id === 'know') {
         const qCount = (project?.open_questions || []).length;
         const iCount = (project?.insights || []).length;
         statNumber = qCount > 0 ? String(qCount) : String(iCount);
-        statLabel = qCount > 0 ? 'asks' : 'insights';
+        statLabel = qCount > 0 ? 'asks' : 'signals';
       } else if (card.id === 'now') {
         const pCount = (project?.pending_decisions || []).length;
         const clarity = project?.clarity_score || 0;
@@ -1191,13 +1189,13 @@
     stateData.showCaptureIndex = safeIndex;
     const current = captures[safeIndex] || null;
     return {
-      title: project?.name || 'untitled project',
+      title: project?.name || 'new project',
       captures,
       current,
       currentIndex: safeIndex,
       insights: (project?.insights || []).length,
-      status: stateData.showStatus || (captures.length ? 'ready for another frame' : 'tap to start'),
-      summary: current ? getCaptureSummary(current) : 'no captures yet',
+      status: stateData.showStatus || (captures.length ? 'reviewing' : 'empty'),
+      summary: current ? getCaptureSummary(current) : 'no frames',
       imageHref: current ? getCaptureImageHref(current) : '',
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null
     };
@@ -1218,12 +1216,12 @@
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 100, 'open camera', {
+    text(24, 100, 'capture', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 100, model.captures.length ? `${model.captures.length}` : 'new', {
+    text(216, 100, model.captures.length ? `${model.captures.length}` : '', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1248,12 +1246,11 @@
       });
       wrapText(undefined, model.summary.slice(0, 52), 22, 206, 190, 11, 'rgba(244,239,228,0.92)', '10');
     } else {
-      text(14, 154, 'no capture yet', {
+      text(14, 154, 'no frames', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'open camera for the first visual memory', 14, 174, 196, 14, 'rgba(8,8,8,0.62)', '12');
     }
 
     const thumbY = 218;
@@ -1276,7 +1273,7 @@
         event.stopPropagation();
         const absoluteIndex = model.captures.indexOf(capture);
         stateData.showCaptureIndex = absoluteIndex >= 0 ? absoluteIndex : 0;
-        stateData.showStatus = 'latest visual memory';
+        stateData.showStatus = 'visual memory';
         render();
       });
     });
@@ -1289,13 +1286,13 @@
     stateData.tellEntryIndex = safeIndex;
     const current = entries[safeIndex] || null;
     return {
-      title: project?.name || 'untitled project',
+      title: project?.name || 'new project',
       entries,
       current,
       currentIndex: safeIndex,
       insights: (project?.insights || []).length,
       questions: (project?.open_questions || []).length,
-      status: stateData.tellStatus || (entries.length ? 'hold to speak' : 'hold to record')
+      status: stateData.tellStatus || (entries.length ? 'ready' : 'empty')
     };
   }
 
@@ -1314,12 +1311,12 @@
 
     const actionBar = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, actionBar);
-    text(24, 100, 'hold to speak', {
+    text(24, 100, 'record', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, actionBar);
-    text(216, 100, model.entries.length ? `${model.entries.length}` : 'new', {
+    text(216, 100, model.entries.length ? `${model.entries.length}` : '', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1328,24 +1325,23 @@
     actionBar.addEventListener('pointerup', event => {
       event.preventDefault();
       event.stopPropagation();
-      openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'ready to listen' });
+      openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
     });
 
     mk('rect', { x: 14, y: 118, width: 212, height: 74, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 134, `latest voice · ${recentTimeLabel(model.current.created_at)}`, {
+      text(20, 134, `last entry · ${recentTimeLabel(model.current.created_at)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
       wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 152, 184, 13, 'rgba(8,8,8,0.96)', '13');
     } else {
-      text(20, 148, 'no voice yet', {
+      text(20, 148, 'no entries', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'hold the side button for the first spoken update', 20, 166, 184, 13, 'rgba(8,8,8,0.60)', '11');
     }
 
     const visible = model.entries.slice(0, 3);
@@ -1377,12 +1373,12 @@
         event.preventDefault();
         event.stopPropagation();
         stateData.tellEntryIndex = index;
-        stateData.tellStatus = 'latest voice saved';
+        stateData.tellStatus = 'saved';
         render();
       });
     });
 
-    text(14, 284, lower(model.status), {
+    text(14, 284, `${model.entries.length} told · ${model.insights} signals · ${model.questions} asks`, {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
@@ -1500,7 +1496,7 @@
       drawSectionLabel(undefined, 14, 146, 'next move');
       wrapText(undefined, lower(data.next), 14, 162, 212, 14, 'rgba(8,8,8,0.96)', '14');
       if (data.totalImpacts > 0) {
-        text(14, 184, `${data.totalImpacts} impacts · ${data.totalDecisions} decisions`, {
+        text(14, 184, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'
@@ -1508,16 +1504,13 @@
       }
     }
 
-    text(14, 282, `${data.captures} cap · ${data.insights} ins · ${data.openQuestions} ask`, {
+    text(14, 282, `${data.captures} shown · ${data.insights} signals · ${data.openQuestions} asks · ${data.decisions} locked`, {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
     });
   }
 
-  // === KNOW insight surface render ===
-  // === KNOW insight surface render ===
-  // Redesigned: touchable lane tabs + filter chips, content directly visible below,
-  // scrollable with wheel. No PTT needed to browse content.
+  // === KNOW surface ===
   function drawInsightSurface() {
     if (currentState !== STATES.KNOW_BROWSE && currentState !== STATES.KNOW_DETAIL) return;
     const knowCard = cards.find(c => c.id === 'know');
@@ -1663,7 +1656,7 @@
 
       // Scroll hint
       if (items.length > 1) {
-        text(14, 280, (itemIdx + 1) + '/' + items.length + ' · detail', {
+        text(14, 280, (itemIdx + 1) + '/' + items.length, {
           fill: 'rgba(8,8,8,0.32)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'
@@ -1693,7 +1686,7 @@
       'font-size': '10', 'text-anchor': 'end'
     });
 
-    const detailSection = item.source === 'question' ? 'the question' : 'detail';
+    const detailSection = item.source === 'question' ? 'open ask' : 'detail';
     drawSectionLabel(undefined, 14, contentY + 16, detailSection);
     wrapText(undefined, lower(item.body), 14, contentY + 32, 212, 14, 'rgba(8,8,8,0.90)', '13');
 
@@ -1701,7 +1694,7 @@
       const actionY = 242;
       mk('rect', { x: 10, y: actionY - 6, width: 220, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.12)' });
       drawSquaredPill(18, actionY, 96, 14, 'side → answer', true, 'light');
-      text(136, actionY + 11, 'speak your answer', {
+      text(136, actionY + 11, 'voice answer', {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1757,7 +1750,7 @@
         if (!captures.length) break;
         const max = captures.length;
         stateData.showCaptureIndex = ((stateData.showCaptureIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
-        stateData.showStatus = 'scroll to review captures';
+        stateData.showStatus = 'reviewing';
         render();
         break;
       }
@@ -1767,7 +1760,7 @@
         if (!entries.length) break;
         const max = entries.length;
         stateData.tellEntryIndex = ((stateData.tellEntryIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
-        stateData.tellStatus = 'scroll to review voice';
+        stateData.tellStatus = 'reviewing';
         render();
         break;
       }
@@ -1857,7 +1850,7 @@
         break;
 
       case STATES.TELL_BROWSE:
-        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'ready to listen' });
+        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
         break;
 
       case STATES.CAMERA_OPEN:
@@ -1910,7 +1903,7 @@
       case STATES.HOME: {
         const card = currentCard();
         if (card.id === 'show') {
-          transition(STATES.SHOW_BROWSE, { showStatus: 'tap to start' });
+          transition(STATES.SHOW_BROWSE);
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           voiceReturnState = STATES.TELL_BROWSE;

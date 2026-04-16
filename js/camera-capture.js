@@ -27,6 +27,9 @@
   let voiceStripActive = false;
   let voiceStripTranscript = '';
   let voiceStripRecognition = null;
+  let voiceStripStopping = false;
+  let pendingVoiceCapture = false;
+  let pendingVoiceCaptureTimer = null;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   function setStatus(text) {
@@ -173,6 +176,12 @@
   function startVoiceStrip() {
     if (voiceStripActive) return;
     voiceStripActive = true;
+    voiceStripStopping = false;
+    pendingVoiceCapture = false;
+    if (pendingVoiceCaptureTimer) {
+      clearTimeout(pendingVoiceCaptureTimer);
+      pendingVoiceCaptureTimer = null;
+    }
     voiceStripTranscript = '';
 
     // Mute heartbeat audio during capture
@@ -222,8 +231,14 @@
   }
 
   function stopVoiceStrip() {
-    if (!voiceStripActive) return;
+    if (!voiceStripActive && !voiceStripStopping) return;
     voiceStripActive = false;
+    voiceStripStopping = false;
+    pendingVoiceCapture = false;
+    if (pendingVoiceCaptureTimer) {
+      clearTimeout(pendingVoiceCaptureTimer);
+      pendingVoiceCaptureTimer = null;
+    }
     window.__STRUCTA_PTT_TARGET__ = null;
 
     // Unmute audio
@@ -242,17 +257,51 @@
     var strip = document.getElementById('camera-voice-strip');
     if (strip) {
       strip.classList.remove('active');
+      var textEl = strip.querySelector('.strip-text');
+      if (textEl) textEl.textContent = 'listening...';
     }
+    setStatus('side click to shoot · hold side to narrate');
+  }
+
+  function finalizeVoiceStripCapture() {
+    if (!voiceStripActive && !voiceStripStopping) {
+      capture();
+      return;
+    }
+    voiceStripStopping = true;
+    pendingVoiceCapture = true;
+    window.__STRUCTA_PTT_TARGET__ = 'camera';
+    setStatus('capturing...');
+
+    if (voiceStripRecognition) {
+      try { voiceStripRecognition.stop(); } catch (e) {}
+    }
+    if (typeof CreationVoiceHandler !== 'undefined') {
+      try { CreationVoiceHandler.postMessage('stop'); } catch (e) {}
+    }
+
+    if (pendingVoiceCaptureTimer) clearTimeout(pendingVoiceCaptureTimer);
+    pendingVoiceCaptureTimer = setTimeout(function() {
+      pendingVoiceCaptureTimer = null;
+      capture();
+    }, 420);
   }
 
   // Listen for R1 STT results during voice strip
   window.addEventListener('structa-stt-ended', function(event) {
-    if (voiceStripActive && event && event.detail && event.detail.transcript) {
+    if ((voiceStripActive || voiceStripStopping) && event && event.detail && event.detail.transcript) {
       voiceStripTranscript = event.detail.transcript;
       var strip = document.getElementById('camera-voice-strip');
       if (strip) {
         var textEl = strip.querySelector('.strip-text');
         if (textEl) textEl.textContent = voiceStripTranscript.slice(-40);
+      }
+      if (pendingVoiceCapture) {
+        if (pendingVoiceCaptureTimer) {
+          clearTimeout(pendingVoiceCaptureTimer);
+          pendingVoiceCaptureTimer = null;
+        }
+        capture();
       }
     }
   });
@@ -267,6 +316,11 @@
     ctx.drawImage(preview, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/png');
     const rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+
+    if (pendingVoiceCaptureTimer) {
+      clearTimeout(pendingVoiceCaptureTimer);
+      pendingVoiceCaptureTimer = null;
+    }
 
     // Grab voice annotation before stopping strip
     var annotation = voiceStripTranscript || '';
@@ -426,6 +480,7 @@
     stop: close,
     teardown: killStream,
     startVoiceStrip,
+    finalizeVoiceStripCapture,
     stopVoiceStrip,
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },

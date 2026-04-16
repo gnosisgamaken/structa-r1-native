@@ -59,6 +59,7 @@
   let logOpen = false;
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
+  let transitionTargetState = null;
 
   // Derived from stateData (shorthand accessors)
   function isHome() { return currentState === STATES.HOME; }
@@ -155,12 +156,14 @@
   function transition(newState, data = {}) {
     const prev = currentState;
     const prevStateData = { ...stateData };
+    transitionTargetState = newState;
 
     // Exit previous state
     stateExitHandlers[prev]?.(prevStateData);
 
     currentState = newState;
     stateData = { ...stateData, ...data };
+    transitionTargetState = null;
 
     // Enter new state
     stateEnterHandlers[newState]?.(stateData);
@@ -309,7 +312,9 @@
   };
 
   stateExitHandlers[STATES.CAMERA_OPEN] = function(data) {
-    window.StructaCamera?.close?.();
+    if (transitionTargetState !== STATES.CAMERA_CAPTURE) {
+      window.StructaCamera?.close?.();
+    }
     window.__STRUCTA_PTT_TARGET__ = null;
   };
 
@@ -1075,13 +1080,11 @@
     mk('rect', {
       x: 0, y: 0, width: 150, height: 150, rx: 20, ry: 20,
       fill: card.color,
-      stroke: selected ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
-      'stroke-width': selected ? 1 : 0.8, 'stroke-opacity': 1
+      stroke: selected ? 'rgba(8,8,8,0.08)' : 'rgba(255,255,255,0.04)',
+      'stroke-width': selected ? 0.8 : 0.8, 'stroke-opacity': 1
     }, group);
 
     if (selected) {
-      mk('rect', { x: 0, y: 0, width: 150, height: 24, rx: 20, ry: 20, fill: 'rgba(255,255,255,0.10)' }, group);
-      mk('rect', { x: 0, y: 18, width: 150, height: 8, fill: 'rgba(255,255,255,0.10)' }, group);
       drawCardIcon(card, true, group);
       text(18, 80, card.title, {
         fill: 'rgba(8,8,8,0.98)',
@@ -1458,6 +1461,7 @@
     drawSurfaceHeader(nowCard);
     text(14, 70, 'project state', { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
+    const hasBlockers = data.pendingDecisions.length > 0 || data.openQuestions > 0;
     const chainY = 86;
     const phaseLabel = {
       blocked: 'waiting on blocker',
@@ -1475,10 +1479,12 @@
       'font-size': '11'
     });
 
-    if (data.lastImpact) {
-      wrapTextBlock(undefined, lower(String(data.lastImpact.output).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.96)', '13', 2);
-    } else if (data.storedImpacts.length > 0) {
-      wrapTextBlock(undefined, lower(String(data.storedImpacts[0].output || data.storedImpacts[0].type).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.72)', '12', 2);
+    if (!hasBlockers) {
+      if (data.lastImpact) {
+        wrapTextBlock(undefined, lower(String(data.lastImpact.output).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.96)', '13', 2);
+      } else if (data.storedImpacts.length > 0) {
+        wrapTextBlock(undefined, lower(String(data.storedImpacts[0].output || data.storedImpacts[0].type).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.72)', '12', 2);
+      }
     }
 
     if (data.pendingDecisions.length > 0) {
@@ -1500,8 +1506,8 @@
         return group;
       };
 
-      const boxY = 128;
-      const boxH = pdOptions.length >= 2 ? 128 : 92;
+      const boxY = 104;
+      const boxH = pdOptions.length >= 2 ? 138 : 102;
       mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
       const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
@@ -1511,11 +1517,11 @@
         'font-size': '10'
       });
 
-      const displayText = pdText.length > 82 ? pdText.slice(0, 81) + '…' : pdText;
-      wrapTextBlock(undefined, lower(displayText), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 2);
+      const displayText = String(pdText || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      const titleRows = wrapTextBlock(undefined, lower(displayText.slice(0, 118)), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 4);
 
       if (pdOptions.length >= 2) {
-        const slabY = boxY + 62;
+        const slabY = boxY + 26 + (titleRows * 13) + 10;
         pdOptions.slice(0, 3).forEach((opt, i) => {
           const slabTop = slabY + (i * 22);
           const isSelected = stateData.selectedOption === i;
@@ -1556,23 +1562,26 @@
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else if (data.openQuestions > 0) {
-      drawSectionLabel(undefined, 14, 142, 'blocker ask');
-      wrapTextBlock(undefined, lower(data.blockerQuestion.slice(0, 90)), 14, 158, 212, 13, 'rgba(8,8,8,0.96)', '13', 3);
-      text(14, 204, 'side button answers this blocker', {
+      const boxY = 104;
+      mk('rect', { x: 10, y: boxY, width: 220, height: 126, rx: 8, fill: 'rgba(8,8,8,0.10)' });
+      drawSectionLabel(undefined, 18, boxY + 18, 'blocker ask');
+      const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 120)), 18, boxY + 36, 194, 13, 'rgba(8,8,8,0.96)', '13', 5);
+      text(18, boxY + 36 + blockerRows * 13 + 18, 'hold side to answer', {
         fill: 'rgba(8,8,8,0.48)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
       if (data.blockerCount > 1) {
-        text(14, 220, `${data.blockerCount} blockers waiting`, {
+        text(18, boxY + 36 + blockerRows * 13 + 34, `${data.blockerCount} blockers waiting`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9'
         });
       }
     } else {
-      drawSectionLabel(undefined, 14, 142, 'next move');
-      wrapTextBlock(undefined, lower(data.next), 14, 158, 212, 13, 'rgba(8,8,8,0.96)', '13', 3);
+      drawSectionLabel(undefined, 14, 132, 'next move');
+      wrapTextBlock(undefined, lower(data.next), 14, 150, 212, 13, 'rgba(8,8,8,0.96)', '13', 4);
       if (data.totalImpacts > 0) {
         text(14, 212, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
           fill: 'rgba(8,8,8,0.36)',
@@ -1650,7 +1659,7 @@
     });
 
     // Filter chips row - touchable
-    const chipY = 90;
+    const chipY = 92;
     let chipX = 14;
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
     activeChips.forEach((c) => {
@@ -1659,12 +1668,12 @@
       const chipWidth = Math.max(40, c.label.length * 7 + 16);
       const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
       mk('rect', {
-        x: chipX, y: chipY, width: chipWidth, height: 16, rx: 4, ry: 4,
+        x: chipX, y: chipY, width: chipWidth, height: 18, rx: 5, ry: 5,
         fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.12)',
         stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
       }, chipGroup);
       const chipText = mk('text', {
-        x: chipX + chipWidth / 2, y: chipY + 12,
+        x: chipX + chipWidth / 2, y: chipY + 13,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
       }, chipGroup);
@@ -1682,25 +1691,20 @@
     });
 
     // Result count
-    text(226, chipY + 12, items.length ? `${items.length}` : '', {
+    text(226, chipY + 13, items.length ? `${items.length}` : '', {
       fill: 'rgba(8,8,8,0.40)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10', 'text-anchor': 'end'
     });
 
     // Content area - directly below chips, no PTT needed
-    const contentY = 116;
+    const contentY = 124;
 
     if (currentState === STATES.KNOW_BROWSE) {
-      // Item title
-      text(14, contentY, lower(item.title), {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
+      const titleText = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 164, 14, 'rgba(8,8,8,0.96)', '16', 3);
 
-      // Date
-      text(226, contentY - 1, formatTimeLabel(item.created_at), {
+      text(226, contentY + 1, formatTimeLabel(item.created_at), {
         fill: 'rgba(8,8,8,0.40)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10', 'text-anchor': 'end'
@@ -1713,24 +1717,25 @@
         : item.source === 'decision' ? 'locked decision'
         : item.source === 'backlog' ? 'open loop'
         : lane.label;
-      text(14, contentY + 14, contextLabel, {
+      const metaY = contentY + (titleRows * 14) + 6;
+      text(14, metaY, contextLabel, {
         fill: 'rgba(8,8,8,0.40)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
 
-      // Item body
-      wrapTextBlock(undefined, lower(item.body), 14, contentY + 32, 212, 13, 'rgba(8,8,8,0.85)', '12', 6);
+      const bodyY = metaY + 18;
+      const bodyText = String(item.body || 'no content yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      const bodyRows = wrapTextBlock(undefined, lower(bodyText), 14, bodyY, 212, 13, 'rgba(8,8,8,0.85)', '12', 6);
 
-      // Next move bar
-      const actionY = 228;
+      const actionY = Math.min(236, bodyY + (bodyRows * 13) + 24);
       mk('rect', { x: 0, y: actionY - 8, width: 240, height: 42, fill: 'rgba(8,8,8,0.04)' });
       text(14, actionY, '→', {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      wrapTextBlock(undefined, lower(item.next), 26, actionY, 196, 12, 'rgba(8,8,8,0.70)', '11', 2);
+      wrapTextBlock(undefined, lower(String(item.next || 'review this')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim(), 26, actionY, 196, 12, 'rgba(8,8,8,0.70)', '11', 2);
 
       // Scroll hint
       if (items.length > 1) {
@@ -1753,23 +1758,23 @@
     }
 
     // KNOW_DETAIL - expanded view
-    text(14, contentY, lower(item.title), {
-      fill: 'rgba(8,8,8,0.96)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '16'
-    });
-    text(226, contentY - 1, formatTimeLabel(item.created_at), {
+    const detailTitle = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 164, 14, 'rgba(8,8,8,0.96)', '16', 3);
+    text(226, contentY + 1, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10', 'text-anchor': 'end'
     });
 
     const detailSection = item.source === 'question' ? 'open ask' : 'detail';
-    drawSectionLabel(undefined, 14, contentY + 16, detailSection);
-    wrapTextBlock(undefined, lower(item.body), 14, contentY + 32, 212, 13, 'rgba(8,8,8,0.90)', '13', 8);
+    const detailMetaY = contentY + (detailTitleRows * 14) + 8;
+    drawSectionLabel(undefined, 14, detailMetaY, detailSection);
+    const detailBodyY = detailMetaY + 16;
+    const detailBodyText = String(item.body || 'no detail yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    const detailRows = wrapTextBlock(undefined, lower(detailBodyText), 14, detailBodyY, 212, 13, 'rgba(8,8,8,0.90)', '13', 8);
 
     if (item.source === 'question') {
-      const actionY = 234;
+      const actionY = Math.min(234, detailBodyY + (detailRows * 13) + 16);
       mk('rect', { x: 10, y: actionY - 6, width: 220, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.12)' });
       drawSquaredPill(18, actionY, 96, 14, 'side → answer', true, 'light');
       text(136, actionY + 11, 'voice answer', {
@@ -1778,8 +1783,9 @@
         'font-size': '10'
       });
     } else {
-      drawSectionLabel(undefined, 14, 236, 'next move');
-      wrapTextBlock(undefined, lower(item.next), 14, 252, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
+      const nextY = Math.min(236, detailBodyY + (detailRows * 13) + 18);
+      drawSectionLabel(undefined, 14, nextY, 'next move');
+      wrapTextBlock(undefined, lower(String(item.next || 'review this')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim(), 14, nextY + 16, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
     }
   }
 
@@ -1983,12 +1989,7 @@
         const card = currentCard();
         if (card.id === 'show') {
           stateData.pendingShowNarration = true;
-          primeCameraForShowIntent().then(function() {
-            openCameraFromShow('touch');
-          }).catch(function() {
-            stateData.pendingShowNarration = false;
-            transition(STATES.SHOW_BROWSE);
-          });
+          openCameraFromShow('touch');
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           voiceReturnState = STATES.TELL_BROWSE;
@@ -2004,11 +2005,7 @@
 
       case STATES.SHOW_BROWSE:
         stateData.pendingShowNarration = true;
-        primeCameraForShowIntent().then(function() {
-          openCameraFromShow('touch');
-        }).catch(function() {
-          openCameraFromShow('hardware');
-        });
+        openCameraFromShow('touch');
         break;
 
       case STATES.CAMERA_OPEN:
@@ -2052,9 +2049,9 @@
 
     switch (currentState) {
       case STATES.CAMERA_OPEN:
-        // PTT released = stop voice strip and capture with annotation
+        // PTT released = finalize voice strip and capture with annotation
         if (window.StructaCamera?.voiceStripActive) {
-          // Voice strip was active — capture with annotation
+          window.StructaCamera?.finalizeVoiceStripCapture?.();
           transition(STATES.CAMERA_CAPTURE);
         }
         break;

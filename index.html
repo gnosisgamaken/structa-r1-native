@@ -474,6 +474,16 @@
       animation: calm-pulse 420ms ease-out;
     }
 
+    [data-card-index].notify-soft {
+      animation: calm-soft 280ms ease-out;
+    }
+
+    @keyframes calm-soft {
+      0% { transform: translate(0, 0) scale(1); opacity: 1; }
+      45% { transform: translate(0.25px, -0.2px) scale(1.006); opacity: 0.992; }
+      100% { transform: translate(0, 0) scale(1); opacity: 1; }
+    }
+
     @keyframes calm-pulse {
       0% { transform: scale(1); }
       50% { transform: scale(1.02); }

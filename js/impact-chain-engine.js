@@ -35,7 +35,8 @@
     timerId: null,
     chainId: 0,
     totalImpacts: 0,
-    totalDecisions: 0
+    totalDecisions: 0,
+    awaitingFastTrack: false
   };
 
   // === Impact ID ===
@@ -496,13 +497,15 @@
   var immediateBeatTimer = null;
   function requestImmediateBeat() {
     if (!chain.active) return;
+    chain.awaitingFastTrack = true;
     clearTimeout(immediateBeatTimer);
     immediateBeatTimer = setTimeout(function() {
       immediateBeatTimer = null;
-      if (window.StructaLLM && window.StructaLLM.pendingCount > 0) {
+      if (window.StructaLLM && window.StructaLLM.pendingHighPriorityCount > 0) {
         requestImmediateBeat();
         return;
       }
+      chain.awaitingFastTrack = false;
       beat();
     }, 120);
   }

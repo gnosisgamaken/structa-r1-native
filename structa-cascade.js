@@ -2335,6 +2335,27 @@
     }
   });
 
+  window.addEventListener('structa-fast-feedback', function(e) {
+    if (currentState === STATES.HOME) {
+      Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
+        var baseTransform = cardEl.getAttribute('transform') || '';
+        var focusBias = index === selectedIndex ? 0.55 : 0.32;
+        var nudgeX = index % 2 === 0 ? focusBias : -focusBias;
+        var nudgeY = index === selectedIndex ? -0.45 : -0.22;
+        cardEl.setAttribute('transform', baseTransform + ' translate(' + nudgeX + ' ' + nudgeY + ')');
+        setTimeout(function() {
+          if (cardEl.isConnected) cardEl.setAttribute('transform', baseTransform);
+        }, 240);
+      });
+    }
+
+    var source = e && e.detail ? e.detail.source : '';
+    if (source === 'capture' || source === 'show-tell' || source === 'visual-insight') notifyCard('show', 'soft');
+    if (source === 'voice-entry') notifyCard('tell', 'soft');
+    if (source === 'visual-insight' || source === 'insight' || source === 'question-answer') notifyCard('know', 'soft');
+    if (source === 'project-switch') notifyCard('now', 'soft');
+  });
+
   // === Discovery question notification ===
   window.addEventListener('structa-discovery-question', function(e) {
     notifyCard('know', 'urgent');

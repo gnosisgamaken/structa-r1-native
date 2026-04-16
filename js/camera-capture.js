@@ -299,6 +299,7 @@
     });
 
     lastBundle = bundle;
+    native?.storeAsset?.(imageAsset);
     native?.storeCaptureBundle?.(bundle);
     native?.sendStructuredMessage?.({
       verb: 'capture',
@@ -318,15 +319,17 @@
     }));
 
     // Also store as node if available
+    var captureNode = null;
     if (native?.addNode) {
-      native.addNode({
+      captureNode = native.addNode({
         type: 'capture',
         title: annotation ? 'show+tell: ' + annotation.slice(0, 40) : 'visual capture',
         body: annotation || 'analyzing...',
         source: 'camera',
         capture_image: bundle?.entry_id || null,
         voice_annotation: annotation || null,
-        tags: annotation ? ['show-tell', facingMode] : [facingMode]
+        tags: annotation ? ['show-tell', facingMode] : [facingMode],
+        meta: { bundle_id: bundle?.entry_id || null, facingMode: facingMode }
       });
     }
 
@@ -341,13 +344,32 @@
           voiceAnnotation: annotation
         }).then(function(result) {
           if (result && result.ok && result.clean) {
-            window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
+            var insightNode = window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
             native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
               if (cap) {
                 cap.summary = result.clean;
                 cap.ai_analysis = result.clean;
+                cap.prompt_text = annotation || cap.prompt_text || '';
+              }
+              var nodes = project.nodes || [];
+              var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
+                return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
+              });
+              if (node) {
+                node.body = result.clean;
+                node.tags = Array.isArray(node.tags) ? node.tags : [];
+                if (annotation && node.tags.indexOf('show-tell') === -1) node.tags.push('show-tell');
+                if (insightNode && insightNode.node_id) {
+                  node.links = Array.isArray(node.links) ? node.links : [];
+                  if (node.links.indexOf(insightNode.node_id) === -1) node.links.push(insightNode.node_id);
+                  var linkedInsight = nodes.find(function(n) { return n.node_id === insightNode.node_id; });
+                  if (linkedInsight) {
+                    linkedInsight.links = Array.isArray(linkedInsight.links) ? linkedInsight.links : [];
+                    if (linkedInsight.links.indexOf(node.node_id) === -1) linkedInsight.links.push(node.node_id);
+                  }
+                }
               }
               native?.updateUIState?.({
                 last_capture_summary: result.clean,

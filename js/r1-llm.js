@@ -20,7 +20,7 @@
   var conversationHistory = [];
   var MAX_HISTORY = 10;
   var lastCallTime = 0;
-  var MIN_GAP_MS = 1200;
+  var MIN_GAP_MS = 800;
   var dispatchTimer = null;
 
   function getNextId() {
@@ -242,6 +242,7 @@
     var backlog = project.backlog || [];
     if (backlog.length) {
       parts.push('Backlog (' + backlog.length + '): ' + backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
+      parts.push('Current focus: ' + (backlog[0].title || '').slice(0, 60));
     }
     var questions = project.open_questions || [];
     if (questions.length) {
@@ -375,7 +376,7 @@
    */
   function storeAsInsight(result, sourceType) {
     if (!result || !result.ok || !result.clean) return null;
-    if (!native || !native.touchProjectMemory) return null;
+    if (!native) return null;
 
     var insight = {
       title: (sourceType || 'llm') + ' insight',
@@ -386,30 +387,65 @@
     };
 
     var decisionText = result.structured && result.structured.decision;
+    var createdNode = null;
 
-    native.touchProjectMemory(function(project) {
-      project.insights = Array.isArray(project.insights) ? project.insights : [];
-      project.insights.unshift(insight);
-      project.insights = project.insights.slice(0, 16);
+    if (native.addNode) {
+      createdNode = native.addNode({
+        type: 'insight',
+        status: 'open',
+        title: insight.title,
+        body: insight.body,
+        source: sourceType || 'voice',
+        confidence: insight.confidence,
+        next_action: insight.next,
+        tags: sourceType ? [sourceType] : []
+      });
 
-      // Auto-create pending decision if LLM identified one
       if (decisionText) {
-        project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
-        // Dedup: don't add if same text already exists
-        var exists = project.pending_decisions.some(function(d) {
-          return (d.text || d) === decisionText;
-        });
+        var project = native.getProjectMemory ? native.getProjectMemory() : {};
+        var pending = project.pending_decisions || [];
+        var exists = pending.some(function(d) { return (d.text || d) === decisionText; });
         if (!exists) {
-          project.pending_decisions.unshift({
-            text: decisionText,
+          native.addNode({
+            type: 'decision',
+            status: 'open',
+            title: decisionText,
+            body: result.clean,
             source: sourceType || 'voice',
-            insight_body: result.clean,
-            created_at: new Date().toISOString()
+            decision_options: []
           });
-          project.pending_decisions = project.pending_decisions.slice(0, 8);
         }
       }
-    });
+
+      if (createdNode && window.StructaLLM && window.StructaLLM.linkNode) {
+        window.StructaLLM.linkNode(createdNode.node_id);
+      }
+      return createdNode;
+    }
+
+    if (native.touchProjectMemory) {
+      native.touchProjectMemory(function(project) {
+        project.insights = Array.isArray(project.insights) ? project.insights : [];
+        project.insights.unshift(insight);
+        project.insights = project.insights.slice(0, 16);
+
+        if (decisionText) {
+          project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
+          var exists = project.pending_decisions.some(function(d) {
+            return (d.text || d) === decisionText;
+          });
+          if (!exists) {
+            project.pending_decisions.unshift({
+              text: decisionText,
+              source: sourceType || 'voice',
+              insight_body: result.clean,
+              created_at: new Date().toISOString()
+            });
+            project.pending_decisions = project.pending_decisions.slice(0, 8);
+          }
+        }
+      });
+    }
 
     return insight;
   }
@@ -549,6 +585,11 @@
     generateExport: generateExport,
     resetHistory: resetHistory,
     get pendingCount() { return requestQueue.length + (activeRequest ? 1 : 0); },
+    get pendingHighPriorityCount() {
+      var queued = requestQueue.filter(function(entry) { return !entry.opts || entry.opts.priority !== 'low'; }).length;
+      var active = activeRequest && (!activeRequest.opts || activeRequest.opts.priority !== 'low') ? 1 : 0;
+      return queued + active;
+    },
     get historyLength() { return conversationHistory.length; }
   });
 })();

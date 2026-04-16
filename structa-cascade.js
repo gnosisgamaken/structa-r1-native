@@ -72,6 +72,33 @@
     return String(text || '').toLowerCase();
   }
 
+  function projectDisplayName(project = getProjectMemory()) {
+    return String(project?.name || 'Untitled Project');
+  }
+
+  function compactProjectName(name = '') {
+    const value = String(name || '').trim();
+    return value.length > 24 ? value.slice(0, 23) + '…' : value;
+  }
+
+  function recentTimeLabel(raw) {
+    if (!raw) return 'recent';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return 'recent';
+    const diff = Date.now() - date.getTime();
+    const hour = 60 * 60 * 1000;
+    const day = 24 * hour;
+    if (diff < hour) return 'now';
+    if (diff < day) return `${Math.max(1, Math.floor(diff / hour))}h`;
+    if (diff < 7 * day) return `${Math.max(1, Math.floor(diff / day))}d`;
+    return formatTimeLabel(raw);
+  }
+
+  function drawColorBleed(fill = 'rgba(255,255,255,0.12)', opacity = 0.12) {
+    mk('rect', { x: -12, y: -24, width: 264, height: 112, fill, opacity: String(opacity) });
+    mk('rect', { x: 0, y: 58, width: 240, height: 1, fill: 'rgba(255,255,255,0.16)' });
+  }
+
   function currentCard() {
     return cards[selectedIndex];
   }
@@ -802,9 +829,9 @@
 
   // === SVG rendering helpers ===
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 120, y: 48, scale: 1.5, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 120, y: 68, scale: 1.5, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 48 + (150 * 1.5) / 2;
+    var heroCenterY = 68 + (150 * 1.5) / 2;
     var scales = [0.50, 0.69, 0.92];
     var xPositions = [0, 40, 80];
     var stack = scales.map(function(s, i) {
@@ -849,15 +876,28 @@
 
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
+    const project = getProjectMemory();
+    const ui = getUIState();
     image('assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
     });
-    text(42, 40, 'structa', {
+    text(42, 36, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '35', 'letter-spacing': '0.0em'
+    });
+    text(14, 60, compactProjectName(projectDisplayName(project)), {
+      fill: '#f8c15d',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '18'
+    });
+    text(226, 60, lower(ui.last_event_summary || 'ready'), {
+      fill: 'rgba(244,239,228,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
     });
   }
 
@@ -866,17 +906,30 @@
     const projects = getProjects();
     const activeId = getActiveProjectId();
     const selected = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(projects.length - 1, 0)));
+    const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
-    text(14, 34, 'projects', {
+    mk('rect', { x: 0, y: 0, width: 240, height: 78, fill: 'rgba(255,255,255,0.03)' });
+    image('assets/icons/png/5.png', {
+      x: 12, y: 14, width: 22, height: 22,
+      preserveAspectRatio: 'xMidYMid meet', opacity: 0.92,
+      style: 'filter: brightness(0) invert(0.96);'
+    });
+    text(40, 31, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '30'
+      'font-size': '22'
     });
-    text(14, 50, 'shake or back to close', {
+    text(14, 54, compactProjectName(activeProject?.name || 'Untitled Project'), {
+      fill: '#f8c15d',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '16'
+    });
+    text(226, 54, `${projects.length} active`, {
       fill: 'rgba(244,239,228,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10'
+      'font-size': '10',
+      'text-anchor': 'end'
     });
 
     if (!projects.length) {
@@ -888,8 +941,8 @@
       return;
     }
 
-    const startY = 74;
-    const rowH = 44;
+    const startY = 86;
+    const rowH = 46;
     const visibleRows = 4;
     const offset = Math.max(0, Math.min(selected - 1, Math.max(0, projects.length - visibleRows)));
     projects.slice(offset, offset + visibleRows).forEach((project, visibleIndex) => {
@@ -903,16 +956,16 @@
         x: 10,
         y,
         width: 220,
-        height: 34,
-        rx: 4,
-        ry: 4,
-        fill: isSelected ? 'rgba(244,239,228,0.12)' : 'rgba(255,255,255,0.03)',
-        stroke: isSelected ? 'rgba(244,239,228,0.42)' : 'rgba(255,255,255,0.06)',
+        height: 36,
+        rx: 8,
+        ry: 8,
+        fill: isSelected ? 'rgba(248,193,93,0.12)' : 'rgba(255,255,255,0.025)',
+        stroke: isSelected ? 'rgba(248,193,93,0.34)' : 'rgba(255,255,255,0.06)',
         'stroke-width': '1'
       }, tap);
 
-      text(18, y + 14, lower(project.name || 'untitled project'), {
-        fill: '#f4efe4',
+      text(18, y + 15, compactProjectName(project.name || 'Untitled Project'), {
+        fill: isActive ? '#f8c15d' : '#f4efe4',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '14'
       }, tap);
@@ -922,20 +975,21 @@
       const insights = project.counts?.insights || 0;
       if (captures) meta.push(`${captures} cap`);
       if (insights) meta.push(`${insights} ins`);
-      if (isActive) meta.push('open');
-      text(18, y + 27, meta.join(' · '), {
-        fill: isSelected ? 'rgba(244,239,228,0.68)' : 'rgba(244,239,228,0.42)',
+      text(18, y + 28, meta.join(' · '), {
+        fill: isSelected ? 'rgba(244,239,228,0.70)' : 'rgba(244,239,228,0.42)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       }, tap);
 
+      text(220, y + 15, recentTimeLabel(project.updated_at), {
+        fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      }, tap);
+
       if (isActive) {
-        text(220, y + 14, '●', {
-          fill: '#f8c15d',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10',
-          'text-anchor': 'end'
-        }, tap);
+        mk('rect', { x: 206, y: y + 22, width: 14, height: 2, rx: 1, ry: 1, fill: '#f8c15d' }, tap);
       }
 
       tap.addEventListener('pointerup', event => {
@@ -949,6 +1003,8 @@
   }
 
   function drawSurfaceHeader(card) {
+    const project = getProjectMemory();
+    drawColorBleed('rgba(255,255,255,0.10)', 0.10);
     if (card.iconPath) {
       image(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24,
@@ -956,10 +1012,21 @@
         style: 'filter: brightness(0) saturate(100%);'
       });
     }
-    text(42, 40, card.title, {
+    text(42, 36, card.title, {
       fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '40', 'letter-spacing': '0.0em'
+    });
+    text(14, 58, compactProjectName(projectDisplayName(project)), {
+      fill: 'rgba(8,8,8,0.52)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '12'
+    });
+    text(226, 58, lower(card.roleShort || card.role), {
+      fill: 'rgba(8,8,8,0.42)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
     });
   }
 
@@ -967,6 +1034,7 @@
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
     const showStackIcon = !selected;
+    const project = getProjectMemory();
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(layout.opacity), tabindex: '0', role: 'button',
@@ -982,14 +1050,23 @@
     }, group);
 
     if (selected) {
+      mk('rect', { x: 0, y: 0, width: 150, height: 26, rx: 20, ry: 20, fill: 'rgba(255,255,255,0.12)' }, group);
+      mk('rect', { x: 0, y: 20, width: 150, height: 10, fill: 'rgba(255,255,255,0.12)' }, group);
+    }
+
+    if (selected) {
       drawCardIcon(card, true, group);
       text(18, 78, card.title, {
         fill: 'rgba(8,8,8,0.98)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '22'
       }, group);
 
+      text(18, 32, compactProjectName(projectDisplayName(project)), {
+        fill: 'rgba(8,8,8,0.54)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10'
+      }, group);
+
       // Glanceable stat — one big number that tells you what matters
-      const project = getProjectMemory();
       let statNumber = '';
       let statLabel = '';
 
@@ -1173,20 +1250,20 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
-    text(14, 60, lower(model.title), {
+    text(14, 72, `${model.captures.length} visual memories`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     });
 
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 89, 'open camera', {
+    mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
+    text(24, 100, 'open camera', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 89, model.captures.length ? `${model.captures.length} saved` : 'start', {
+    text(216, 100, model.captures.length ? `${model.captures.length} saved` : 'start', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1198,28 +1275,28 @@
       openCameraFromShow('touch');
     });
 
-    mk('rect', { x: 14, y: 106, width: 212, height: 100, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 118, width: 212, height: 94, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.imageHref) {
       image(model.imageHref, {
-        x: 14, y: 106, width: 212, height: 100, preserveAspectRatio: 'xMidYMid slice', opacity: 1
+        x: 14, y: 118, width: 212, height: 94, preserveAspectRatio: 'xMidYMid slice', opacity: 1
       });
-      mk('rect', { x: 14, y: 174, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
-      text(22, 188, 'latest frame', {
+      mk('rect', { x: 14, y: 180, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
+      text(22, 194, 'latest frame', {
         fill: 'rgba(244,239,228,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapText(undefined, model.summary.slice(0, 52), 22, 200, 190, 11, 'rgba(244,239,228,0.92)', '10');
+      wrapText(undefined, model.summary.slice(0, 52), 22, 206, 190, 11, 'rgba(244,239,228,0.92)', '10');
     } else {
-      text(14, 142, 'no captures yet', {
+      text(14, 154, 'no captures yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'open camera to capture the first visual reference for this project', 14, 162, 196, 14, 'rgba(8,8,8,0.62)', '12');
+      wrapText(undefined, 'open camera to capture the first visual reference for this project', 14, 174, 196, 14, 'rgba(8,8,8,0.62)', '12');
     }
 
-    const thumbY = 212;
+    const thumbY = 218;
     const recent = model.captures.slice().reverse().slice(0, 3);
     recent.forEach((capture, i) => {
       const x = i * 80;
@@ -1269,20 +1346,20 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
-    text(14, 60, lower(model.title), {
+    text(14, 72, `${model.entries.length} voice memories`, {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     });
 
     const actionBar = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 72, width: 212, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' }, actionBar);
-    text(24, 89, 'hold to speak', {
+    mk('rect', { x: 14, y: 82, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, actionBar);
+    text(24, 100, 'hold to speak', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, actionBar);
-    text(216, 89, model.entries.length ? `${model.entries.length} saved` : 'new', {
+    text(216, 100, model.entries.length ? `${model.entries.length} saved` : 'new', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1294,43 +1371,43 @@
       openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'ready to listen' });
     });
 
-    mk('rect', { x: 14, y: 106, width: 212, height: 78, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 118, width: 212, height: 74, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 122, 'latest voice', {
+      text(20, 134, `latest voice · ${recentTimeLabel(model.current.created_at)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 140, 184, 13, 'rgba(8,8,8,0.96)', '13');
+      wrapText(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 118), 20, 152, 184, 13, 'rgba(8,8,8,0.96)', '13');
     } else {
-      text(20, 136, 'no voice yet', {
+      text(20, 148, 'no voice yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '18'
       });
-      wrapText(undefined, 'hold the side button to save the first spoken update for this project', 20, 154, 184, 13, 'rgba(8,8,8,0.60)', '11');
+      wrapText(undefined, 'hold the side button to save the first spoken update for this project', 20, 166, 184, 13, 'rgba(8,8,8,0.60)', '11');
     }
 
     const visible = model.entries.slice(0, 3);
     visible.forEach((entry, index) => {
-      const y = 192 + (index * 30);
+      const y = 198 + (index * 28);
       const selected = index === model.currentIndex;
       const rowTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 14,
         y,
         width: 212,
-        height: 24,
+        height: 22,
         rx: 6,
         ry: 6,
         fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.12)'
       }, rowTap);
-      text(22, y + 14, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
+      text(22, y + 13, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
         fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.92)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '11'
       }, rowTap);
-      text(216, y + 14, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
+      text(216, y + 13, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
         fill: selected ? 'rgba(244,239,228,0.60)' : 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9',
@@ -1361,9 +1438,9 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
-    text(14, 60, lower(data.title), { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
+    text(14, 72, `${data.pendingDecisions.length} pending · ${data.chainPhase}`, { fill: 'rgba(8,8,8,0.50)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12' });
 
-    const chainY = 78;
+    const chainY = 90;
     const phaseLabel = {
       observe: 'observing',
       research: 'researching',
@@ -1514,13 +1591,13 @@
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: 52, width: tab.width, height: 22, rx: 6, ry: 6,
+        x: tabX, y: 66, width: tab.width, height: 22, rx: 6, ry: 6,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: 52 + 22 / 2 + 4,
+        x: tabX + tab.width / 2, y: 66 + 22 / 2 + 4,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'middle'
       }, pillGroup);
@@ -1542,7 +1619,7 @@
     });
 
     // Filter chips row - touchable
-    const chipY = 80;
+    const chipY = 94;
     let chipX = 14;
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
     activeChips.forEach((c) => {
@@ -1581,7 +1658,7 @@
     });
 
     // Content area - directly below chips, no PTT needed
-    const contentY = 108;
+    const contentY = 122;
 
     if (currentState === STATES.KNOW_BROWSE) {
       // Item title

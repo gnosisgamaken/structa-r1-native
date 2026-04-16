@@ -463,34 +463,40 @@
 
   function getProjects() {
     ensureProjectRegistry();
-    return memory.projects.map(function(project) {
-      return {
-        project_id: project.project_id,
-        name: project.name || 'untitled project',
-        type: project.type || 'general',
-        user_role: project.user_role || '',
-        updated_at: project.updated_at,
-        created_at: project.created_at,
-        counts: {
-          captures: (project.captures || []).length,
-          insights: (project.insights || []).length,
-          backlog: (project.backlog || []).length,
-          questions: (project.open_questions || []).length
-        },
-        is_active: project.project_id === memory.active_project_id
-      };
-    });
+    return memory.projects
+      .slice()
+      .sort(function(a, b) {
+        return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
+      })
+      .map(function(project) {
+        return {
+          project_id: project.project_id,
+          name: project.name || 'untitled project',
+          type: project.type || 'general',
+          user_role: project.user_role || '',
+          updated_at: project.updated_at,
+          created_at: project.created_at,
+          counts: {
+            captures: (project.captures || []).length,
+            insights: (project.insights || []).length,
+            backlog: (project.backlog || []).length,
+            questions: (project.open_questions || []).length
+          },
+          is_active: project.project_id === memory.active_project_id
+        };
+      });
   }
 
   function createProject(name, type) {
     ensureProjectRegistry();
-    var normalizedName = lower((name || '').trim() || 'untitled project');
+    var rawName = String((name || '').trim() || 'Untitled Project');
+    var normalizedName = lower(rawName);
     var existing = memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
     if (existing) return switchProject(existing.project_id);
 
     var project = createDefaultProject({
       project_id: contracts.makeEntryId('project'),
-      name: normalizedName,
+      name: rawName,
       type: contracts.projectTypes.includes(type) ? type : 'general'
     });
     memory.projects.unshift(project);

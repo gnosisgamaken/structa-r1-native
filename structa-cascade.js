@@ -44,11 +44,12 @@
     LOG_OPEN: 'log_open'
   });
 
+  const IC = window.StructaIcons || {};
   const cards = [
-    { id: 'show', title: 'show', iconPath: 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
-    { id: 'know', title: 'know', iconPath: 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', iconPath: 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
+    { id: 'show', title: 'show', iconPath: IC['4'] || 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'visual memory', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: IC['3'] || 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', iconPath: IC['7'] || 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', iconPath: IC['6'] || 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
   ];
 
   // === State machine ===
@@ -878,7 +879,7 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    image('assets/icons/png/5.png', {
+    image(IC['5'] || 'assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.96,
       style: 'filter: brightness(0) invert(0.96);'
@@ -904,7 +905,7 @@
     const activeProject = projects.find(project => project.project_id === activeId) || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
-    image('assets/icons/png/5.png', {
+    image(IC['5'] || 'assets/icons/png/5.png', {
       x: 12, y: 14, width: 22, height: 22,
       preserveAspectRatio: 'xMidYMid meet', opacity: 0.92,
       style: 'filter: brightness(0) invert(0.96);'

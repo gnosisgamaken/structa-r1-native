@@ -90,30 +90,32 @@
     return project;
   }
 
-  const memory = {
-    messages: [],
-    journals: [],
-    assets: [],
-    captures: [],
-    exports: [],
-    logs: [],
-    probeEvents: [],
-    uiState: {
-      selected_card_id: 'now',
-      last_surface: 'home',
-      resumed_at: null,
-      last_capture_summary: '',
-      last_insight_summary: '',
-      last_event_summary: '',
-      onboarded: false
-    },
-    active_project_id: contracts.baseProjectCode,
-    projects: [],
-    projectMemory: null
-  };
+  function buildInitialMemory() {
+    var baseProject = createDefaultProject({ project_id: contracts.baseProjectCode });
+    return {
+      messages: [],
+      journals: [],
+      assets: [],
+      captures: [],
+      exports: [],
+      logs: [],
+      probeEvents: [],
+      uiState: {
+        selected_card_id: 'now',
+        last_surface: 'home',
+        resumed_at: null,
+        last_capture_summary: '',
+        last_insight_summary: '',
+        last_event_summary: '',
+        onboarded: false
+      },
+      active_project_id: baseProject.project_id,
+      projects: [baseProject],
+      projectMemory: baseProject
+    };
+  }
 
-  memory.projects = [createDefaultProject({ project_id: contracts.baseProjectCode })];
-  memory.projectMemory = memory.projects[0];
+  const memory = buildInitialMemory();
 
   function syncActiveProjectAlias() {
     var active = Array.isArray(memory.projects)
@@ -672,6 +674,34 @@
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return { ok: true, project_id: project.project_id };
+  }
+
+  function flushMemory() {
+    const fresh = buildInitialMemory();
+    Object.keys(memory).forEach(function(key) { delete memory[key]; });
+    Object.assign(memory, fresh);
+    runtimeEvents.splice(0, runtimeEvents.length);
+    syncActiveProjectAlias();
+    rebuildLegacyViews();
+
+    if (window.StructaLLM?.resetHistory) {
+      try { window.StructaLLM.resetHistory(); } catch (_) {}
+    }
+
+    try {
+      window.localStorage?.removeItem(cacheKey);
+      window.localStorage?.removeItem(cacheKey + '_emergency');
+    } catch (_) {}
+
+    var clearPromise = window.StructaStorage?.clear
+      ? window.StructaStorage.clear().catch(function() { return []; })
+      : Promise.resolve([]);
+
+    return Promise.resolve(clearPromise).then(function(cleared) {
+      persist();
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      return { ok: true, cleared: cleared, project_id: memory.active_project_id };
+    });
   }
 
   function updateUIState(patch = {}) {
@@ -1306,6 +1336,7 @@
     createProject,
     archiveProject,
     deleteProject,
+    flushMemory,
     getMemory,
     getUIState,
     updateUIState,

@@ -126,6 +126,18 @@
     });
   }
 
+  function allowStagingFlush() {
+    const host = lower(window.location.hostname || '');
+    const search = lower(window.location.search || '');
+    const hash = lower(window.location.hash || '');
+    return !!native?.probeMode ||
+      host.includes('replit') ||
+      host.includes('localhost') ||
+      host.startsWith('127.') ||
+      search.includes('staging') ||
+      hash.includes('staging');
+  }
+
   function currentCard() {
     return cards[selectedIndex];
   }
@@ -690,6 +702,19 @@
     return true;
   }
 
+  function flushTestingMemory() {
+    if (!allowStagingFlush() || !native?.flushMemory) return false;
+    native.flushMemory().then(function() {
+      stateData.projectFlushConfirm = false;
+      selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
+      transition(STATES.HOME);
+    }).catch(function() {
+      stateData.projectFlushConfirm = false;
+      render();
+    });
+    return true;
+  }
+
   // === Surface identification (backward compat for render) ===
   function activeSurface() {
     switch (currentState) {
@@ -1195,6 +1220,9 @@
       });
     });
 
+    const canFlush = allowStagingFlush();
+    const flushConfirm = !!stateData.projectFlushConfirm;
+
     if (projects.length > 1 && selectedProject && selectedProject.status !== 'archived') {
       const archiveTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
@@ -1218,7 +1246,35 @@
       });
     }
 
-    text(226, 268, projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded', {
+    if (canFlush) {
+      const flushTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 144, y: 248, width: 82, height: 20, rx: 8, ry: 8,
+        fill: flushConfirm ? 'rgba(181,18,18,0.18)' : 'rgba(255,255,255,0.05)',
+        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.12)',
+        'stroke-width': 1
+      }, flushTap);
+      text(185, 261, flushConfirm ? 'confirm wipe' : 'flush memory', {
+        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      }, flushTap);
+      flushTap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (stateData.projectFlushConfirm) {
+          flushTestingMemory();
+          return;
+        }
+        stateData.projectFlushConfirm = true;
+        render();
+      });
+    }
+
+    text(226, 268, canFlush
+      ? (flushConfirm ? 'tap flush again · resets onboarding' : 'staging tools · click opens')
+      : (projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded'), {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -2142,6 +2198,7 @@
         if (!projects.length) break;
         const currentIndex = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
         stateData.projectListIndex = Math.max(0, Math.min(currentIndex + (direction > 0 ? 1 : -1), projects.length - 1));
+        stateData.projectFlushConfirm = false;
         render();
         break;
       }

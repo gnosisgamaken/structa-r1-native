@@ -61,6 +61,14 @@
     } catch (e) { return null; }
   }
 
+  async function r1Clear() {
+    if (!status.r1Storage) return false;
+    try {
+      await window.creationStorage.plain.removeItem(STORAGE_KEY);
+      return true;
+    } catch (e) { return false; }
+  }
+
   // === Tier 2: IndexedDB ===
 
   function initIndexedDB() {
@@ -101,6 +109,18 @@
     });
   }
 
+  function idbClear() {
+    if (!status.indexedDB || !db) return Promise.resolve(false);
+    return new Promise(resolve => {
+      try {
+        const tx = db.transaction([STORE_NAME], 'readwrite');
+        const req = tx.objectStore(STORE_NAME).delete(STORAGE_KEY);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch (e) { resolve(false); }
+    });
+  }
+
   // === Tier 3: localStorage ===
 
   function testLocalStorage() {
@@ -127,6 +147,15 @@
       const parsed = JSON.parse(stored);
       return { data: parsed.value || parsed, timestamp: parsed.timestamp || 0 };
     } catch (e) { return null; }
+  }
+
+  function lsClear() {
+    if (!status.localStorage) return false;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_KEY + '_emergency');
+      return true;
+    } catch (e) { return false; }
   }
 
   // === Public API ===
@@ -169,6 +198,14 @@
     return sources[0].data;
   }
 
+  async function clear() {
+    const results = [];
+    if (status.r1Storage) { if (await r1Clear()) results.push('r1'); }
+    if (status.indexedDB) { if (await idbClear()) results.push('idb'); }
+    if (status.localStorage) { if (lsClear()) results.push('ls'); }
+    return results;
+  }
+
   function snapshot(data) {
     try {
       localStorage.setItem(STORAGE_KEY + '_emergency', JSON.stringify({
@@ -181,6 +218,7 @@
     init,
     save,
     load,
+    clear,
     snapshot,
     get status() { return { ...status }; }
   });

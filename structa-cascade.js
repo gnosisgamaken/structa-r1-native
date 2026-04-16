@@ -62,6 +62,15 @@
   let transitionTargetState = null;
   let showHoldIntentActive = false;
 
+  function recordingActive() {
+    return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
+  }
+
+  function recordingDot(x, y, r, parent = svg, fill = '#b51212') {
+    mk('circle', { cx: x, cy: y, r, fill, opacity: '0.92' }, parent);
+    mk('circle', { cx: x, cy: y, r: Math.max(1, r - 2), fill: 'rgba(255,255,255,0.08)' }, parent);
+  }
+
   // Derived from stateData (shorthand accessors)
   function isHome() { return currentState === STATES.HOME; }
   function isCaptureState() { return currentState === STATES.CAMERA_OPEN || currentState === STATES.VOICE_OPEN; }
@@ -176,7 +185,9 @@
     const direct = capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.image_asset?.data || '';
     if (direct) return direct;
     const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
-    if (!key) return '';
+    const imageAssetId = capture?.image_asset?.entry_id || capture?.meta?.image_asset_id || '';
+    const imageAssetName = capture?.image_asset?.name || capture?.meta?.image_asset_name || '';
+    if (!key && !imageAssetId && !imageAssetName) return '';
     const memory = native?.getMemory?.() || {};
     const pool = []
       .concat(Array.isArray(memory.captures) ? memory.captures : [])
@@ -184,11 +195,13 @@
       .concat(Array.isArray(memory.assets) ? memory.assets : []);
     const linked = pool.find(item => {
       return item?.entry_id === key ||
+        item?.entry_id === imageAssetId ||
         item?.id === key ||
         item?.node_id === key ||
         item?.capture_image === key ||
         item?.meta?.bundle_id === key ||
-        item?.name === key;
+        item?.name === key ||
+        item?.name === imageAssetName;
     });
     return linked?.image_asset?.data || linked?.image_asset?.url || linked?.asset?.data || linked?.data || linked?.meta?.image_asset?.data || '';
   }
@@ -203,7 +216,7 @@
     return lower(latest?.visible_message || latest?.message || '—');
   }
 
-  function getStatsLine() {
+  function getStatsLines() {
     const project = getProjectMemory() || {};
     const captures = getCaptureList().length;
     const notes = getVoiceEntries().length;
@@ -211,22 +224,27 @@
     const locked = (project.decisions || []).length;
     const pending = (project.pending_decisions || []).length;
     const signals = (project.insights || []).length;
-    return `stats ${notes} notes · ${captures} frames · ${signals} signals · ${asks} asks · ${pending} waiting · ${locked} locked`;
+    return [
+      `${notes} notes · ${captures} frames · ${signals} signals`,
+      `${asks} asks · ${pending} waiting · ${locked} locked`
+    ];
   }
 
   function renderLogRows(entries, options = {}) {
     log.innerHTML = '';
     if (options.includeStats) {
-      const statsRow = document.createElement('div');
-      statsRow.className = 'entry';
-      const label = document.createElement('span');
-      label.className = 'muted';
-      label.textContent = '[stats]';
-      statsRow.appendChild(label);
-      const message = document.createElement('span');
-      message.textContent = getStatsLine();
-      statsRow.appendChild(message);
-      log.appendChild(statsRow);
+      getStatsLines().forEach(function(line, index) {
+        const statsRow = document.createElement('div');
+        statsRow.className = 'entry';
+        const label = document.createElement('span');
+        label.className = 'muted';
+        label.textContent = index === 0 ? '[stats]' : '[—]';
+        statsRow.appendChild(label);
+        const message = document.createElement('span');
+        message.textContent = line;
+        statsRow.appendChild(message);
+        log.appendChild(statsRow);
+      });
     }
     entries.forEach(entry => {
       const row = document.createElement('div');
@@ -427,6 +445,8 @@
     native?.setActiveNode?.('tell');
     native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'voice' });
     window.__STRUCTA_PTT_TARGET__ = 'voice';
+    window.__STRUCTA_INLINE_PTT__ = !!data.fromPTT;
+    stateData.inlinePTTSurface = data.inlinePTTSurface || stateData.inlinePTTSurface || '';
 
     // If answering a question, set context before starting
     if (data.answeringQuestion) {
@@ -449,6 +469,8 @@
   stateExitHandlers[STATES.VOICE_OPEN] = function(data) {
     document.body.classList.remove('input-locked');
     window.__STRUCTA_PTT_TARGET__ = null;
+    window.__STRUCTA_INLINE_PTT__ = false;
+    stateData.inlinePTTSurface = '';
   };
 
   // --- VOICE_PROCESSING ---
@@ -664,7 +686,7 @@
       case STATES.VOICE_OPEN:
       case STATES.VOICE_PROCESSING:
       case STATES.KNOW_ANSWER:
-        return 'voice';
+        return stateData.inlinePTTSurface || 'voice';
       case STATES.KNOW_BROWSE:
       case STATES.KNOW_DETAIL:
         return 'insight';
@@ -981,6 +1003,10 @@
 
   function drawCardIcon(card, selected, parent) {
     if (!selected) return;
+    if (recordingActive() && card.id === 'tell' && activeSurface() === 'home') {
+      recordingDot(33, 31, 11, parent);
+      return;
+    }
     if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
         x: 18, y: 16, width: 30, height: 30, rx: 5, ry: 5
@@ -996,7 +1022,8 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
+    if (recordingActive() && activeSurface() === 'home') recordingDot(23, 26, 8, svg);
+    else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
     }, svg, {
       inset: 1.5,
@@ -1025,7 +1052,8 @@
     const selectedProject = projects[selected] || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
-    drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
+    if (recordingActive()) recordingDot(23, 25, 8, svg);
+    else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
       x: 12, y: 14, width: 22, height: 22, rx: 4, ry: 4
     }, svg, {
       inset: 1.35,
@@ -1162,7 +1190,9 @@
 
   function drawSurfaceHeader(card) {
     const project = getProjectMemory();
-    if (card.iconPath) {
+    if (recordingActive() && activeSurface() !== 'home') {
+      recordingDot(23, 26, 8, svg);
+    } else if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
       }, svg, { inset: 1.35 });
@@ -1550,6 +1580,15 @@
     };
   }
 
+  function buildHomeCardVoiceContext(card) {
+    if (!card) return { kind: 'project', text: '', surface: 'tell' };
+    if (card.id === 'tell') return buildTellVoiceContext();
+    if (card.id === 'know') return { kind: 'know', text: 'selected knowledge focus', surface: 'know' };
+    if (card.id === 'now') return buildNowVoiceContext();
+    if (card.id === 'show') return { kind: 'show', text: 'visual capture context', surface: 'show' };
+    return { kind: card.id, text: card.role || card.title || '', surface: card.id };
+  }
+
   function drawTellSurface() {
     if (currentState !== STATES.TELL_BROWSE) return;
     const tellCard = cards.find(c => c.id === 'tell');
@@ -1736,17 +1775,19 @@
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else if (data.openQuestions > 0) {
       const boxY = 84;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 160, rx: 10, fill: 'rgba(8,8,8,0.10)' });
+      mk('rect', { x: 10, y: boxY, width: 220, height: 160, rx: 10, fill: 'rgba(8,8,8,0.14)' });
       drawSectionLabel(undefined, 18, boxY + 18, 'blocker ask');
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 140)), 18, boxY + 36, 194, 13, 'rgba(8,8,8,0.96)', '13', 6);
-      text(18, boxY + 36 + blockerRows * 13 + 18, 'hold ptt to answer', {
-        fill: 'rgba(8,8,8,0.48)',
+      const ctaY = Math.min(boxY + 124, boxY + 36 + blockerRows * 13 + 14);
+      mk('rect', { x: 18, y: ctaY, width: 126, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
+      text(28, ctaY + 12, 'answer to continue', {
+        fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
+        'font-size': '11'
       });
       if (data.blockerCount > 1) {
-        text(18, boxY + 36 + blockerRows * 13 + 34, `${data.blockerCount} blockers waiting`, {
+        text(18, ctaY + 32, `${data.blockerCount} blockers waiting`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10'
@@ -1764,7 +1805,7 @@
       }
     }
 
-    text(226, 276, hasBlockers ? 'ptt answers blocker' : 'scroll decisions · ptt answers', {
+    text(226, 276, hasBlockers ? 'chain waits for answer' : 'scroll decisions · hold ptt', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -2171,18 +2212,14 @@
 
       case STATES.HOME: {
         const card = currentCard();
-        if (card.id === 'show') {
-          showHoldIntentActive = true;
-          document.body.classList.add('input-locked');
-          transition(STATES.SHOW_PRIMED, {
-            showStatus: 'touch to start camera',
-            pendingShowNarration: false
-          });
-        } else if (card.id === 'tell') {
-          // PTT on TELL = direct voice open
-          voiceReturnState = STATES.TELL_BROWSE;
-          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
-        }
+        selectedIndex = cards.findIndex(entry => entry.id === 'tell');
+        voiceReturnState = STATES.HOME;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'listening',
+          inlinePTTSurface: 'home',
+          buildContext: buildHomeCardVoiceContext(card)
+        });
         break;
       }
 
@@ -2191,6 +2228,7 @@
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
           tellStatus: 'listening',
+          inlinePTTSurface: 'tell',
           buildContext: buildTellVoiceContext()
         });
         break;
@@ -2216,12 +2254,14 @@
         if (openQuestions.length) {
           transition(STATES.VOICE_OPEN, {
             answeringQuestion: { index: 0, text: openQuestions[0] },
-            fromPTT: true
+            fromPTT: true,
+            inlinePTTSurface: 'project'
           });
         } else {
           transition(STATES.VOICE_OPEN, {
             fromPTT: true,
             tellStatus: 'listening',
+            inlinePTTSurface: 'project',
             buildContext: buildNowVoiceContext()
           });
         }
@@ -2244,6 +2284,7 @@
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
           tellStatus: 'ask know',
+          inlinePTTSurface: 'insight',
           buildContext: buildKnowVoiceContext()
         });
         break;
@@ -2259,6 +2300,7 @@
           transition(STATES.VOICE_OPEN, {
             fromPTT: true,
             tellStatus: 'ask know',
+            inlinePTTSurface: 'insight',
             buildContext: buildKnowVoiceContext()
           });
         }
@@ -2502,27 +2544,7 @@
   render();
   maybeStartHeartbeat();
 
-  // === R1 API probe (silent) ===
-  (function probeR1APIs() {
-    const bridges = ['PluginMessageHandler', 'onPluginMessage', 'Android', 'rabbit', 'Rabbit',
-      'creationStorage', '__RABBIT_DEVICE_ID__'];
-    bridges.forEach(name => {
-      const val = window[name];
-      if (val === undefined) return;
-      if (typeof val === 'object' && val !== null) {
-        const methods = [];
-        const props = [];
-        try { Object.getOwnPropertyNames(val).forEach(k => {
-          try { (typeof val[k] === 'function' ? methods : props).push(k); } catch(e) {}
-        }); } catch(e) {}
-        native?.appendLogEntry?.({ kind: 'probe', message: `${name}: m=[${methods.slice(0,6).join(',')}] p=[${props.slice(0,4).join(',')}]` });
-      } else {
-        native?.appendLogEntry?.({ kind: 'probe', message: `${name}: ${typeof val}` });
-      }
-    });
-    native?.appendLogEntry?.({ kind: 'probe', message: `viewport: ${window.innerWidth}x${window.innerHeight}` });
-    native?.appendLogEntry?.({ kind: 'probe', message: `screen: ${screen.width}x${screen.height}` });
-  })();
+  // Probe bootstrap now lives in rabbit-adapter and stays concise.
 
   // Prime camera only when the user explicitly invokes SHOW
   let cameraPrimed = false;

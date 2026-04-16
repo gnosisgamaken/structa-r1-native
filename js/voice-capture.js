@@ -34,11 +34,19 @@
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
 
+  function inlineMode() {
+    return !!window.__STRUCTA_INLINE_PTT__;
+  }
+
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
   }
 
   function showOverlay() {
+    if (inlineMode()) {
+      window.dispatchEvent(new CustomEvent('structa-voice-open'));
+      return;
+    }
     document.getElementById('app')?.classList.add('overlay-active');
     overlay?.classList.add('open');
     overlay?.setAttribute('aria-hidden', 'false');
@@ -46,6 +54,10 @@
   }
 
   function hideOverlay() {
+    if (inlineMode()) {
+      window.dispatchEvent(new CustomEvent('structa-voice-close'));
+      return;
+    }
     overlay?.classList.remove('open', 'listening');
     overlay?.setAttribute('aria-hidden', 'true');
     document.getElementById('app')?.classList.remove('overlay-active');
@@ -394,8 +406,10 @@
     }
 
     showOverlay();
-    overlay?.classList.add('listening');
-    if (wave) wave.hidden = false;
+    if (!inlineMode()) {
+      overlay?.classList.add('listening');
+      if (wave) wave.hidden = false;
+    }
     if (transcriptEl) transcriptEl.textContent = '';
     audioChunks = [];
     pendingAudioAsset = null;

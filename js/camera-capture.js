@@ -339,33 +339,29 @@
       data: dataUrl,
       meta: { facingMode, width: w, height: h, captured_at: new Date().toISOString() }
     };
+    const storedAsset = native?.storeAsset?.(imageAsset);
+    const resolvedAsset = storedAsset && storedAsset.ok && storedAsset.payload
+      ? { ...imageAsset, ...storedAsset.payload, meta: { ...(imageAsset.meta || {}), ...(storedAsset.payload.meta || {}) } }
+      : imageAsset;
 
     const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
       input_type: annotation ? 'image+voice' : 'image',
-      image_asset: imageAsset,
+      image_asset: resolvedAsset,
       prompt_text: annotation || (facingMode === 'user' ? 'selfie capture' : 'camera capture'),
       summary: 'analyzing...',
       approval_state: 'draft',
       tags: annotation ? [facingMode, 'capture', 'show-tell'] : [facingMode, 'capture'],
       links: [],
-      meta: { facingMode, width: w, height: h, voiceAnnotation: annotation }
+      meta: {
+        facingMode, width: w, height: h, voiceAnnotation: annotation,
+        image_asset_id: resolvedAsset.entry_id || '',
+        image_asset_name: resolvedAsset.name || ''
+      }
     });
 
     lastBundle = bundle;
-    native?.storeAsset?.(imageAsset);
     native?.storeCaptureBundle?.(bundle);
-    native?.sendStructuredMessage?.({
-      verb: 'capture',
-      target: 'capture',
-      input_type: 'capture-bundle',
-      source_type: 'camera',
-      intent: annotation ? 'show+tell capture' : 'capture ' + facingMode + ' image',
-      goal: 'store visual context bundle',
-      approval_mode: 'human_required',
-      fallback: 'store-only',
-      payload: bundle
-    });
 
     native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'image saved' });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -436,11 +432,25 @@
             window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           } else {
             if (attempt === 0) return analyze(1);
+            native?.touchProjectMemory?.(function(project) {
+              var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
+              if (cap) {
+                cap.summary = annotation ? 'show+tell saved' : 'image saved';
+                cap.ai_analysis = cap.summary;
+              }
+            });
             native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
           }
         })
         .catch(function() {
           if (attempt === 0) return analyze(1);
+          native?.touchProjectMemory?.(function(project) {
+            var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
+            if (cap) {
+              cap.summary = annotation ? 'show+tell saved' : 'image saved';
+              cap.ai_analysis = cap.summary;
+            }
+          });
           native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });
         });
       };

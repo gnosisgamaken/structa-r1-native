@@ -155,7 +155,7 @@
         if (native && native.probeMode && native.appendProbeEvent) {
           native.appendProbeEvent({
             source: 'bridge-in',
-            name: ('onPluginMessage ' + String(responseText).slice(0, 60)).replace(/\s+/g, ' ').trim()
+            name: 'response received'
           });
         }
         var clean = sanitizeResponse(responseText);

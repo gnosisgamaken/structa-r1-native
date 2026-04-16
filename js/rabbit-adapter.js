@@ -438,10 +438,7 @@
       'popstate'
     ].forEach(function(eventName) {
       window.addEventListener(eventName, function() {
-        var label = eventName;
-        if (eventName === 'scrollUp') label = 'scrollDown';
-        if (eventName === 'scrollDown') label = 'scrollUp';
-        appendProbeEvent({ source: 'window', name: label });
+        appendProbeEvent({ source: 'window', name: eventName });
       });
     });
 
@@ -463,7 +460,9 @@
           var parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
           var text = parsed?.message || parsed?.intent || parsed?.goal || '';
           if (parsed?.imageBase64) summary += ' imageBase64';
-          if (text) summary += ' ' + String(text).slice(0, 48).replace(/\s+/g, ' ').trim();
+          if (parsed?.useSerpAPI) summary += ' serp';
+          else if (parsed?.imageBase64) summary += ' vision';
+          else if (text) summary += ' llm';
         } catch (_) {}
         appendProbeEvent({ source: 'bridge-out', name: summary });
         return originalPostMessage(payload);

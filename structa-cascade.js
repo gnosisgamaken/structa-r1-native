@@ -75,6 +75,14 @@
     return String(text || '').toLowerCase();
   }
 
+  function normalizeTinyText(text = '') {
+    return String(text || '')
+      .replace(/[#*_`>\[\]\{\}]/g, ' ')
+      .replace(/\b(decision|insight|next|signal)\s*:\s*/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function projectDisplayName(project = getProjectMemory()) {
     const value = String(project?.name || '').trim();
     if (!value) return 'Project';
@@ -729,9 +737,9 @@
 
     const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex }) => classify({
       lane,
-      title: lower(title || lane),
-      body: lower(body || ''),
-      next: lower(next || ''),
+      title: lower(normalizeTinyText(title || lane)),
+      body: lower(normalizeTinyText(body || '')),
+      next: lower(normalizeTinyText(next || '')),
       created_at: created_at || new Date().toISOString(),
       source: source || lane,
       chips: chipHints.slice(),
@@ -809,7 +817,7 @@
     if (!decisionsLane.length) {
       decisionsLane.push(makeItem({
         lane: 'decisions', title: 'no decisions locked',
-        body: '',
+        body: 'no locked decisions yet',
         next: '',
         created_at: new Date().toISOString(), source: 'decision-gap', chips: []
       }));
@@ -827,9 +835,9 @@
 
     const lanes = [
       { id: 'questions', label: 'asks', summary: 'open asks', items: questions },
-      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: '', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
+      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'no signal extracted yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
       { id: 'decisions', label: 'decided', summary: 'locked decisions', items: decisionsLane },
-      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'clear', body: '', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
+      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'clear', body: 'no open loops', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
       lane.items
         .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
@@ -1798,14 +1806,16 @@
       const bodyText = String(item.body || 'no content yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const bodyRows = wrapTextBlock(undefined, lower(bodyText), 14, bodyY, 212, 13, 'rgba(8,8,8,0.85)', '12', 6);
 
-      const actionY = Math.min(236, bodyY + (bodyRows * 13) + 24);
-      mk('rect', { x: 0, y: actionY - 8, width: 240, height: 42, fill: 'rgba(8,8,8,0.04)' });
-      text(14, actionY, '→', {
-        fill: 'rgba(8,8,8,0.50)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      wrapTextBlock(undefined, lower(String(item.next || 'review this')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim(), 26, actionY, 196, 12, 'rgba(8,8,8,0.70)', '11', 2);
+      const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (nextText && nextText !== 'review this') {
+        const actionY = Math.min(244, bodyY + (bodyRows * 13) + 22);
+        text(14, actionY, '→', {
+          fill: 'rgba(8,8,8,0.50)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '12'
+        });
+        wrapTextBlock(undefined, nextText, 26, actionY, 196, 12, 'rgba(8,8,8,0.70)', '11', 2);
+      }
 
       // Scroll hint
       if (items.length > 1) {
@@ -1853,9 +1863,12 @@
         'font-size': '10'
       });
     } else {
-      const nextY = Math.min(236, detailBodyY + (detailRows * 13) + 18);
-      drawSectionLabel(undefined, 14, nextY, 'next move');
-      wrapTextBlock(undefined, lower(String(item.next || 'review this')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim(), 14, nextY + 16, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
+      const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (nextText && nextText !== 'review this') {
+        const nextY = Math.min(236, detailBodyY + (detailRows * 13) + 18);
+        drawSectionLabel(undefined, 14, nextY, 'next move');
+        wrapTextBlock(undefined, nextText, 14, nextY + 16, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
+      }
     }
   }
 
@@ -2473,13 +2486,13 @@
     if (currentState === STATES.HOME) {
       Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
         var baseTransform = cardEl.getAttribute('transform') || '';
-        var focusBias = index === selectedIndex ? 0.55 : 0.32;
+        var focusBias = index === selectedIndex ? 0.18 : 0.1;
         var nudgeX = index % 2 === 0 ? focusBias : -focusBias;
-        var nudgeY = index === selectedIndex ? -0.45 : -0.22;
+        var nudgeY = index === selectedIndex ? -0.16 : -0.08;
         cardEl.setAttribute('transform', baseTransform + ' translate(' + nudgeX + ' ' + nudgeY + ')');
         setTimeout(function() {
           if (cardEl.isConnected) cardEl.setAttribute('transform', baseTransform);
-        }, 240);
+        }, 140);
       });
     }
 

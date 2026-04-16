@@ -144,6 +144,12 @@
       if (cb) {
         clearTimeout(cb.timeout);
         activeRequest = null;
+        if (native && native.probeMode && native.appendProbeEvent) {
+          native.appendProbeEvent({
+            source: 'bridge-in',
+            name: ('onPluginMessage ' + String(responseText).slice(0, 60)).replace(/\s+/g, ' ').trim()
+          });
+        }
         var clean = sanitizeResponse(responseText);
         cb.resolve({
           ok: true,

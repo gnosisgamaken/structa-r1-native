@@ -362,21 +362,74 @@
       id: contracts.makeEntryId('log'),
       kind: 'probe',
       message: `${entry.source} ${lower(entry.name)}`,
+      visible_message: `${entry.source} ${lower(entry.name)}`,
+      visible: true,
       linked_capture_id: null,
       linked_response_id: null,
       created_at: entry.created_at
     }, MAX_LOG_ITEMS);
     persist();
     try {
+      window.dispatchEvent(new CustomEvent('structa-probe-event', { detail: entry }));
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     } catch (_) {}
     return entry;
   }
 
   let probeListenerAttached = false;
+  let probeBridgeWrapped = false;
 
   function startProbeIfNeeded() {
-    // Probe module removed — no-op
+    if (!probeMode || probeListenerAttached) return;
+    probeListenerAttached = true;
+
+    try { window.localStorage?.setItem('structa-probe', '1'); } catch (_) {}
+
+    appendProbeEvent({ source: 'probe', name: 'started' });
+    appendProbeEvent({ source: 'probe', name: 'mode active' });
+    appendProbeEvent({ source: 'window', name: `viewport ${window.innerWidth}x${window.innerHeight}` });
+    appendProbeEvent({ source: 'window', name: `screen ${window.screen?.width || 0}x${window.screen?.height || 0}` });
+
+    [
+      'sideClick',
+      'scrollUp',
+      'scrollDown',
+      'longPressStart',
+      'longPressEnd',
+      'pttStart',
+      'pttEnd',
+      'backbutton',
+      'popstate'
+    ].forEach(function(eventName) {
+      window.addEventListener(eventName, function() {
+        appendProbeEvent({ source: 'window', name: eventName });
+      });
+    });
+
+    ['visibilitychange', 'focus', 'blur', 'pagehide'].forEach(function(eventName) {
+      var target = eventName === 'visibilitychange' ? document : window;
+      target.addEventListener(eventName, function() {
+        var suffix = '';
+        if (eventName === 'visibilitychange') suffix = document.hidden ? ' hidden' : ' visible';
+        appendProbeEvent({ source: target === document ? 'document' : 'window', name: eventName + suffix });
+      });
+    });
+
+    if (!probeBridgeWrapped && window.PluginMessageHandler && typeof window.PluginMessageHandler.postMessage === 'function') {
+      probeBridgeWrapped = true;
+      const originalPostMessage = window.PluginMessageHandler.postMessage.bind(window.PluginMessageHandler);
+      window.PluginMessageHandler.postMessage = function(payload) {
+        var summary = 'bridge-out PluginMessageHandler.postMessage';
+        try {
+          var parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
+          var text = parsed?.message || parsed?.intent || parsed?.goal || '';
+          if (parsed?.imageBase64) summary += ' imageBase64';
+          if (text) summary += ' ' + String(text).slice(0, 48).replace(/\s+/g, ' ').trim();
+        } catch (_) {}
+        appendProbeEvent({ source: 'bridge-out', name: summary });
+        return originalPostMessage(payload);
+      };
+    }
   }
 
   function persist() {
@@ -635,7 +688,9 @@
     if (entry.visible === false) return false;
     if (!entry.visible_message) return false;
 
-    // Suppress ALL probe messages (hardware events, API probes)
+    if (probeMode && kind === 'probe') return true;
+
+    // Suppress ALL probe messages outside probe mode
     if (kind === 'probe') return false;
 
     // Suppress UI noise

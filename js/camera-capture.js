@@ -191,9 +191,9 @@
     var strip = document.getElementById('camera-voice-strip');
     if (strip) {
       strip.classList.add('active');
-      strip.querySelector('.strip-text').textContent = 'listening...';
+      strip.querySelector('.strip-text').textContent = 'recording narration...';
     }
-    setStatus('release to capture');
+    setStatus('release to capture with narration');
 
     // Start R1 native STT if available
     if (typeof CreationVoiceHandler !== 'undefined') {
@@ -219,7 +219,7 @@
         var stripEl = document.getElementById('camera-voice-strip');
         if (stripEl) {
           var textEl = stripEl.querySelector('.strip-text');
-          if (textEl) textEl.textContent = voiceStripTranscript.slice(-40) || 'listening...';
+          if (textEl) textEl.textContent = voiceStripTranscript.slice(-40) || 'recording narration...';
         }
       };
       voiceStripRecognition.onerror = function() {};
@@ -258,7 +258,7 @@
     if (strip) {
       strip.classList.remove('active');
       var textEl = strip.querySelector('.strip-text');
-      if (textEl) textEl.textContent = 'listening...';
+      if (textEl) textEl.textContent = 'recording narration...';
     }
     setStatus('side click shoots');
   }

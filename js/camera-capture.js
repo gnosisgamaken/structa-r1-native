@@ -48,7 +48,7 @@
       native?.setCameraFacing?.(facingMode);
     }
     streamReady = true;
-    setStatus('side click to shoot · hold side to narrate');
+    setStatus('side click shoots');
     showOverlay();
     showOverlayReady();
     return true;
@@ -163,7 +163,7 @@
           await attachPreview();
           streamReady = true;
           native?.setCameraFacing?.(facingMode);
-          setStatus('ready');
+      setStatus('side click shoots');
         })
         .catch(() => { killStream(); setStatus('flip failed'); });
     } finally {
@@ -193,7 +193,7 @@
       strip.classList.add('active');
       strip.querySelector('.strip-text').textContent = 'listening...';
     }
-    setStatus('narrating · release to capture');
+    setStatus('release to capture');
 
     // Start R1 native STT if available
     if (typeof CreationVoiceHandler !== 'undefined') {
@@ -260,7 +260,7 @@
       var textEl = strip.querySelector('.strip-text');
       if (textEl) textEl.textContent = 'listening...';
     }
-    setStatus('side click to shoot · hold side to narrate');
+    setStatus('side click shoots');
   }
 
   function finalizeVoiceStripCapture() {

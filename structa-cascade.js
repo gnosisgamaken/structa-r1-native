@@ -60,6 +60,7 @@
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
   let transitionTargetState = null;
+  let showHoldIntentActive = false;
 
   // Derived from stateData (shorthand accessors)
   function isHome() { return currentState === STATES.HOME; }
@@ -451,7 +452,6 @@
   // === Open a card's primary surface ===
   function openCard(card) {
     if (card.surface === 'camera') {
-      primeCameraForShowIntent().catch(function() {});
       transition(STATES.SHOW_BROWSE);
       return;
     }
@@ -469,10 +469,19 @@
     }
   }
 
-  function openCameraFromShow(source = 'touch') {
+  function openCameraFromShow(source = 'touch', options = {}) {
     cameraReturnState = STATES.SHOW_BROWSE;
-    stateData.showStatus = 'opening lens';
-    render();
+    const wantsNarration = !!options.narrate;
+    if (currentState !== STATES.SHOW_BROWSE && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
+      transition(STATES.SHOW_BROWSE, {
+        showStatus: wantsNarration ? 'opening show + tell' : 'opening lens',
+        pendingShowNarration: wantsNarration
+      });
+    } else {
+      stateData.showStatus = wantsNarration ? 'opening show + tell' : 'opening lens';
+      stateData.pendingShowNarration = wantsNarration;
+      render();
+    }
     window.StructaCamera?.openFromGesture?.('environment');
     return true;
   }
@@ -1988,8 +1997,9 @@
       case STATES.HOME: {
         const card = currentCard();
         if (card.id === 'show') {
-          stateData.pendingShowNarration = true;
-          openCameraFromShow('touch');
+          showHoldIntentActive = true;
+          document.body.classList.add('input-locked');
+          openCameraFromShow('touch', { narrate: true });
         } else if (card.id === 'tell') {
           // PTT on TELL = direct voice open
           voiceReturnState = STATES.TELL_BROWSE;
@@ -2004,8 +2014,9 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        stateData.pendingShowNarration = true;
-        openCameraFromShow('touch');
+        showHoldIntentActive = true;
+        document.body.classList.add('input-locked');
+        openCameraFromShow('touch', { narrate: true });
         break;
 
       case STATES.CAMERA_OPEN:
@@ -2048,8 +2059,18 @@
     document.body.classList.remove('input-locked');
 
     switch (currentState) {
+      case STATES.SHOW_BROWSE:
+        showHoldIntentActive = false;
+        stateData.pendingShowNarration = false;
+        if (stateData.showStatus && stateData.showStatus.indexOf('opening') === 0) {
+          stateData.showStatus = 'lens warming';
+          render();
+        }
+        break;
+
       case STATES.CAMERA_OPEN:
         // PTT released = finalize voice strip and capture with annotation
+        showHoldIntentActive = false;
         if (window.StructaCamera?.voiceStripActive) {
           window.StructaCamera?.finalizeVoiceStripCapture?.();
           transition(STATES.CAMERA_CAPTURE);
@@ -2166,11 +2187,13 @@
     if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
       transition(STATES.CAMERA_OPEN);
     }
-    if (stateData.pendingShowNarration) {
+    if (stateData.pendingShowNarration && showHoldIntentActive) {
       stateData.pendingShowNarration = false;
       setTimeout(function() {
         if (currentState === STATES.CAMERA_OPEN) window.StructaCamera?.startVoiceStrip?.();
       }, 60);
+    } else {
+      stateData.pendingShowNarration = false;
     }
   });
 

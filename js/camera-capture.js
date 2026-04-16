@@ -356,7 +356,8 @@
       meta: {
         facingMode, width: w, height: h, voiceAnnotation: annotation,
         image_asset_id: resolvedAsset.entry_id || '',
-        image_asset_name: resolvedAsset.name || ''
+        image_asset_name: resolvedAsset.name || '',
+        preview_data: dataUrl
       }
     });
 

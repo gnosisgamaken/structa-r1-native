@@ -420,11 +420,19 @@
     probeListenerAttached = true;
 
     try { window.localStorage?.setItem('structa-probe', '1'); } catch (_) {}
+    memory.logs = memory.logs.filter(function(entry) { return entry.kind !== 'probe'; });
 
     appendProbeEvent({ source: 'probe', name: 'started' });
     appendProbeEvent({ source: 'probe', name: 'mode active' });
-    appendProbeEvent({ source: 'window', name: `viewport ${window.innerWidth}x${window.innerHeight}` });
-    appendProbeEvent({ source: 'window', name: `screen ${window.screen?.width || 0}x${window.screen?.height || 0}` });
+    const eventLabels = {
+      sideClick: 'ptt click',
+      scrollUp: 'scroll down',
+      scrollDown: 'scroll up',
+      longPressStart: 'ptt hold',
+      longPressEnd: 'ptt release',
+      backbutton: 'back',
+      popstate: 'back'
+    };
 
     [
       'sideClick',
@@ -432,22 +440,11 @@
       'scrollDown',
       'longPressStart',
       'longPressEnd',
-      'pttStart',
-      'pttEnd',
       'backbutton',
       'popstate'
     ].forEach(function(eventName) {
       window.addEventListener(eventName, function() {
-        appendProbeEvent({ source: 'window', name: eventName });
-      });
-    });
-
-    ['visibilitychange', 'focus', 'blur', 'pagehide'].forEach(function(eventName) {
-      var target = eventName === 'visibilitychange' ? document : window;
-      target.addEventListener(eventName, function() {
-        var suffix = '';
-        if (eventName === 'visibilitychange') suffix = document.hidden ? ' hidden' : ' visible';
-        appendProbeEvent({ source: target === document ? 'document' : 'window', name: eventName + suffix });
+        appendProbeEvent({ source: 'window', name: eventLabels[eventName] || eventName });
       });
     });
 
@@ -455,14 +452,13 @@
       probeBridgeWrapped = true;
       const originalPostMessage = window.PluginMessageHandler.postMessage.bind(window.PluginMessageHandler);
       window.PluginMessageHandler.postMessage = function(payload) {
-        var summary = 'bridge-out PluginMessageHandler.postMessage';
+        var summary = 'llm request';
         try {
           var parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
           var text = parsed?.message || parsed?.intent || parsed?.goal || '';
-          if (parsed?.imageBase64) summary += ' imageBase64';
-          if (parsed?.useSerpAPI) summary += ' serp';
-          else if (parsed?.imageBase64) summary += ' vision';
-          else if (text) summary += ' llm';
+          if (parsed?.useSerpAPI) summary = 'serp request';
+          else if (parsed?.imageBase64) summary = 'vision request';
+          else if (!text) summary = 'bridge request';
         } catch (_) {}
         appendProbeEvent({ source: 'bridge-out', name: summary });
         return originalPostMessage(payload);
@@ -876,7 +872,7 @@
         prompt_text: bundle.prompt_text || '',
         created_at: bundle.captured_at || new Date().toISOString(),
         project_id: memory.active_project_id,
-        meta: { image_asset: bundle.image_asset || null }
+        meta: { ...(bundle.meta || {}), image_asset: bundle.image_asset || null }
       });
       project.structure = [
         { title: 'captures', count: project.captures.length },

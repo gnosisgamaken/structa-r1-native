@@ -67,8 +67,9 @@
   }
 
   function recordingDot(x, y, r, parent = svg, fill = '#b51212') {
-    mk('circle', { cx: x, cy: y, r, fill, opacity: '0.92' }, parent);
-    mk('circle', { cx: x, cy: y, r: Math.max(1, r - 2), fill: 'rgba(255,255,255,0.08)' }, parent);
+    mk('circle', { cx: x, cy: y, r: r + 1, fill: 'rgba(22,3,3,0.48)' }, parent);
+    mk('circle', { cx: x, cy: y, r, fill, opacity: '0.96' }, parent);
+    mk('circle', { cx: x, cy: y, r: Math.max(1, r - 2), fill: 'rgba(255,255,255,0.10)' }, parent);
   }
 
   // Derived from stateData (shorthand accessors)
@@ -182,7 +183,7 @@
   }
 
   function getCaptureImageHref(capture) {
-    const direct = capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.image_asset?.data || '';
+    const direct = capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.preview_data || capture?.meta?.image_asset?.data || '';
     if (direct) return direct;
     const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
     const imageAssetId = capture?.image_asset?.entry_id || capture?.meta?.image_asset_id || '';
@@ -230,9 +231,28 @@
     ];
   }
 
+  function getQueueLine() {
+    const pending = window.StructaLLM?.pendingCount || 0;
+    const priority = window.StructaLLM?.pendingHighPriorityCount || 0;
+    const phase = lower(window.StructaImpactChain?.phase || 'idle');
+    if (!pending) return `queue clear · ${phase}`;
+    if (priority && priority !== pending) return `${pending} queued · ${priority} priority · ${phase}`;
+    return `${pending} queued · ${phase}`;
+  }
+
   function renderLogRows(entries, options = {}) {
     log.innerHTML = '';
     if (options.includeStats) {
+      const queueRow = document.createElement('div');
+      queueRow.className = 'entry';
+      const queueLabel = document.createElement('span');
+      queueLabel.className = 'muted';
+      queueLabel.textContent = '[queue]';
+      queueRow.appendChild(queueLabel);
+      const queueMessage = document.createElement('span');
+      queueMessage.textContent = getQueueLine();
+      queueRow.appendChild(queueMessage);
+      log.appendChild(queueRow);
       getStatsLines().forEach(function(line, index) {
         const statsRow = document.createElement('div');
         statsRow.className = 'entry';
@@ -307,7 +327,7 @@
     if (logOpen) {
       const entries = native?.getRecentLogEntries?.(33, { visible_only: true }) || [];
       renderLogRows(entries, { includeStats: true });
-      log.scrollTop = log.scrollHeight;
+      log.scrollTop = 0;
     } else {
       refreshLogFromMemory();
     }
@@ -470,7 +490,9 @@
     document.body.classList.remove('input-locked');
     window.__STRUCTA_PTT_TARGET__ = null;
     window.__STRUCTA_INLINE_PTT__ = false;
-    stateData.inlinePTTSurface = '';
+    if (transitionTargetState !== STATES.VOICE_PROCESSING) {
+      stateData.inlinePTTSurface = '';
+    }
   };
 
   // --- VOICE_PROCESSING ---
@@ -480,6 +502,7 @@
       if (currentState === STATES.VOICE_PROCESSING) {
         const returnState = voiceReturnState;
         voiceReturnState = STATES.HOME;
+        stateData.inlinePTTSurface = '';
         transition(returnState || STATES.HOME, {
           tellStatus: 'saved'
         });
@@ -493,9 +516,9 @@
     native?.setActiveNode?.('know');
     native?.updateUIState?.({ selected_card_id: 'know', last_surface: 'insight' });
     setLogDrawer(false);
-    stateData.knowLaneIndex = 0;
-    stateData.knowItemIndex = 0;
-    stateData.knowChipIndex = 0;
+    stateData.knowLaneIndex = typeof data?.knowLaneIndex === 'number' ? data.knowLaneIndex : (typeof stateData.knowLaneIndex === 'number' ? stateData.knowLaneIndex : 0);
+    stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
+    stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
   };
 
   // --- KNOW_DETAIL ---
@@ -695,6 +718,14 @@
       default:
         return 'home';
     }
+  }
+
+  function surfaceIsVisible(surface) {
+    if (!surface) return false;
+    if (currentState === STATES.VOICE_OPEN || currentState === STATES.VOICE_PROCESSING) {
+      return activeSurface() === surface;
+    }
+    return activeSurface() === surface;
   }
 
   // === Notification system (spring-jump) ===
@@ -973,7 +1004,14 @@
   }
 
   function image(href, attrs = {}, parent = svg) {
-    return mk('image', { href, ...attrs }, parent);
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    el.setAttribute('href', href);
+    try {
+      el.setAttributeNS('http://www.w3.org/1999/xlink', 'href', href);
+    } catch (_) {}
+    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+    parent.appendChild(el);
+    return el;
   }
 
   let iconClipCounter = 0;
@@ -1004,7 +1042,7 @@
   function drawCardIcon(card, selected, parent) {
     if (!selected) return;
     if (recordingActive() && card.id === 'tell' && activeSurface() === 'home') {
-      recordingDot(33, 31, 11, parent);
+      recordingDot(33, 31, 13, parent);
       return;
     }
     if (card.iconPath) {
@@ -1022,7 +1060,7 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    if (recordingActive() && activeSurface() === 'home') recordingDot(23, 26, 8, svg);
+    if (recordingActive() && activeSurface() === 'home') recordingDot(23, 26, 10, svg);
     else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
     }, svg, {
@@ -1052,7 +1090,7 @@
     const selectedProject = projects[selected] || projects[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
-    if (recordingActive()) recordingDot(23, 25, 8, svg);
+    if (recordingActive()) recordingDot(23, 25, 10, svg);
     else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
       x: 12, y: 14, width: 22, height: 22, rx: 4, ry: 4
     }, svg, {
@@ -1191,7 +1229,7 @@
   function drawSurfaceHeader(card) {
     const project = getProjectMemory();
     if (recordingActive() && activeSurface() !== 'home') {
-      recordingDot(23, 26, 8, svg);
+      recordingDot(23, 26, 10, svg);
     } else if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
         x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
@@ -1410,9 +1448,10 @@
   }
 
   function drawShowSurface() {
-    if (currentState !== STATES.SHOW_BROWSE && currentState !== STATES.SHOW_PRIMED) return;
+    if (!surfaceIsVisible('show') && currentState !== STATES.SHOW_PRIMED) return;
     const showCard = cards.find(c => c.id === 'show');
     const model = buildShowSummary();
+    const inlineListening = recordingActive() && activeSurface() === 'show';
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard);
@@ -1423,7 +1462,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, 'ptt in lens', {
+    text(216, 92, inlineListening ? 'release reprompt' : 'ptt in lens', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1458,6 +1497,14 @@
         'font-size': '10'
       });
       wrapTextBlock(undefined, model.summary.slice(0, 52), 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      if (inlineListening) {
+        mk('rect', { x: 18, y: 118, width: 132, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.78)' });
+        text(28, 130, 'release to reprompt', {
+          fill: 'rgba(244,239,228,0.96)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+      }
     } else if (model.captures.length) {
       wrapTextBlock(undefined, lower(String(model.summary || 'visual capture stored')), 20, 148, 186, 13, 'rgba(8,8,8,0.88)', '13', 4);
       text(20, 206, 'frame stored · preview unavailable', {
@@ -1549,6 +1596,25 @@
     };
   }
 
+  function buildShowVoiceContext() {
+    const captures = getCaptureList();
+    const idx = Math.max(0, Math.min(stateData.showCaptureIndex || 0, Math.max(captures.length - 1, 0)));
+    const capture = captures[idx];
+    if (!capture) return { kind: 'show', text: 'visual capture context', surface: 'show' };
+    const captureText = [
+      capture.summary || capture.ai_analysis || '',
+      capture.prompt_text || '',
+      capture.voice_annotation || '',
+      recentTimeLabel(capture.captured_at || capture.created_at || capture.meta?.captured_at || '')
+    ].filter(Boolean).join(' · ');
+    return {
+      kind: 'capture',
+      nodeId: capture.node_id || capture.entry_id || capture.id || '',
+      text: captureText.slice(0, 220),
+      surface: 'show'
+    };
+  }
+
   function buildKnowVoiceContext() {
     const model = buildKnowModel();
     const items = getKnowVisibleItems(model);
@@ -1590,14 +1656,29 @@
   }
 
   function drawTellSurface() {
-    if (currentState !== STATES.TELL_BROWSE) return;
+    if (!surfaceIsVisible('tell')) return;
     const tellCard = cards.find(c => c.id === 'tell');
     const model = buildTellModel();
+    const inlineListening = recordingActive() && activeSurface() === 'tell';
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
     mk('rect', { x: 14, y: 76, width: 212, height: 92, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
-    if (model.current) {
+    if (inlineListening) {
+      text(20, 102, 'listening on note', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      text(20, 126, 'release to build this note', {
+        fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      if (model.current) {
+        wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 120), 20, 150, 184, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      }
+    } else if (model.current) {
       text(20, 92, `selected note · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -1664,9 +1745,11 @@
   // === NOW panel render ===
   // Clean hierarchy: project name -> latest change -> pending decision -> stats
   function drawNowPanel() {
-    if (currentState !== STATES.NOW_BROWSE) return;
+    if (!surfaceIsVisible('project')) return;
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
+    const inlineListening = recordingActive() && activeSurface() === 'project';
+    const queueCount = window.StructaLLM?.pendingCount || 0;
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
@@ -1774,20 +1857,32 @@
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else if (data.openQuestions > 0) {
-      const boxY = 84;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 160, rx: 10, fill: 'rgba(8,8,8,0.14)' });
-      drawSectionLabel(undefined, 18, boxY + 18, 'blocker ask');
+      const boxY = 78;
+      mk('rect', { x: 10, y: boxY, width: 220, height: 170, rx: 12, fill: 'rgba(8,8,8,0.15)' });
+      text(18, boxY + 18, 'unlock chain', {
+        fill: 'rgba(8,8,8,0.52)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      if (queueCount > 0) {
+        text(222, boxY + 18, `${queueCount} queued`, {
+          fill: 'rgba(8,8,8,0.42)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10',
+          'text-anchor': 'end'
+        });
+      }
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 140)), 18, boxY + 36, 194, 13, 'rgba(8,8,8,0.96)', '13', 6);
-      const ctaY = Math.min(boxY + 124, boxY + 36 + blockerRows * 13 + 14);
-      mk('rect', { x: 18, y: ctaY, width: 126, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
-      text(28, ctaY + 12, 'answer to continue', {
+      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 18, boxY + 40, 194, 14, 'rgba(8,8,8,0.96)', '14', 6);
+      const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);
+      mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      text(30, ctaY + 16, inlineListening ? 'release answer now' : 'hold ptt to answer', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
+        'font-size': '12'
       });
       if (data.blockerCount > 1) {
-        text(18, ctaY + 32, `${data.blockerCount} blockers waiting`, {
+        text(18, ctaY + 42, `${data.blockerCount} blockers waiting to clear`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10'
@@ -1805,7 +1900,7 @@
       }
     }
 
-    text(226, 276, hasBlockers ? 'chain waits for answer' : 'scroll decisions · hold ptt', {
+    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · waits` : 'chain waits for answer') : 'scroll decisions · hold ptt', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -1813,7 +1908,7 @@
 
   // === KNOW surface ===
   function drawInsightSurface() {
-    if (currentState !== STATES.KNOW_BROWSE && currentState !== STATES.KNOW_DETAIL) return;
+    if (!surfaceIsVisible('insight')) return;
     const knowCard = cards.find(c => c.id === 'know');
     const model = buildKnowModel();
     const laneIdx = stateData.knowLaneIndex || 0;
@@ -1950,7 +2045,7 @@
       }
 
       // Scroll hint
-      text(226, 276, `${getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
+      text(226, 276, `${recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2002,7 +2097,7 @@
       }
     }
 
-    text(226, 276, `${getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
+    text(226, 276, `${recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
       fill: 'rgba(8,8,8,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -2234,11 +2329,12 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        showHoldIntentActive = true;
-        document.body.classList.add('input-locked');
-        transition(STATES.SHOW_PRIMED, {
-          showStatus: 'touch to start camera',
-          pendingShowNarration: false
+        voiceReturnState = STATES.SHOW_BROWSE;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'reprompt frame',
+          inlinePTTSurface: 'show',
+          buildContext: buildShowVoiceContext()
         });
         break;
 

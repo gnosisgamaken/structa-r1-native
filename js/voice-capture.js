@@ -32,6 +32,7 @@
   let pendingAudioAsset = null;
   let voiceTarget = null; // 'tell' | 'question-answer' | null
   let activeQuestion = null; // { index, text } when answering a question
+  let activeBuildContext = null; // { kind, nodeId, text, surface }
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
@@ -227,13 +228,20 @@
 
     // === Normal voice input ===
     native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
-
-    native?.addVoiceEntry?.({
-      title: text.slice(0, 42) || 'voice note',
-      body: text,
-      source: 'voice',
-      entry_mode: 'auto'
-    });
+    if (activeBuildContext && activeBuildContext.kind === 'voice-entry' && activeBuildContext.nodeId && native?.appendToVoiceEntry) {
+      native.appendToVoiceEntry(activeBuildContext.nodeId, text, {
+        entry_mode: 'contextual-build',
+        surface: activeBuildContext.surface || 'tell'
+      });
+    } else {
+      native?.addVoiceEntry?.({
+        title: text.slice(0, 42) || 'voice note',
+        body: text,
+        source: 'voice',
+        entry_mode: activeBuildContext ? 'contextual' : 'auto',
+        meta: activeBuildContext ? { build_surface: activeBuildContext.surface || 'tell' } : {}
+      });
+    }
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
     }));
@@ -276,9 +284,23 @@
       native?.addBacklogItem?.(text.slice(0, 60), text);
     }
 
+    var isQuestion = /\?$/.test(text) || /^(?:what|why|how|when|who|which|where|is|are|can|could|should|would|do|does)\b/i.test(text);
+    if (isQuestion && native?.addNode) {
+      native.addNode({
+        type: 'question',
+        status: 'open',
+        title: text.slice(0, 72),
+        body: text,
+        source: activeBuildContext ? (activeBuildContext.surface || 'voice') : 'voice'
+      });
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'question' }
+      }));
+    }
+
     // Send to LLM for insight extraction
     if (window.StructaLLM) {
-      window.StructaLLM.processVoice(text).then(function(result) {
+      window.StructaLLM.processVoice(text, activeBuildContext ? { buildContext: activeBuildContext } : {}).then(function(result) {
         if (result && result.ok) {
           window.StructaLLM.storeAsInsight(result, 'voice');
           native?.appendLogEntry?.({ kind: 'llm', message: 'insight extracted' });
@@ -301,6 +323,7 @@
     listening = false;
     voiceTarget = null;
     activeQuestion = null;
+    activeBuildContext = null;
 
     // Stop browser recognition
     if (recognition) {
@@ -350,6 +373,16 @@
     voiceTarget = 'question-answer';
   }
 
+  function setBuildContext(context) {
+    activeBuildContext = context ? {
+      kind: context.kind || 'context',
+      nodeId: context.nodeId || '',
+      text: String(context.text || '').trim(),
+      surface: context.surface || 'tell'
+    } : null;
+    if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
+  }
+
   async function startListening() {
     if (listening) return;
 
@@ -382,6 +415,8 @@
     // Show context-specific status
     if (activeQuestion) {
       setStatus('answer mode');
+    } else if (activeBuildContext && activeBuildContext.text) {
+      setStatus('building ' + (activeBuildContext.surface || 'context'));
     }
 
     // Tell R1 OS we started talking
@@ -521,6 +556,7 @@
     startListening: startListening,
     stopListening: stopListening,
     setQuestionContext: setQuestionContext,
+    setBuildContext: setBuildContext,
     get listening() { return listening; },
     get activeQuestion() { return activeQuestion; }
   });

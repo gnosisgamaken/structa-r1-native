@@ -300,6 +300,10 @@
       prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n';
       if (context) prompt += 'Context:\n' + context + '\n\n';
       if (historyCtx) prompt += historyCtx + '\n\n';
+      if (opts.buildContext && opts.buildContext.text) {
+        prompt += 'Selected context on screen (' + (opts.buildContext.surface || 'tell') + '): "' + String(opts.buildContext.text).slice(0, 180) + '"\n';
+        prompt += 'Treat the new voice as a continuation, clarification, revision, blocker, task, or decision about that selected context.\n\n';
+      }
       prompt += 'User said: "' + transcript + '"\n\n' +
         'Respond with:\n' +
         '- Insight: 3 words max about what this means\n' +

@@ -196,6 +196,25 @@
     });
   }
 
+  function appendToVoiceEntry(nodeId, text, meta) {
+    var bodyText = String(text || '').trim();
+    if (!nodeId || !bodyText) return null;
+    var updated = null;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry.node_id === nodeId && entry.type === 'voice-entry' && entry.status !== 'archived';
+      });
+      if (!node) return;
+      var currentBody = String(node.body || '').trim();
+      node.body = currentBody ? (currentBody + '\n' + bodyText) : bodyText;
+      node.title = String(node.title || bodyText.slice(0, 42) || 'voice note').slice(0, 42);
+      node.updated_at = new Date().toISOString();
+      node.meta = { ...(node.meta || {}), ...(meta || {}), appended_at: new Date().toISOString() };
+      updated = node;
+    });
+    return updated;
+  }
+
   function resolveNode(nodeId, resolution) {
     var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
     if (!node) return null;
@@ -1297,6 +1316,7 @@
     setUserRole,
     getActiveProject,
     addVoiceEntry,
+    appendToVoiceEntry,
     addNode,
     resolveNode,
     archiveNode,

@@ -409,6 +409,8 @@
         window.StructaVoice.setQuestionContext(data.answeringQuestion.index, data.answeringQuestion.text);
       }
       native?.appendLogEntry?.({ kind: 'voice', message: 'answering: ' + data.answeringQuestion.text.slice(0, 40) });
+    } else if (data.buildContext && window.StructaVoice?.setBuildContext) {
+      window.StructaVoice.setBuildContext(data.buildContext);
     }
 
     if (data.fromPTT) {
@@ -1102,7 +1104,30 @@
       });
     });
 
-    text(226, 268, projects.length > 1 ? `${projects.length} loaded · scroll browse` : '1 project loaded', {
+    if (projects.length > 1 && selectedProject && selectedProject.status !== 'archived') {
+      const archiveTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 14, y: 248, width: 74, height: 20, rx: 8, ry: 8,
+        fill: 'rgba(248,193,93,0.12)',
+        stroke: 'rgba(248,193,93,0.36)',
+        'stroke-width': 1
+      }, archiveTap);
+      text(28, 261, 'archive', {
+        fill: 'rgba(248,193,93,0.88)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      }, archiveTap);
+      archiveTap.addEventListener('pointerup', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        native?.archiveProject?.(selectedProject.project_id);
+        const refreshed = getProjects();
+        const nextIndex = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(refreshed.length - 1, 0)));
+        transition(STATES.PROJECT_SWITCHER, { projectListIndex: nextIndex });
+      });
+    }
+
+    text(226, 268, projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1453,6 +1478,50 @@
       insights: (project?.insights || []).length,
       questions: (project?.open_questions || []).length,
       status: stateData.tellStatus || (entries.length ? 'ready' : 'empty')
+    };
+  }
+
+  function buildTellVoiceContext() {
+    const entries = getVoiceEntries();
+    const idx = Math.max(0, Math.min(stateData.tellEntryIndex || 0, Math.max(entries.length - 1, 0)));
+    const entry = entries[idx];
+    if (!entry) return { kind: 'tell', text: '', surface: 'tell' };
+    return {
+      kind: 'voice-entry',
+      nodeId: entry.node_id || entry.entry_id || '',
+      text: entry.body || entry.title || '',
+      surface: 'tell'
+    };
+  }
+
+  function buildKnowVoiceContext() {
+    const model = buildKnowModel();
+    const items = getKnowVisibleItems(model);
+    const idx = Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)));
+    const item = items[idx];
+    return {
+      kind: item?.source || 'know',
+      nodeId: item?.node_id || '',
+      text: item ? ((item.title || '') + ' ' + (item.body || '')).trim() : '',
+      surface: 'know'
+    };
+  }
+
+  function buildNowVoiceContext() {
+    const data = buildNowSummary();
+    if (data.pendingDecisions && data.pendingDecisions.length) {
+      const current = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
+      return {
+        kind: 'decision',
+        nodeId: current?.node_id || '',
+        text: typeof current === 'string' ? current : ((current?.text || '') + ' ' + (current?.insight_body || '')).trim(),
+        surface: 'now'
+      };
+    }
+    return {
+      kind: 'project',
+      text: data.blockerQuestion || data.next || '',
+      surface: 'now'
     };
   }
 
@@ -2093,7 +2162,11 @@
 
       case STATES.TELL_BROWSE:
         voiceReturnState = STATES.TELL_BROWSE;
-        transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'listening',
+          buildContext: buildTellVoiceContext()
+        });
         break;
 
       case STATES.SHOW_BROWSE:
@@ -2120,7 +2193,11 @@
             fromPTT: true
           });
         } else {
-          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'listening' });
+          transition(STATES.VOICE_OPEN, {
+            fromPTT: true,
+            tellStatus: 'listening',
+            buildContext: buildNowVoiceContext()
+          });
         }
         break;
       }
@@ -2138,7 +2215,11 @@
 
       case STATES.KNOW_BROWSE:
         voiceReturnState = STATES.KNOW_BROWSE;
-        transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'ask know' });
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'ask know',
+          buildContext: buildKnowVoiceContext()
+        });
         break;
 
       case STATES.KNOW_DETAIL: {
@@ -2149,7 +2230,11 @@
           transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
         } else {
           voiceReturnState = STATES.KNOW_DETAIL;
-          transition(STATES.VOICE_OPEN, { fromPTT: true, tellStatus: 'ask know' });
+          transition(STATES.VOICE_OPEN, {
+            fromPTT: true,
+            tellStatus: 'ask know',
+            buildContext: buildKnowVoiceContext()
+          });
         }
         break;
       }

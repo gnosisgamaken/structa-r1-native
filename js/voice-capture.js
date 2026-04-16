@@ -225,12 +225,12 @@
     // === Normal voice input ===
     native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
 
-    // Write journal entry
+    // Store the note locally for tell/history, but avoid noisy visible journal logs.
     native?.writeJournalEntry?.({
       title: text.slice(0, 42) || 'voice note',
       body: text,
       source_type: 'voice',
-      meta: { entry_mode: 'auto' }
+      meta: { entry_mode: 'auto', silent: true }
     });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
@@ -324,7 +324,7 @@
           title: 'voice note',
           body: 'audio note captured',
           source_type: 'voice',
-          meta: { entry_mode: 'audio-fallback' }
+          meta: { entry_mode: 'audio-fallback', silent: true }
         });
       }
     }

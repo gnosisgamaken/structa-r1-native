@@ -157,7 +157,24 @@
   }
 
   function getCaptureImageHref(capture) {
-    return capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.image_asset?.data || '';
+    const direct = capture?.image_asset?.data || capture?.image_asset?.url || capture?.asset?.data || capture?.data || capture?.meta?.image_asset?.data || '';
+    if (direct) return direct;
+    const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
+    if (!key) return '';
+    const memory = native?.getMemory?.() || {};
+    const pool = []
+      .concat(Array.isArray(memory.captures) ? memory.captures : [])
+      .concat(Array.isArray(memory.projectMemory?.captures) ? memory.projectMemory.captures : [])
+      .concat(Array.isArray(memory.assets) ? memory.assets : []);
+    const linked = pool.find(item => {
+      return item?.entry_id === key ||
+        item?.id === key ||
+        item?.node_id === key ||
+        item?.capture_image === key ||
+        item?.meta?.bundle_id === key ||
+        item?.name === key;
+    });
+    return linked?.image_asset?.data || linked?.image_asset?.url || linked?.asset?.data || linked?.data || linked?.meta?.image_asset?.data || '';
   }
 
   function getCaptureSummary(capture) {
@@ -1020,8 +1037,8 @@
         height: 42,
         rx: 10,
         ry: 10,
-        fill: isSelected ? 'rgba(248,193,93,0.10)' : 'rgba(255,255,255,0.025)',
-        stroke: isSelected ? 'rgba(248,193,93,0.28)' : 'rgba(255,255,255,0.05)',
+        fill: isSelected ? 'rgba(248,193,93,0.14)' : 'rgba(255,255,255,0.025)',
+        stroke: isSelected ? 'rgba(248,193,93,0.42)' : 'rgba(255,255,255,0.05)',
         'stroke-width': '1'
       }, tap);
 
@@ -1040,7 +1057,7 @@
       text(128, y + 30, project.status || 'active', {
         fill: isSelected ? 'rgba(248,193,93,0.58)' : 'rgba(244,239,228,0.28)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9'
+        'font-size': '10'
       }, tap);
 
       text(220, y + 16, recentTimeLabel(project.updated_at), {
@@ -1071,10 +1088,10 @@
       });
     });
 
-    text(226, 268, projects.length > 1 ? 'scroll to browse · side opens' : '1 project loaded', {
+    text(226, 268, projects.length > 1 ? 'scroll to browse · side opens' : '1 project loaded · say new project', {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '9',
+      'font-size': '10',
       'text-anchor': 'end'
     });
   }
@@ -1319,7 +1336,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, currentState === STATES.SHOW_PRIMED ? 'hold to narrate' : 'side opens lens', {
+    text(216, 92, currentState === STATES.SHOW_PRIMED ? 'release stays here' : 'hold narrates', {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1362,12 +1379,12 @@
         'font-size': '10'
       });
     } else {
-      text(20, 156, 'no frames', {
+      text(20, 152, 'no frames yet', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '18'
+        'font-size': '17'
       });
-      text(20, 178, 'side opens lens', {
+      text(20, 176, 'side opens lens · hold narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -1375,9 +1392,10 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(14, 276, `${model.captures.length} stored · release keeps gallery`, {
+      text(226, 276, `${model.captures.length} stored · release keeps gallery`, {
         fill: 'rgba(8,8,8,0.34)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9'
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
+        'text-anchor': 'end'
       });
       return;
     }
@@ -1464,27 +1482,27 @@
       openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
     });
 
-    mk('rect', { x: 14, y: 112, width: 212, height: 86, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
+    mk('rect', { x: 14, y: 112, width: 212, height: 78, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (model.current) {
-      text(20, 128, `last entry · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
+      text(20, 127, `last entry · ${stateData.tellEntryIndex + 1}/${Math.max(model.entries.length, 1)}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 138), 20, 145, 184, 13, 'rgba(8,8,8,0.96)', '13', 3);
+      wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 138), 20, 143, 184, 13, 'rgba(8,8,8,0.96)', '13', 3);
     } else {
-      text(20, 145, 'no entries', {
+      text(20, 142, 'hold side to speak', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '18'
+        'font-size': '17'
       });
     }
 
-    const start = Math.max(0, Math.min(model.currentIndex - 1, Math.max(model.entries.length - 2, 0)));
-    const visible = model.entries.slice(start, start + 2);
+    const start = Math.max(0, Math.min(model.currentIndex - 1, Math.max(model.entries.length - 3, 0)));
+    const visible = model.entries.slice(start, start + 3);
     visible.forEach((entry, index) => {
       const absoluteIndex = start + index;
-      const y = 206 + (index * 28);
+      const y = 198 + (index * 26);
       const selected = absoluteIndex === model.currentIndex;
       const rowTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
@@ -1504,7 +1522,7 @@
       text(216, y + 13, lower(new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), {
         fill: selected ? 'rgba(244,239,228,0.60)' : 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9',
+        'font-size': '10',
         'text-anchor': 'end'
       }, rowTap);
       rowTap.addEventListener('pointerup', event => {
@@ -1519,7 +1537,7 @@
     text(226, 276, `${model.insights} signals · ${model.questions} asks`, {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '9',
+      'font-size': '10',
       'text-anchor': 'end'
     });
   }
@@ -1587,8 +1605,8 @@
         return group;
       };
 
-      const boxY = 88;
-      const boxH = pdOptions.length >= 2 ? 154 : 116;
+      const boxY = 84;
+      const boxH = pdOptions.length >= 2 ? 162 : 126;
       mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
 
       const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
@@ -1599,7 +1617,7 @@
       });
 
       const displayText = String(pdText || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleRows = wrapTextBlock(undefined, lower(displayText.slice(0, 118)), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 4);
+      const titleRows = wrapTextBlock(undefined, lower(displayText.slice(0, 118)), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 5);
 
       if (pdOptions.length >= 2) {
         const slabY = boxY + 26 + (titleRows * 13) + 10;
@@ -1643,8 +1661,8 @@
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else if (data.openQuestions > 0) {
-      const boxY = 88;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 148, rx: 10, fill: 'rgba(8,8,8,0.10)' });
+      const boxY = 84;
+      mk('rect', { x: 10, y: boxY, width: 220, height: 160, rx: 10, fill: 'rgba(8,8,8,0.10)' });
       drawSectionLabel(undefined, 18, boxY + 18, 'blocker ask');
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 140)), 18, boxY + 36, 194, 13, 'rgba(8,8,8,0.96)', '13', 6);
@@ -1657,7 +1675,7 @@
         text(18, boxY + 36 + blockerRows * 13 + 34, `${data.blockerCount} blockers waiting`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9'
+          'font-size': '10'
         });
       }
     } else {
@@ -1667,14 +1685,14 @@
         text(14, 224, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9'
+          'font-size': '10'
         });
       }
     }
 
-    text(226, 276, `${data.captures} shown · ${data.insights} signals · ${data.openQuestions} asks · ${data.decisions} locked`, {
+    text(226, 276, `${data.insights} signals · ${data.openQuestions} asks · ${data.decisions} locked`, {
       fill: 'rgba(8,8,8,0.36)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9', 'text-anchor': 'end'
+      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
   }
 
@@ -1782,11 +1800,11 @@
       'text-anchor': 'end'
     });
 
-    const contentY = showChipRow ? 136 : 118;
+    const contentY = showChipRow ? 130 : 112;
 
     if (currentState === STATES.KNOW_BROWSE) {
       const titleText = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 164, 14, 'rgba(8,8,8,0.96)', '16', 3);
+      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 168, 14, 'rgba(8,8,8,0.96)', '16', 3);
 
       text(226, contentY + 1, formatTimeLabel(item.created_at), {
         fill: 'rgba(8,8,8,0.40)',
@@ -1810,11 +1828,11 @@
 
       const bodyY = metaY + 18;
       const bodyText = String(item.body || 'no content yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const bodyRows = wrapTextBlock(undefined, lower(bodyText), 14, bodyY, 212, 13, 'rgba(8,8,8,0.85)', '12', 6);
+      const bodyRows = wrapTextBlock(undefined, lower(bodyText), 14, bodyY, 212, 13, 'rgba(8,8,8,0.85)', '12', 7);
 
       const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       if (nextText && nextText !== 'review this') {
-        const actionY = Math.min(244, bodyY + (bodyRows * 13) + 22);
+        const actionY = Math.min(248, bodyY + (bodyRows * 13) + 18);
         text(14, actionY, '→', {
           fill: 'rgba(8,8,8,0.50)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -1844,7 +1862,7 @@
 
     // KNOW_DETAIL - expanded view
     const detailTitle = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 164, 14, 'rgba(8,8,8,0.96)', '16', 3);
+    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 168, 14, 'rgba(8,8,8,0.96)', '16', 3);
     text(226, contentY + 1, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -1856,7 +1874,7 @@
     drawSectionLabel(undefined, 14, detailMetaY, detailSection);
     const detailBodyY = detailMetaY + 16;
     const detailBodyText = String(item.body || 'no detail yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const detailRows = wrapTextBlock(undefined, lower(detailBodyText), 14, detailBodyY, 212, 13, 'rgba(8,8,8,0.90)', '13', 8);
+    const detailRows = wrapTextBlock(undefined, lower(detailBodyText), 14, detailBodyY, 212, 13, 'rgba(8,8,8,0.90)', '13', 9);
 
     if (item.source === 'question') {
       const actionY = Math.min(234, detailBodyY + (detailRows * 13) + 16);
@@ -2485,17 +2503,30 @@
     window.addEventListener(evt, startChainOnInteraction, { once: true });
   });
 
+  function pulseCardElement(cardEl, options) {
+    if (!cardEl) return;
+    var opts = options || {};
+    var baseTransform = typeof cardEl.__structaBaseTransform === 'string'
+      ? cardEl.__structaBaseTransform
+      : (cardEl.getAttribute('transform') || '');
+    cardEl.__structaBaseTransform = baseTransform;
+    if (cardEl.__structaPulseTimer) clearTimeout(cardEl.__structaPulseTimer);
+    cardEl.setAttribute('transform', (baseTransform
+      + ' translate(' + (opts.x || 0) + ' ' + (opts.y || 0) + ')'
+      + ' scale(' + (opts.scale || 1) + ')').trim());
+    cardEl.__structaPulseTimer = setTimeout(function() {
+      if (cardEl.isConnected) cardEl.setAttribute('transform', cardEl.__structaBaseTransform || '');
+      cardEl.__structaPulseTimer = null;
+    }, opts.duration || 120);
+  }
+
   // === Heartbeat visual micro-pulse ===
   window.addEventListener('structa-heartbeat', function() {
     if (currentState === STATES.HOME) {
       Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
-        var baseTransform = cardEl.getAttribute('transform') || '';
-        var driftX = index === selectedIndex ? 0.25 : (index % 2 === 0 ? -0.18 : 0.18);
-        var driftY = index === selectedIndex ? -0.2 : 0.12;
-        cardEl.setAttribute('transform', baseTransform + ' translate(' + driftX + ' ' + driftY + ')');
-        setTimeout(function() {
-          if (cardEl.isConnected) cardEl.setAttribute('transform', baseTransform);
-        }, 180);
+        var driftX = index === selectedIndex ? 0.08 : (index % 2 === 0 ? -0.05 : 0.05);
+        var driftY = index === selectedIndex ? -0.06 : 0.04;
+        pulseCardElement(cardEl, { x: driftX, y: driftY, scale: 1.0015, duration: 160 });
       });
     }
   });
@@ -2503,14 +2534,13 @@
   window.addEventListener('structa-fast-feedback', function(e) {
     if (currentState === STATES.HOME) {
       Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
-        var baseTransform = cardEl.getAttribute('transform') || '';
-        var focusBias = index === selectedIndex ? 0.18 : 0.1;
-        var nudgeX = index % 2 === 0 ? focusBias : -focusBias;
-        var nudgeY = index === selectedIndex ? -0.16 : -0.08;
-        cardEl.setAttribute('transform', baseTransform + ' translate(' + nudgeX + ' ' + nudgeY + ')');
-        setTimeout(function() {
-          if (cardEl.isConnected) cardEl.setAttribute('transform', baseTransform);
-        }, 140);
+        var selected = index === selectedIndex;
+        pulseCardElement(cardEl, {
+          x: selected ? 0.05 : 0.02,
+          y: selected ? -0.04 : -0.02,
+          scale: selected ? 1.002 : 1.001,
+          duration: 110
+        });
       });
     }
 

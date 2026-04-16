@@ -703,7 +703,10 @@
     if (k === 'chain' && raw.startsWith('evaluate:')) return null;
     if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
 
-    return raw;
+    return raw
+      .replace(/[`*_#{}[\]|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   function isDuplicateVisibleMessage(message = '', createdAt = Date.now()) {
@@ -864,7 +867,7 @@
     var sdkPayload = {
       message: llmMessage,
       useLLM: isCameraOp ? false : true,
-      wantsR1Response: isCameraOp ? false : (envelope.wantsR1Response !== false),
+      wantsR1Response: envelope.wantsR1Response === true,
       wantsJournalEntry: envelope.wantsJournalEntry === true
     };
     const result = postPayload(sdkPayload);
@@ -901,7 +904,9 @@
     }
     const payload = { ...verdict.value, project_id: memory.active_project_id, project_code: memory.active_project_id };
     pushLimited(memory.journals, payload);
-    appendLogEntry({ kind: 'journal', message: payload.title });
+    if (!payload.meta || payload.meta.silent !== true) {
+      appendLogEntry({ kind: 'journal', message: payload.title });
+    }
     touchProjectMemory(project => {
       project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
       if (payload.body.includes('?')) project.open_questions.unshift(payload.body);

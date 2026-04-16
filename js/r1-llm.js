@@ -602,7 +602,7 @@
           PluginMessageHandler.postMessage(JSON.stringify({
             message: 'email this to me:\n\nStructa ' + exportType + ' — ' + (project.name || 'project') + '\n\n' + result.clean,
             useLLM: true,
-            wantsR1Response: true
+            wantsR1Response: false
           }));
         } catch (e) {}
       }

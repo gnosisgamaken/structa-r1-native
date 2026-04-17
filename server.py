@@ -432,6 +432,46 @@ def triangle_normalize(payload):
     }
 
 
+def project_title_prepare(payload):
+    transcript = compact(payload.get("transcript") or ((payload.get("input") or {}).get("transcript")) or "", 240)
+    project = payload.get("project") or {}
+    lines = [
+        "You are Structa, naming a new project from the user's first words.",
+        "Return only a 2-4 word lowercase title that captures the project's subject.",
+        "No explanation, no quotes, no punctuation, no trailing period.",
+        "If the transcript is unusable, return: untitled project",
+        "",
+        "TRANSCRIPT:",
+        transcript,
+    ] + build_project_lines(project)
+    return {
+        "ok": True,
+        "llm": {
+            "prompt": "\n".join(lines),
+            "timeout": 3000,
+            "priority": payload.get("policy", {}).get("priority", "high"),
+        },
+        "ui": {
+            "summary": "project title",
+            "logLine": "naming project",
+        },
+        "meta": {
+            "kind": "project-title",
+        },
+    }
+
+
+def project_title_normalize(payload):
+    raw = compact(payload.get("rawResponse") or "", 64).lower()
+    cleaned = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
+    cleaned = " ".join(cleaned.split())
+    if cleaned.startswith("title "):
+        cleaned = cleaned[6:]
+    words = cleaned.split()[:4]
+    title = " ".join(words).strip() or "untitled project"
+    return {"ok": True, "title": title}
+
+
 class StructaHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -471,6 +511,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             "/v1/image/analyze": (image_prepare, image_normalize),
             "/v1/chain/step": (chain_prepare, chain_normalize),
             "/v1/triangle/synthesize": (triangle_prepare, triangle_normalize),
+            "/v1/project/title": (project_title_prepare, project_title_normalize),
         }
         handler = handlers.get(parsed.path)
         if not handler:

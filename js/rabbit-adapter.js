@@ -151,6 +151,27 @@
       return hydrated;
     });
 
+    function isEmptyUntitled(project) {
+      return lower(project?.name || '') === 'untitled project'
+        && (project?.nodes || []).length === 0
+        && (project?.captures || []).length === 0
+        && (project?.insights || []).length === 0
+        && (project?.open_questions || []).length === 0
+        && (project?.pending_decisions || []).length === 0;
+    }
+
+    var emptyUntitled = memory.projects.filter(isEmptyUntitled);
+    if (emptyUntitled.length > 1) {
+      var keep = emptyUntitled.find(function(project) {
+        return project.project_id === memory.active_project_id;
+      }) || emptyUntitled.slice().sort(function(a, b) {
+        return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+      })[0];
+      memory.projects = memory.projects.filter(function(project) {
+        return !isEmptyUntitled(project) || project.project_id === keep.project_id;
+      });
+    }
+
     if (!memory.active_project_id || !memory.projects.some(function(project) { return project.project_id === memory.active_project_id; })) {
       memory.active_project_id = memory.projects[0].project_id;
     }
@@ -620,7 +641,10 @@
     ensureProjectRegistry();
     var rawName = String((name || '').trim() || 'Untitled Project');
     var normalizedName = lower(rawName);
-    var allowDuplicate = normalizedName === 'untitled project' || normalizedName === 'project' || normalizedName === '';
+    if (normalizedName === '' || normalizedName === 'untitled project' || normalizedName === 'project') {
+      return syncActiveProjectAlias();
+    }
+    var allowDuplicate = false;
     var existing = allowDuplicate ? null : memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
     if (existing) return switchProject(existing.project_id);
 

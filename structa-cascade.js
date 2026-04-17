@@ -2683,7 +2683,7 @@
         });
       }
       // Gold accent bar — signals this is Structa speaking
-      mk('rect', { x: 10, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
+      mk('rect', { x: 14, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
       const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);

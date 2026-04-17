@@ -89,10 +89,17 @@
     return run('/v1/triangle/synthesize', envelope, executeLLM);
   }
 
+  function titleProject(payload, executeLLM) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy);
+    return run('/v1/project/title', envelope, executeLLM);
+  }
+
   window.StructaOrchestrator = Object.freeze({
     interpretVoice: interpretVoice,
     analyzeImage: analyzeImage,
     runChainStep: runChainStep,
-    synthesizeTriangle: synthesizeTriangle
+    synthesizeTriangle: synthesizeTriangle,
+    titleProject: titleProject
   });
 })();

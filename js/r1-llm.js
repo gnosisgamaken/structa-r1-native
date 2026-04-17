@@ -713,6 +713,51 @@
     });
   }
 
+  function titleProject(transcript, project) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.titleProject) {
+      return Promise.resolve({ ok: false, title: '' });
+    }
+    return Promise.race([
+      orchestrator.titleProject({
+      project: {
+        id: project?.project_id || project?.id || '',
+        name: project?.name || 'untitled project',
+        type: project?.type || 'general',
+        brief: project?.brief || '',
+        topQuestions: (project?.open_questions || []).slice(0, 3),
+        selectedSurface: 'now',
+        summary: buildProjectContext({ deep: true })
+      },
+      selection: null,
+      input: {
+        transcript: transcript
+      },
+      transcript: transcript,
+      policy: {
+        priority: 'high',
+        allowSearch: false,
+        allowSpeech: false
+      }
+    }, function(prepared) {
+      if (!prepared || !prepared.llm) {
+        return Promise.resolve({ ok: false, error: 'llm payload unavailable' });
+      }
+      return sendToLLM(prepared.llm.prompt || '', {
+        journal: false,
+        timeout: Math.min(prepared.llm.timeout || 3000, 3000),
+        priority: prepared.llm.priority || 'high',
+        useSerpAPI: false
+      });
+      }),
+      new Promise(function(resolve) {
+        setTimeout(function() {
+          resolve({ ok: false, title: '', error: 'title timeout' });
+        }, 3000);
+      })
+    ]);
+  }
+
   window.StructaLLM = Object.freeze({
     sendToLLM: sendToLLM,
     executePreparedLLM: executePreparedLLM,
@@ -723,6 +768,7 @@
     linkNode: linkNode,
     research: research,
     generateExport: generateExport,
+    titleProject: titleProject,
     speakMilestone: speakMilestone,
     resetHistory: resetHistory,
     get pendingCount() { return requestQueue.length + (activeRequest ? 1 : 0); },

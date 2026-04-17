@@ -201,10 +201,22 @@
     if (!value) return '';
     var phrase = value.split(/[,:;\n]/)[0].trim();
     if (!phrase) return '';
-    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 5);
+    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 4);
     if (!words.length) return '';
-    var title = words.join(' ');
-    return title.length > 36 ? title.slice(0, 36).trim() : title;
+    var title = words.join(' ').slice(0, 24).trim().toLowerCase();
+    return title.length >= 3 ? title : '';
+  }
+
+  function resolveProjectTitle(rawText, project) {
+    var heuristic = inferProjectName(rawText);
+    if (!window.StructaLLM?.titleProject || !project) {
+      return Promise.resolve(heuristic);
+    }
+    return window.StructaLLM.titleProject(rawText, project).then(function(result) {
+      return (result && result.title) || heuristic;
+    }).catch(function() {
+      return heuristic;
+    });
   }
 
   /**
@@ -250,6 +262,22 @@
     if (questionContext) {
       var question = questionContext;
       voiceTarget = null;
+      var onboardingFinalized = false;
+
+      function finalizeOnboardingAnswer() {
+        if (!question.onboarding || onboardingFinalized) return;
+        onboardingFinalized = true;
+        var currentProject = native?.getProjectMemory?.();
+        resolveProjectTitle(text, currentProject).then(function(finalName) {
+          if (finalName) native?.setProjectName?.(finalName);
+          window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
+            detail: {
+              answer: text,
+              inferredName: finalName || ''
+            }
+          }));
+        });
+      }
 
       native?.appendLogEntry?.({ kind: 'voice', message: 'question answered' });
 
@@ -261,8 +289,6 @@
           source: 'onboarding',
           entry_mode: 'onboarding'
         });
-        var onboardingName = inferProjectName(text);
-        if (onboardingName) native?.setProjectName?.(onboardingName);
       } else {
         native?.resolveQuestion?.(question.index, text);
       }
@@ -280,24 +306,20 @@
             // Store the extracted answer as insight
             var answerInsight = window.StructaLLM.storeAsInsight(result, 'answer');
             native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
-            if (question.onboarding) {
-              var finalName = inferProjectName(text);
-              window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
-                detail: {
-                  answer: text,
-                  inferredName: finalName || ''
-                }
-              }));
-            }
+            finalizeOnboardingAnswer();
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'question-answer' }
             }));
+          } else {
+            finalizeOnboardingAnswer();
           }
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         }).catch(function() {
+          finalizeOnboardingAnswer();
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         });
       } else {
+        finalizeOnboardingAnswer();
         window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       }
       return;
@@ -340,8 +362,9 @@
     if (text.length > 3 && text.length < 50) {
       var project = native?.getProjectMemory?.();
       if (project && project.name === 'untitled project') {
-        var inferredName = inferProjectName(text);
-        if (inferredName) native?.setProjectName?.(inferredName);
+        resolveProjectTitle(text, project).then(function(inferredName) {
+          if (inferredName && inferredName !== 'untitled project') native?.setProjectName?.(inferredName);
+        });
       }
     }
 

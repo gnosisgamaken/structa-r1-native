@@ -565,9 +565,11 @@
     window.__STRUCTA_PTT_TARGET__ = null;
     document.body.classList.remove('input-locked');
     if (onboardingActive()) {
-      const allowed = onboardingAllowedCardIds();
-      if (!allowed.includes(currentCard()?.id)) {
-        const nextIndex = cards.findIndex(function(card) { return card.id === allowed[0]; });
+      const step = getOnboardingStep();
+      const allowed = onboardingAllowedCardIds(step);
+      const preferredCardId = step === 3 ? 'know' : allowed[0];
+      if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
+        const nextIndex = cards.findIndex(function(card) { return card.id === preferredCardId; });
         if (nextIndex >= 0) selectedIndex = nextIndex;
       }
     }
@@ -1213,8 +1215,8 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, 'your answer created project meaning. scroll home to know and open it.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
-      text(18, cardY + 132, 'scroll → know', {
+      wrapTextBlock(undefined, 'shake home. know is ready. click to open, then scroll once inside.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
+      text(18, cardY + 132, 'shake → know', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -2925,7 +2927,10 @@
       }
 
       // Scroll hint
-      text(226, 276, `${recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
+      const browseHint = onboardingActive() && getOnboardingStep() === 3
+        ? 'scroll once inside'
+        : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length));
+      text(226, 276, `${browseHint}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2984,7 +2989,10 @@
       }
     }
 
-    text(226, 276, `${recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length)}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
+    const detailHint = onboardingActive() && getOnboardingStep() === 3
+      ? 'scroll once inside'
+      : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length));
+    text(226, 276, `${detailHint}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
       fill: 'rgba(8,8,8,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -3872,8 +3880,13 @@
       return;
     }
     if (onboardingActive()) {
-      if (getOnboardingStep() === 1) {
+      const step = getOnboardingStep();
+      if (step === 1) {
         openProjectSwitcher();
+      } else if (step === 3) {
+        selectedIndex = cards.findIndex(function(card) { return card.id === 'know'; });
+        if (selectedIndex < 0) selectedIndex = 2;
+        transition(STATES.HOME);
       }
       return;
     }

@@ -567,7 +567,7 @@
     if (onboardingActive()) {
       const step = getOnboardingStep();
       const allowed = onboardingAllowedCardIds(step);
-      const preferredCardId = step === 3 ? 'know' : allowed[0];
+      const preferredCardId = step === 4 ? 'show' : (step === 3 ? 'know' : allowed[0]);
       if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
         const nextIndex = cards.findIndex(function(card) { return card.id === preferredCardId; });
         if (nextIndex >= 0) selectedIndex = nextIndex;
@@ -776,10 +776,6 @@
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
     stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
-    if (getOnboardingStep() === 3) {
-      setOnboardingStep(4);
-      pushLog('lesson 3 complete', 'system');
-    }
   };
 
   // --- KNOW_DETAIL ---
@@ -2788,8 +2784,8 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, 'go home, scroll to show, and capture your first frame. the first capture unlocks the full app.', 18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
-      text(18, 218, 'back → home', {
+      wrapTextBlock(undefined, 'shake home. show is ready. open it and capture your first frame. the first capture unlocks the full app.', 18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
+      text(18, 218, 'shake → show', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -3082,6 +3078,20 @@
 
       case STATES.KNOW_BROWSE: {
         const model = buildKnowModel();
+        if (onboardingActive() && getOnboardingStep() === 3) {
+          const lanes = model.lanes || [];
+          if (!lanes.length) break;
+          stateData.knowLaneIndex = ((stateData.knowLaneIndex || 0) + (direction > 0 ? 1 : -1) + lanes.length) % lanes.length;
+          stateData.knowItemIndex = 0;
+          const newLane = lanes[stateData.knowLaneIndex] || lanes[0];
+          const activeChip = model.chips[stateData.knowChipIndex]?.id;
+          const hasChipItems = newLane?.items?.some(item => item.chips.includes(activeChip));
+          if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
+          setOnboardingStep(4);
+          pushLog('lesson 3 complete', 'system');
+          render();
+          break;
+        }
         const items = getKnowVisibleItems(model);
         if (!items.length) break;
         stateData.knowItemIndex = ((stateData.knowItemIndex || 0) + (direction > 0 ? 1 : -1) + items.length) % items.length;
@@ -3886,6 +3896,10 @@
       } else if (step === 3) {
         selectedIndex = cards.findIndex(function(card) { return card.id === 'know'; });
         if (selectedIndex < 0) selectedIndex = 2;
+        transition(STATES.HOME);
+      } else if (step === 4) {
+        selectedIndex = cards.findIndex(function(card) { return card.id === 'show'; });
+        if (selectedIndex < 0) selectedIndex = 0;
         transition(STATES.HOME);
       }
       return;

@@ -458,6 +458,7 @@
     if (!orchestrator || !orchestrator.analyzeImage) {
       return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
+    var priority = meta && meta.priority ? meta.priority : 'high';
     return orchestrator.analyzeImage({
       project: buildProjectEnvelope('show'),
       selection: null,
@@ -468,7 +469,7 @@
       },
       meta: meta || {},
       policy: {
-        priority: 'high',
+        priority: priority,
         allowSearch: false,
         allowSpeech: false
       }

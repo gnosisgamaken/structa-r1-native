@@ -201,7 +201,16 @@
     if (!value) return '';
     var phrase = value.split(/[,:;\n]/)[0].trim();
     if (!phrase) return '';
-    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 3);
+    var stopWords = {
+      'a': true, 'an': true, 'the': true, 'to': true, 'for': true, 'and': true, 'with': true,
+      'this': true, 'project': true, 'is': true, 'about': true, 'our': true, 'my': true,
+      'we': true, 'i': true, 'of': true
+    };
+    var words = phrase
+      .split(/\s+/)
+      .map(function(word) { return word.replace(/[^a-z0-9-]/gi, '').toLowerCase(); })
+      .filter(function(word) { return word && !stopWords[word]; })
+      .slice(0, 3);
     if (!words.length) return '';
     var title = words.join(' ').slice(0, 22).trim().toLowerCase();
     return title.length >= 3 ? title : '';

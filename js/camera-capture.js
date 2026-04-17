@@ -30,6 +30,8 @@
   let voiceStripStopping = false;
   let pendingVoiceCapture = false;
   let pendingVoiceCaptureTimer = null;
+  let analysisQueueTimer = null;
+  let analysisInFlightEntryId = '';
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   function lower(text) {
@@ -38,6 +40,219 @@
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
+  }
+
+  function captureEntryId(capture) {
+    return capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
+  }
+
+  function capturePreviewData(capture) {
+    return capture?.preview_data || capture?.data || capture?.image_asset?.data || capture?.meta?.preview_data || '';
+  }
+
+  function findCaptureRefs(project, entryId, nodeId) {
+    const captures = project.captures || [];
+    const nodes = project.nodes || [];
+    const capture = captures.find(function(item) {
+      return captureEntryId(item) === entryId || (nodeId && item.node_id === nodeId);
+    }) || null;
+    const node = nodes.find(function(item) {
+      return item.node_id === nodeId || item.capture_image === entryId || item.meta?.bundle_id === entryId;
+    }) || null;
+    return { capture: capture, node: node, nodes: nodes };
+  }
+
+  function pendingAnalysisCount() {
+    const project = native?.getProjectMemory?.() || {};
+    return (project.captures || []).filter(function(capture) {
+      return lower(capture?.meta?.analysis_status || '') === 'pending' && capturePreviewData(capture);
+    }).length;
+  }
+
+  function getPendingAnalysisJobs() {
+    const project = native?.getProjectMemory?.() || {};
+    return (project.captures || [])
+      .filter(function(capture) {
+        return lower(capture?.meta?.analysis_status || '') === 'pending' && capturePreviewData(capture);
+      })
+      .map(function(capture) {
+        const entryId = captureEntryId(capture);
+        return {
+          entryId: entryId,
+          nodeId: capture?.node_id || '',
+          createdAt: capture?.meta?.analysis_enqueued_at || capture?.captured_at || capture?.created_at || capture?.meta?.captured_at || '',
+          previewData: capturePreviewData(capture),
+          annotation: capture?.voice_annotation || capture?.prompt_text || '',
+          facingMode: capture?.meta?.facingMode || 'environment'
+        };
+      })
+      .filter(function(job) { return !!job.entryId && !!job.previewData; })
+      .sort(function(a, b) {
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      });
+  }
+
+  function scheduleAnalysisDrain(delay) {
+    if (analysisQueueTimer) return;
+    analysisQueueTimer = setTimeout(function() {
+      analysisQueueTimer = null;
+      drainAnalysisQueue();
+    }, typeof delay === 'number' ? delay : 180);
+  }
+
+  function markCaptureAnalysisQueued(entryId, nodeId, dataUrl) {
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, entryId, nodeId);
+      const timestamp = new Date().toISOString();
+      if (refs.capture) {
+        refs.capture.preview_data = refs.capture.preview_data || dataUrl;
+        refs.capture.data = refs.capture.data || dataUrl;
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          analysis_status: 'pending',
+          analysis_enqueued_at: refs.capture.meta?.analysis_enqueued_at || timestamp,
+          preview_data: refs.capture.preview_data || dataUrl
+        };
+      }
+      if (refs.node) {
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          analysis_status: 'pending',
+          analysis_enqueued_at: refs.node.meta?.analysis_enqueued_at || timestamp,
+          preview_data: refs.node.meta?.preview_data || dataUrl
+        };
+      }
+    });
+  }
+
+  function applyAnalysisReady(job, result, insightNode) {
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, job.entryId, job.nodeId);
+      if (refs.capture) {
+        refs.capture.summary = result.clean;
+        refs.capture.ai_analysis = result.clean;
+        refs.capture.prompt_text = job.annotation || refs.capture.prompt_text || '';
+        refs.capture.preview_data = refs.capture.preview_data || job.previewData;
+        refs.capture.data = refs.capture.data || job.previewData;
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          analysis_status: 'ready',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.capture.preview_data || job.previewData
+        };
+      }
+      if (refs.node) {
+        refs.node.body = result.clean;
+        refs.node.tags = Array.isArray(refs.node.tags) ? refs.node.tags : [];
+        if (job.annotation && refs.node.tags.indexOf('show-tell') === -1) refs.node.tags.push('show-tell');
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          analysis_status: 'ready',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.node.meta?.preview_data || job.previewData
+        };
+        if (insightNode && insightNode.node_id) {
+          refs.node.links = Array.isArray(refs.node.links) ? refs.node.links : [];
+          if (refs.node.links.indexOf(insightNode.node_id) === -1) refs.node.links.push(insightNode.node_id);
+          const linkedInsight = refs.nodes.find(function(node) { return node.node_id === insightNode.node_id; });
+          if (linkedInsight) {
+            linkedInsight.links = Array.isArray(linkedInsight.links) ? linkedInsight.links : [];
+            if (linkedInsight.links.indexOf(refs.node.node_id) === -1) linkedInsight.links.push(refs.node.node_id);
+          }
+        }
+      }
+      native?.updateUIState?.({
+        last_capture_summary: result.clean,
+        last_insight_summary: result.clean
+      });
+    });
+  }
+
+  function applyAnalysisUnavailable(job, fallbackText) {
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, job.entryId, job.nodeId);
+      if (refs.capture) {
+        refs.capture.summary = fallbackText;
+        refs.capture.ai_analysis = '';
+        refs.capture.preview_data = refs.capture.preview_data || job.previewData;
+        refs.capture.data = refs.capture.data || job.previewData;
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          analysis_status: 'unavailable',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.capture.preview_data || job.previewData
+        };
+      }
+      if (refs.node) {
+        refs.node.body = job.annotation || 'frame saved';
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          analysis_status: 'unavailable',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.node.meta?.preview_data || job.previewData
+        };
+      }
+    });
+  }
+
+  function drainAnalysisQueue() {
+    if (analysisInFlightEntryId) return;
+    if (document.visibilityState === 'hidden') return;
+    if (!window.StructaLLM || typeof window.StructaLLM.processImage !== 'function') return;
+    if ((window.StructaLLM.pendingHighPriorityCount || 0) > 0) {
+      scheduleAnalysisDrain(600);
+      return;
+    }
+
+    const jobs = getPendingAnalysisJobs();
+    if (!jobs.length) return;
+    const job = jobs[0];
+    const rawBase64 = String(job.previewData || '').split(',').pop();
+    if (!rawBase64) {
+      applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
+      native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
+      scheduleAnalysisDrain(120);
+      return;
+    }
+
+    const projectBefore = native?.getProjectMemory?.() || {};
+    const hadAnalyzedCaptures = (projectBefore.captures || []).some(function(capture) {
+      return captureEntryId(capture) !== job.entryId && lower(capture?.meta?.analysis_status || '') === 'ready';
+    });
+
+    analysisInFlightEntryId = job.entryId;
+    const desc = 'User captured a ' + (job.facingMode || 'environment') + ' photo';
+    Promise.race([
+      window.StructaLLM.processImage(rawBase64, desc, {
+        facingMode: job.facingMode,
+        voiceAnnotation: job.annotation,
+        priority: 'low'
+      }),
+      new Promise(function(resolve) {
+        setTimeout(function() {
+          resolve({ ok: false, reason: 'timeout' });
+        }, 28000);
+      })
+    ]).then(function(result) {
+      if (result && result.ok && result.clean) {
+        const insightNode = window.StructaLLM.storeAsInsight(result, job.annotation ? 'show-tell' : 'capture');
+        applyAnalysisReady(job, result, insightNode);
+        native?.appendLogEntry?.({ kind: 'llm', message: job.annotation ? 'show+tell insight ready' : 'visual insight ready' });
+        if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
+        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+          detail: { source: 'visual-insight' }
+        }));
+      } else {
+        applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
+        native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
+      }
+    }).catch(function() {
+      applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
+      native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
+    }).finally(function() {
+      analysisInFlightEntryId = '';
+      scheduleAnalysisDrain(180);
+    });
   }
 
   async function readyOverlay(targetMode) {
@@ -330,8 +545,6 @@
       window.dispatchEvent(new CustomEvent('structa-capture-failed'));
       return null;
     }
-    const rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-
     if (pendingVoiceCaptureTimer) {
       clearTimeout(pendingVoiceCaptureTimer);
       pendingVoiceCaptureTimer = null;
@@ -359,6 +572,7 @@
       ? { ...imageAsset, ...storedAsset.payload, meta: { ...(imageAsset.meta || {}), ...(storedAsset.payload.meta || {}) } }
       : imageAsset;
 
+    const analysisQueuedAt = new Date().toISOString();
     const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
       input_type: annotation ? 'image+voice' : 'image',
@@ -373,7 +587,8 @@
         image_asset_id: resolvedAsset.entry_id || '',
         image_asset_name: resolvedAsset.name || '',
         preview_data: dataUrl,
-        analysis_status: 'pending'
+        analysis_status: 'pending',
+        analysis_enqueued_at: analysisQueuedAt
       }
     });
 
@@ -403,122 +618,19 @@
         capture_image: bundle?.entry_id || null,
         voice_annotation: annotation || null,
         tags: annotation ? ['show-tell', facingMode] : [facingMode],
-        meta: { bundle_id: bundle?.entry_id || null, facingMode: facingMode, analysis_status: 'pending', preview_data: dataUrl }
+        meta: {
+          bundle_id: bundle?.entry_id || null,
+          facingMode: facingMode,
+          analysis_status: 'pending',
+          analysis_enqueued_at: analysisQueuedAt,
+          preview_data: dataUrl
+        }
       });
     }
 
     hideOverlay();
-
-    const projectBefore = native?.getProjectMemory?.() || {};
-    const hadAnalyzedCaptures = (projectBefore.captures || []).some(function(cap) {
-      return lower(cap?.meta?.analysis_status || '') === 'ready';
-    });
-
-    // Send to LLM with voice annotation context
-    if (window.StructaLLM) {
-      var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
-      var analyze = function() {
-        return Promise.race([
-          window.StructaLLM.processImage(rawBase64, desc, {
-            facingMode: facingMode,
-            voiceAnnotation: annotation
-          }),
-          new Promise(function(resolve) {
-            setTimeout(function() {
-              resolve({ ok: false, reason: 'timeout' });
-            }, 28000);
-          })
-        ]).then(function(result) {
-          if (result && result.ok && result.clean) {
-            var insightNode = window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
-            native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
-            native?.touchProjectMemory?.(function(project) {
-              var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
-              if (cap) {
-                cap.summary = result.clean;
-                cap.ai_analysis = result.clean;
-                cap.prompt_text = annotation || cap.prompt_text || '';
-                cap.preview_data = cap.preview_data || dataUrl;
-                cap.data = cap.data || dataUrl;
-                cap.meta = { ...(cap.meta || {}), analysis_status: 'ready', preview_data: cap.preview_data || dataUrl };
-              }
-              var nodes = project.nodes || [];
-              var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
-                return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
-              });
-              if (node) {
-                node.body = result.clean;
-                node.tags = Array.isArray(node.tags) ? node.tags : [];
-                if (annotation && node.tags.indexOf('show-tell') === -1) node.tags.push('show-tell');
-                node.meta = { ...(node.meta || {}), analysis_status: 'ready', preview_data: node.meta?.preview_data || dataUrl };
-                if (insightNode && insightNode.node_id) {
-                  node.links = Array.isArray(node.links) ? node.links : [];
-                  if (node.links.indexOf(insightNode.node_id) === -1) node.links.push(insightNode.node_id);
-                  var linkedInsight = nodes.find(function(n) { return n.node_id === insightNode.node_id; });
-                  if (linkedInsight) {
-                    linkedInsight.links = Array.isArray(linkedInsight.links) ? linkedInsight.links : [];
-                    if (linkedInsight.links.indexOf(node.node_id) === -1) linkedInsight.links.push(node.node_id);
-                  }
-                }
-              }
-              native?.updateUIState?.({
-                last_capture_summary: result.clean,
-                last_insight_summary: result.clean
-              });
-            });
-            if (!hadAnalyzedCaptures) {
-              window.StructaLLM?.speakMilestone?.('first_capture');
-            }
-            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-              detail: { source: 'visual-insight' }
-            }));
-            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-          } else {
-            native?.touchProjectMemory?.(function(project) {
-              var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
-              if (cap) {
-                cap.summary = annotation ? 'show+tell captured' : 'frame saved';
-                cap.ai_analysis = '';
-                cap.preview_data = cap.preview_data || dataUrl;
-                cap.data = cap.data || dataUrl;
-                cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
-              }
-              var nodes = project.nodes || [];
-              var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
-                return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
-              });
-              if (node) {
-                node.body = annotation || 'frame saved';
-                node.meta = { ...(node.meta || {}), analysis_status: 'unavailable', preview_data: node.meta?.preview_data || dataUrl };
-              }
-            });
-            native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
-          }
-        })
-        .catch(function() {
-          native?.touchProjectMemory?.(function(project) {
-            var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
-            if (cap) {
-              cap.summary = annotation ? 'show+tell captured' : 'frame saved';
-              cap.ai_analysis = '';
-              cap.preview_data = cap.preview_data || dataUrl;
-              cap.data = cap.data || dataUrl;
-              cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
-            }
-            var nodes = project.nodes || [];
-            var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
-              return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
-            });
-            if (node) {
-              node.body = annotation || 'frame saved';
-              node.meta = { ...(node.meta || {}), analysis_status: 'unavailable', preview_data: node.meta?.preview_data || dataUrl };
-            }
-          });
-          native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });
-        });
-      };
-      analyze();
-    }
+    markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);
+    scheduleAnalysisDrain(120);
 
     return bundle;
   }
@@ -550,6 +662,15 @@
   });
 
   window.addEventListener('pagehide', killStream);
+  window.addEventListener('focus', function() { scheduleAnalysisDrain(180); });
+  window.addEventListener('pageshow', function() { scheduleAnalysisDrain(180); });
+  window.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') scheduleAnalysisDrain(180);
+  });
+  window.addEventListener('structa-memory-updated', function() {
+    scheduleAnalysisDrain(180);
+  });
+  setTimeout(function() { scheduleAnalysisDrain(240); }, 320);
 
   window.StructaCamera = Object.freeze({
     openFromGesture,
@@ -561,6 +682,8 @@
     startVoiceStrip,
     finalizeVoiceStripCapture,
     stopVoiceStrip,
+    pendingAnalysisCount,
+    scheduleAnalysisDrain,
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },
     get facingMode() { return facingMode; },

@@ -61,6 +61,24 @@ def parse_labeled_lines(raw):
     return result
 
 
+def soften_branch_prompt(text, limit=120):
+    value = compact(text, limit)
+    lowered = value.lower()
+    if lowered.startswith("what specific help do you need"):
+        return "let's shape the next branch: what matters most first?"
+    if lowered.startswith("what help do you need") or lowered.startswith("what do you need help"):
+        return "let's shape the next branch: what matters most first?"
+    if lowered.startswith("how can i help") or lowered.startswith("how can structa help"):
+        return "let's choose where this should begin."
+    if lowered.startswith("what should happen first"):
+        return "let's decide what should happen first."
+    if value.endswith(("?", "!", ".")):
+        return value
+    if lowered.startswith(("what ", "how ", "where ", "when ", "who ")):
+        return value + "?"
+    return value
+
+
 def artifact(kind, body, title="", status="open", source="orchestrator", options=None):
     item = {
         "type": kind,
@@ -295,7 +313,10 @@ def chain_prepare(payload):
         lines.extend([
             "",
             "Return exactly:",
-            "QUESTION: <one concrete shaping question, max 12 words>",
+            "QUESTION: <one calm branch-opening prompt, max 12 words>",
+            "Tone: guiding, project-building, never harsh.",
+            "Avoid asking for specific help.",
+            "Prefer prompts about what matters first, what needs a place, or where this begins.",
         ])
     elif phase == "observe":
         lines.extend([
@@ -342,7 +363,7 @@ def chain_normalize(payload):
     raw = payload.get("rawResponse") or ""
     parsed = parse_labeled_lines(raw)
     if payload.get("discoveryMode"):
-        question = parsed.get("QUESTION") or compact(raw, 120)
+        question = soften_branch_prompt(parsed.get("QUESTION") or compact(raw, 120))
         return {
             "ok": True,
             "artifacts": [artifact("question", question, title="structa asks", source="chain")],

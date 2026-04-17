@@ -136,6 +136,27 @@
       .trim();
   }
 
+  function softenGuidedAsk(text = '') {
+    const value = normalizeTinyText(text);
+    if (!value) return '';
+    const lowered = lower(value);
+    if (lowered.startsWith('what specific help do you need')) {
+      return 'let\'s shape the next branch: what matters most first?';
+    }
+    if (lowered.startsWith('what help do you need') || lowered.startsWith('what do you need help')) {
+      return 'let\'s shape the next branch: what matters most first?';
+    }
+    if (lowered.startsWith('how can i help') || lowered.startsWith('how can structa help')) {
+      return 'let\'s choose where this should begin.';
+    }
+    if (lowered.startsWith('what should happen first')) {
+      return 'let\'s decide what should happen first.';
+    }
+    if (/[?!.]$/.test(value)) return value;
+    if (/^(what|how|where|when|who)\b/i.test(value)) return value + '?';
+    return value;
+  }
+
   function projectDisplayName(project = getProjectMemory()) {
     const value = String(project?.name || '').trim();
     if (!value) return 'Project';
@@ -467,11 +488,21 @@
     return `captures ${captures} · signals ${signals} · decisions ${decisions} · open ${open}`;
   }
 
+  function getPendingCaptureQueueCount() {
+    const project = getProjectMemory() || {};
+    return (project.captures || []).filter(function(capture) {
+      return lower(capture?.meta?.analysis_status || '') === 'pending';
+    }).length;
+  }
+
   function getQueueLine() {
     const pending = window.StructaLLM?.pendingCount || 0;
+    const pendingCaptures = getPendingCaptureQueueCount();
+    const total = pending + pendingCaptures;
     const priority = window.StructaLLM?.pendingHighPriorityCount || 0;
     const phase = lower(window.StructaImpactChain?.phase || 'idle');
-    if (!pending) return `queue clear · ${phase}`;
+    if (!total) return `queue clear · ${phase}`;
+    if (pendingCaptures) return `${total} queued · ${pendingCaptures} frames · ${phase}`;
     if (priority && priority !== pending) return `${pending} queued · ${priority} priority · ${phase}`;
     return `${pending} queued · ${phase}`;
   }
@@ -987,7 +1018,9 @@
 
   function openNowNextMove() {
     const project = getProjectMemory();
-    const openQuestions = project?.open_questions || [];
+    const openQuestions = (project?.open_questions || []).map(function(question) {
+      return softenGuidedAsk(question);
+    });
     if (openQuestions.length) {
       voiceReturnState = STATES.NOW_BROWSE;
       transition(STATES.VOICE_OPEN, {
@@ -1181,7 +1214,9 @@
     const ui = getUIState();
     const captures = getCaptureList();
     const insights = project?.insights || [];
-    const openQuestions = project?.open_questions || [];
+    const openQuestions = (project?.open_questions || []).map(function(question) {
+      return softenGuidedAsk(question);
+    });
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
@@ -1209,7 +1244,7 @@
       changed: ui.last_event_summary || '',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
       insight: ui.last_insight_summary || (insights[0]?.body || ''),
-      next: backlog[0]?.title || (openQuestions[0] ? `answer: ${openQuestions[0].slice(0, 30)}` : ''),
+      next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : ''),
       openQuestions: openQuestions.length,
       captures: captures.length,
       insights: insights.length,
@@ -1358,17 +1393,17 @@
     const ui = getUIState();
     const chips = [
       { id: 'latest', label: 'latest' },
-      { id: 'next', label: 'next' },
+      { id: 'branch', label: 'branch' },
       { id: 'asks', label: 'asks' },
-      { id: 'assets', label: 'assets' }
+      { id: 'frames', label: 'frames' }
     ];
 
     const classify = item => {
       const text = lower(`${item.title} ${item.body} ${item.next}`);
       const bucket = new Set(item.chips || []);
       if (item.source === 'question') bucket.add('asks');
-      if (item.source === 'asset' || item.source === 'capture-image') bucket.add('assets');
-      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act'])) bucket.add('next');
+      if (item.source === 'asset' || item.source === 'capture-image') bucket.add('frames');
+      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act', 'move', 'plan'])) bucket.add('branch');
       item.chips = Array.from(bucket);
       return item;
     };
@@ -1400,16 +1435,17 @@
 
     // Questions lane
     openQuestions.slice(0, 5).forEach((question, index) => {
+      const guidedAsk = softenGuidedAsk(question);
       questions.push(makeItem({
-        lane: 'questions', title: `ask ${index + 1}`, body: question,
-        next: 'ptt button to answer', created_at: new Date().toISOString(),
+        lane: 'questions', title: index === 0 ? 'guided ask' : `guided ask ${index + 1}`, body: guidedAsk,
+        next: '', created_at: new Date().toISOString(),
         source: 'question', chips: ['asks'], questionIndex: index
       }));
     });
 
     if (!questions.length) {
       questions.push(makeItem({
-        lane: 'questions', title: 'no asks', body: 'no asks yet',
+        lane: 'questions', title: 'no asks', body: 'structa will open the next branch here',
         next: '',
         created_at: new Date().toISOString(), source: 'empty', chips: ['latest']
       }));
@@ -1418,10 +1454,10 @@
     // Signals
     if (ui.last_insight_summary || ui.last_capture_summary) {
       signals.push(makeItem({
-        lane: 'signals', title: 'latest signal',
+        lane: 'signals', title: 'working signal',
         body: ui.last_insight_summary || ui.last_capture_summary,
         next: backlog[0]?.title || '',
-        created_at: new Date().toISOString(), source: 'ui', chips: ['latest', 'next']
+        created_at: new Date().toISOString(), source: 'ui', chips: ['latest', 'branch']
       }));
     }
 
@@ -1438,7 +1474,7 @@
 
     captures.slice(-4).reverse().forEach((capture, index) => {
       signals.push(makeItem({
-        lane: 'signals', title: capture.type === 'image' ? 'frame' : 'capture',
+        lane: 'signals', title: capture.type === 'image' ? 'visual note' : 'capture',
         body: capture.summary || 'stored',
         next: backlog[0]?.title || '',
         created_at: capture.created_at,
@@ -1471,18 +1507,18 @@
     // Loops
     backlog.slice(0, 5).forEach((item, index) => {
       loops.push(makeItem({
-        lane: 'open loops', title: item.title || `loop ${index + 1}`,
+        lane: 'open loops', title: item.title || `task ${index + 1}`,
         body: item.body || item.state || 'open',
         next: item.title || '',
-        created_at: item.created_at, source: 'backlog', chips: ['next']
+        created_at: item.created_at, source: 'backlog', chips: ['branch']
       }));
     });
 
     const lanes = [
-      { id: 'questions', label: 'asks', summary: 'open asks', items: questions },
-      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'no signals yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
-      { id: 'decisions', label: 'decided', summary: 'locked decisions', items: decisionsLane },
-      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no tasks', body: 'no tasks yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
+      { id: 'questions', label: 'asks', summary: 'guided asks', items: questions },
+      { id: 'signals', label: 'signals', summary: 'working signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'capture or tell to begin shaping signal', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
+      { id: 'decisions', label: 'decisions', summary: 'locked decisions', items: decisionsLane },
+      { id: 'open loops', label: 'tasks', summary: 'open tasks', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no tasks', body: 'new tasks gather here as the project grows', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
       lane.items
         .sort((a, b) => {
@@ -1519,10 +1555,16 @@
     return filtered.length ? filtered : lane.items;
   }
 
-  function getKnowHintText(item, lane, itemsCount) {
-    if (!item) return itemsCount > 1 ? 'scroll items · ptt detail' : 'ptt detail';
-    if (item.source === 'question') return itemsCount > 1 ? 'scroll items · ptt answer' : 'ptt answer';
-    return itemsCount > 1 ? 'scroll items · ptt detail' : 'ptt know';
+  function getKnowHintText(item, lane, itemsCount, detailMode) {
+    if (!item) return itemsCount > 1 ? 'scroll items' : 'hold ptt';
+    if (item.source === 'question') {
+      return detailMode
+        ? 'hold ptt to answer'
+        : (itemsCount > 1 ? 'scroll asks · hold ptt to answer' : 'hold ptt to answer');
+    }
+    return detailMode
+      ? (itemsCount > 1 ? 'scroll items · hold ptt to reflect' : 'hold ptt to reflect')
+      : (itemsCount > 1 ? 'scroll items · click detail' : 'click detail');
   }
 
   // === SVG rendering helpers ===
@@ -2183,7 +2225,8 @@
       imageHref: current ? getCaptureImageHref(current) : '',
       analysisReady: current ? captureAnalysisReady(current) : false,
       analysisState: lower(current?.meta?.analysis_status || ''),
-      createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null
+      createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null,
+      pendingQueueCount: getPendingCaptureQueueCount()
     };
   }
 
@@ -2323,6 +2366,16 @@
         stateData.showStatus = 'visual memory';
         render();
       });
+    });
+
+    const showFooter = model.pendingQueueCount > 0
+      ? `${model.pendingQueueCount} queued · keep open`
+      : (model.captures.length ? (model.analysisReady ? 'queue clear' : 'processing latest frame') : 'ready to capture');
+    text(226, 276, showFooter, {
+      fill: 'rgba(8,8,8,0.38)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
     });
   }
 
@@ -2916,22 +2969,22 @@
     // Touchable lane tabs
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 44 },
-      { id: 'signals', label: 'signal', width: 48 },
-      { id: 'decisions', label: 'decided', width: 52 },
-      { id: 'open loops', label: 'loops', width: 42 }
+      { id: 'signals', label: 'signals', width: 52 },
+      { id: 'decisions', label: 'decisions', width: 62 },
+      { id: 'open loops', label: 'tasks', width: 42 }
     ];
     let tabX = 14;
     laneTabs.forEach((tab, i) => {
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: 74, width: tab.width, height: 22, rx: 6, ry: 6,
+        x: tabX, y: 82, width: tab.width, height: 22, rx: 6, ry: 6,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: 74 + 22 / 2 + 4,
+        x: tabX + tab.width / 2, y: 82 + 22 / 2 + 4,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'middle'
       }, pillGroup);
@@ -2954,8 +3007,8 @@
 
     // Filter chips row - touchable
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
-    const showChipRow = activeChips.length > 1;
-    const chipY = 102;
+    const showChipRow = lane.id === 'signals' && activeChips.length > 1;
+    const chipY = 112;
     if (showChipRow) {
       let chipX = 14;
       activeChips.forEach((c) => {
@@ -2988,11 +3041,11 @@
     }
 
     // Content area - directly below chips
-    const contentY = showChipRow ? 130 : 112;
+    const contentY = showChipRow ? 142 : 124;
 
     if (currentState === STATES.KNOW_BROWSE) {
       const titleText = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 168, 14, 'rgba(8,8,8,0.96)', '16', 3);
+      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 178, 15, 'rgba(8,8,8,0.96)', '15', 3);
 
       text(226, contentY + 1, formatTimeLabel(item.created_at), {
         fill: 'rgba(8,8,8,0.40)',
@@ -3008,11 +3061,11 @@
       }
 
       // Context label - source type
-      const contextLabel = item.source === 'question' ? 'open ask'
-        : item.source === 'insight' ? 'insight'
-        : item.source === 'capture-image' ? 'visual capture'
+      const contextLabel = item.source === 'question' ? 'guided ask'
+        : item.source === 'insight' ? 'signal'
+        : item.source === 'capture-image' ? 'visual note'
         : item.source === 'decision' ? 'locked decision'
-        : item.source === 'backlog' ? 'open loop'
+        : item.source === 'backlog' ? 'open task'
         : lane.label;
       const metaY = contentY + (titleRows * 14) + 6;
       text(14, metaY, contextLabel, {
@@ -3039,7 +3092,7 @@
       // Scroll hint
       const browseHint = onboardingActive() && getOnboardingStep() === 3
         ? 'scroll once inside'
-        : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length));
+        : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length, false));
       text(226, 276, `${browseHint}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3060,7 +3113,7 @@
 
     // KNOW_DETAIL - expanded view
     const detailTitle = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 168, 14, 'rgba(8,8,8,0.96)', '16', 3);
+    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 178, 15, 'rgba(8,8,8,0.96)', '15', 3);
     text(226, contentY + 1, formatTimeLabel(item.created_at), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3074,7 +3127,7 @@
       });
     }
 
-    const detailSection = item.source === 'question' ? 'open ask' : 'detail';
+    const detailSection = item.source === 'question' ? 'guided ask' : 'detail';
     const detailMetaY = contentY + (detailTitleRows * 14) + 8;
     drawSectionLabel(undefined, 14, detailMetaY, detailSection);
     const detailBodyY = detailMetaY + 16;
@@ -3083,10 +3136,10 @@
 
     if (item.source === 'question') {
       const actionY = Math.min(234, detailBodyY + (detailRows * 13) + 16);
-      mk('rect', { x: 10, y: actionY - 6, width: 220, height: 26, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.12)' });
-      drawSquaredPill(18, actionY, 96, 14, 'ptt → answer', true, 'light');
-      text(136, actionY + 11, 'voice answer', {
-        fill: 'rgba(8,8,8,0.50)',
+      mk('rect', { x: 10, y: actionY - 6, width: 220, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.10)' });
+      drawSquaredPill(18, actionY + 1, 78, 14, 'hold ptt', true, 'light');
+      text(108, actionY + 12, 'to answer this branch', {
+        fill: 'rgba(8,8,8,0.56)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
@@ -3101,7 +3154,7 @@
 
     const detailHint = onboardingActive() && getOnboardingStep() === 3
       ? 'scroll once inside'
-      : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length));
+      : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length, true));
     text(226, 276, `${detailHint}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
       fill: 'rgba(8,8,8,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',

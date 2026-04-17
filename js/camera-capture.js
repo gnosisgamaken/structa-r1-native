@@ -10,6 +10,7 @@
  */
 (() => {
   const native = window.StructaNative;
+  const queue = window.StructaProcessingQueue;
   const overlay = document.getElementById('camera-overlay');
   const preview = document.getElementById('camera-preview');
   const canvas = document.getElementById('camera-canvas');
@@ -31,7 +32,6 @@
   let pendingVoiceCapture = false;
   let pendingVoiceCaptureTimer = null;
   let analysisQueueTimer = null;
-  let analysisInFlightEntryId = '';
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   function lower(text) {
@@ -96,7 +96,7 @@
     if (analysisQueueTimer) return;
     analysisQueueTimer = setTimeout(function() {
       analysisQueueTimer = null;
-      drainAnalysisQueue();
+      syncAnalysisQueue();
     }, typeof delay === 'number' ? delay : 180);
   }
 
@@ -195,63 +195,110 @@
     });
   }
 
-  function drainAnalysisQueue() {
-    if (analysisInFlightEntryId) return;
-    if (document.visibilityState === 'hidden') return;
-    if (!window.StructaLLM || typeof window.StructaLLM.processImage !== 'function') return;
-    if ((window.StructaLLM.pendingHighPriorityCount || 0) > 0) {
-      scheduleAnalysisDrain(600);
-      return;
-    }
+  function skipBlockedAnalysis(entryId, nodeId) {
+    if (!entryId && !nodeId) return false;
+    const payload = {
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      previewData: '',
+      annotation: '',
+      facingMode: 'environment'
+    };
+    applyAnalysisUnavailable(payload, 'frame saved');
+    native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return true;
+  }
 
+  function imageAnalysisPayload(job) {
+    return {
+      entryId: job.entryId,
+      nodeId: job.nodeId,
+      previewData: job.previewData,
+      annotation: job.annotation || '',
+      facingMode: job.facingMode || 'environment'
+    };
+  }
+
+  function queueHasImageJob(entryId) {
+    if (!queue) return false;
+    return queue.snapshot().some(function(job) {
+      return job.kind === 'image-analyze' && job.payload?.entryId === entryId;
+    });
+  }
+
+  function syncAnalysisQueue() {
+    if (document.visibilityState === 'hidden' || !queue) return;
     const jobs = getPendingAnalysisJobs();
     if (!jobs.length) return;
-    const job = jobs[0];
-    const rawBase64 = String(job.previewData || '').split(',').pop();
-    if (!rawBase64) {
-      applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
-      native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
-      scheduleAnalysisDrain(120);
-      return;
-    }
-
-    const projectBefore = native?.getProjectMemory?.() || {};
-    const hadAnalyzedCaptures = (projectBefore.captures || []).some(function(capture) {
-      return captureEntryId(capture) !== job.entryId && lower(capture?.meta?.analysis_status || '') === 'ready';
+    jobs.forEach(function(job) {
+      if (queueHasImageJob(job.entryId)) return;
+      queue.enqueue({
+        kind: 'image-analyze',
+        priority: 'P1',
+        payload: imageAnalysisPayload(job),
+        origin: {
+          screen: 'show',
+          itemId: job.entryId
+        },
+        timeoutMs: 28000
+      });
     });
+  }
 
-    analysisInFlightEntryId = job.entryId;
-    const desc = 'User captured a ' + (job.facingMode || 'environment') + ' photo';
-    Promise.race([
-      window.StructaLLM.processImage(rawBase64, desc, {
-        facingMode: job.facingMode,
-        voiceAnnotation: job.annotation,
-        priority: 'low'
-      }),
-      new Promise(function(resolve) {
-        setTimeout(function() {
-          resolve({ ok: false, reason: 'timeout' });
-        }, 28000);
-      })
-    ]).then(function(result) {
-      if (result && result.ok && result.clean) {
-        const insightNode = window.StructaLLM.storeAsInsight(result, job.annotation ? 'show-tell' : 'capture');
-        applyAnalysisReady(job, result, insightNode);
-        native?.appendLogEntry?.({ kind: 'llm', message: job.annotation ? 'show+tell insight ready' : 'visual insight ready' });
-        if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
-        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-          detail: { source: 'visual-insight' }
-        }));
-      } else {
-        applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
-        native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
+  if (queue && !window.__STRUCTA_CAMERA_QUEUE_REGISTERED__) {
+    window.__STRUCTA_CAMERA_QUEUE_REGISTERED__ = true;
+    queue.registerHandler('image-analyze', function(job) {
+      const payload = job.payload || {};
+      const rawBase64 = String(payload.previewData || '').split(',').pop();
+      if (!rawBase64 || !window.StructaLLM?.processImage) {
+        return {
+          ok: false,
+          blocked: true,
+          message: 'visual analysis stalled — tap to retry, double side skips'
+        };
       }
-    }).catch(function() {
-      applyAnalysisUnavailable(job, job.annotation ? 'show+tell captured' : 'frame saved');
-      native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
-    }).finally(function() {
-      analysisInFlightEntryId = '';
-      scheduleAnalysisDrain(180);
+
+      const projectBefore = native?.getProjectMemory?.() || {};
+      const hadAnalyzedCaptures = (projectBefore.captures || []).some(function(capture) {
+        return captureEntryId(capture) !== payload.entryId && lower(capture?.meta?.analysis_status || '') === 'ready';
+      });
+      const desc = 'User captured a ' + (payload.facingMode || 'environment') + ' photo';
+
+      return Promise.race([
+        window.StructaLLM.processImage(rawBase64, desc, {
+          facingMode: payload.facingMode,
+          voiceAnnotation: payload.annotation,
+          priority: 'low'
+        }),
+        new Promise(function(resolve) {
+          setTimeout(function() {
+            resolve({ ok: false, reason: 'timeout' });
+          }, 28000);
+        })
+      ]).then(function(result) {
+        if (result && result.ok && result.clean) {
+          const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture');
+          applyAnalysisReady(payload, result, insightNode);
+          native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell insight ready' : 'visual insight ready' });
+          if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'visual-insight' }
+          }));
+          return result;
+        }
+        return {
+          ok: false,
+          blocked: true,
+          message: 'visual analysis stalled — tap to retry, double side skips'
+        };
+      }).catch(function() {
+        return {
+          ok: false,
+          blocked: true,
+          message: 'visual analysis stalled — tap to retry, double side skips'
+        };
+      });
     });
   }
 
@@ -684,6 +731,7 @@
     stopVoiceStrip,
     pendingAnalysisCount,
     scheduleAnalysisDrain,
+    skipBlockedAnalysis,
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },
     get facingMode() { return facingMode; },

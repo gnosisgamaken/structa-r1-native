@@ -22,10 +22,12 @@
   const logHandle = document.getElementById('log-handle');
   const logPreview = document.getElementById('log-preview');
   const logOps = document.getElementById('log-ops');
+  const logQueueRow = document.getElementById('log-queue-row');
   const logPhaseRow = document.getElementById('log-phase-row');
   const logStatsRow = document.getElementById('log-stats-row');
   const native = window.StructaNative;
   const router = window.StructaActionRouter;
+  const processingQueue = window.StructaProcessingQueue;
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   // === Constants ===
@@ -141,16 +143,22 @@
     if (!value) return '';
     const lowered = lower(value);
     if (lowered.startsWith('what specific help do you need')) {
-      return 'let\'s shape the next branch: what matters most first?';
+      return 'let\'s open the next branch: what matters most first?';
     }
     if (lowered.startsWith('what help do you need') || lowered.startsWith('what do you need help')) {
-      return 'let\'s shape the next branch: what matters most first?';
+      return 'let\'s open the next branch: what matters most first?';
     }
     if (lowered.startsWith('how can i help') || lowered.startsWith('how can structa help')) {
       return 'let\'s choose where this should begin.';
     }
     if (lowered.startsWith('what should happen first')) {
       return 'let\'s decide what should happen first.';
+    }
+    if (lowered.startsWith('what do you need for') || lowered.startsWith('what do you need to')) {
+      return 'let\'s choose what this needs first.';
+    }
+    if (lowered.startsWith('what are you trying to')) {
+      return 'let\'s name what this is moving toward.';
     }
     if (/[?!.]$/.test(value)) return value;
     if (/^(what|how|where|when|who)\b/i.test(value)) return value + '?';
@@ -495,16 +503,88 @@
     }).length;
   }
 
+  function getQueueSnapshot() {
+    return processingQueue?.snapshot?.() || [];
+  }
+
+  function getQueuePendingJobs() {
+    return getQueueSnapshot().filter(function(job) {
+      return job.status === 'pending' || job.status === 'running';
+    });
+  }
+
+  function getQueueBlockedJobs() {
+    return getQueueSnapshot().filter(function(job) {
+      return job.status === 'blocked';
+    });
+  }
+
+  function getQueueTierColor(priority) {
+    switch (priority) {
+      case 'P0': return 'rgba(248,193,93,0.92)';
+      case 'P1': return 'rgba(119,213,255,0.92)';
+      case 'P2': return 'rgba(146,255,157,0.88)';
+      default: return 'rgba(244,239,228,0.68)';
+    }
+  }
+
+  function formatQueueJob(job) {
+    const label = {
+      'triangle-synthesize': 'synthesizing triangle',
+      'image-analyze': 'analyzing frame',
+      'project-title': 'titling project',
+      'voice-interpret': 'interpreting voice',
+      'chain-step': 'running chain'
+    }[job.kind] || lower(job.kind || 'queued work');
+    const prefix = job.status === 'running' ? '▸ ' : '  ';
+    return prefix + label + (job.status === 'running' ? ' ' + formatElapsed(job.elapsedMs || 0) : '');
+  }
+
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function getQueueBlockerCopy(job) {
+    if (!job) return '';
+    switch (job.kind) {
+      case 'triangle-synthesize':
+        return 'synthesis stalled — tap to retry, double side skips';
+      case 'image-analyze':
+        return 'visual analysis stalled — tap to retry, double side skips';
+      case 'voice-interpret':
+        return 'interpretation stalled — tap to retry, double side skips';
+      case 'project-title':
+        return 'project naming stalled — tap to retry, double side skips';
+      default:
+        return 'queue stalled — tap to retry, double side skips';
+    }
+  }
+
+  function syncQueueBlockers() {
+    const existing = getUIState().queue_blockers || [];
+    const blocked = getQueueBlockedJobs().map(function(job) {
+      return {
+        id: job.id,
+        kind: job.kind,
+        body: getQueueBlockerCopy(job),
+        payload: job.payload || {}
+      };
+    });
+    const unchanged = JSON.stringify(existing) === JSON.stringify(blocked);
+    if (!unchanged) native?.updateUIState?.({ queue_blockers: blocked });
+  }
+
   function getQueueLine() {
-    const pending = window.StructaLLM?.pendingCount || 0;
-    const pendingCaptures = getPendingCaptureQueueCount();
-    const total = pending + pendingCaptures;
-    const priority = window.StructaLLM?.pendingHighPriorityCount || 0;
+    const pendingJobs = getQueuePendingJobs();
+    const total = pendingJobs.length;
+    const running = pendingJobs.find(function(job) { return job.status === 'running'; });
     const phase = lower(window.StructaImpactChain?.phase || 'idle');
     if (!total) return `queue clear · ${phase}`;
-    if (pendingCaptures) return `${total} queued · ${pendingCaptures} frames · ${phase}`;
-    if (priority && priority !== pending) return `${pending} queued · ${priority} priority · ${phase}`;
-    return `${pending} queued · ${phase}`;
+    if (running) return `${total} pending · ${formatQueueJob(running).replace(/^▸\s*/, '')}`;
+    return `${total} pending · ${phase}`;
   }
 
   function invalidateDataCaches() {
@@ -555,11 +635,15 @@
   }
 
   function updateLogOps(detail) {
-    if (!logPhaseRow || !logStatsRow) return;
+    if (!logQueueRow || !logPhaseRow || !logStatsRow) return;
     const chain = window.StructaImpactChain;
     const phase = lower(detail?.phase || chain?.phase || 'idle');
     const cooldown = Math.max(0, detail?.cooldownMs ?? chain?.cooldownRemaining ?? 0);
     const cooldownLabel = cooldown > 0 ? ` · cool ${Math.ceil(cooldown / 1000)}s` : '';
+    const jobs = getQueuePendingJobs();
+    const queueHeader = jobs.length ? `queue · ${jobs.length} pending` : 'queue · clear';
+    const queueRows = jobs.slice(0, 3).map(formatQueueJob);
+    logQueueRow.textContent = [queueHeader].concat(queueRows).join('\n');
     logPhaseRow.textContent = `chain ${phase} · ${getPhaseDots(phase)}${cooldownLabel}`;
     logStatsRow.textContent = getOpsStatsLine();
     if (logOps) logOps.hidden = !logOpen;
@@ -1080,6 +1164,41 @@
     return true;
   }
 
+  function retryCurrentQueueBlocker() {
+    const blocker = buildNowSummary().queueBlocker;
+    if (!blocker || !processingQueue?.retry) return false;
+    const didRetry = processingQueue.retry(blocker.id);
+    if (!didRetry) return false;
+    const remaining = (getUIState().queue_blockers || []).filter(function(entry) {
+      return entry.id !== blocker.id;
+    });
+    native?.updateUIState?.({ queue_blockers: remaining });
+    stateData.nowFeedback = 'retry queued';
+    setTimeout(function() {
+      if (stateData.nowFeedback === 'retry queued') {
+        stateData.nowFeedback = '';
+        render();
+      }
+    }, 520);
+    render();
+    return true;
+  }
+
+  function skipCurrentQueueBlocker() {
+    const blocker = buildNowSummary().queueBlocker;
+    if (!blocker) return false;
+    processingQueue?.cancel?.(blocker.id);
+    if (blocker.kind === 'image-analyze') {
+      window.StructaCamera?.skipBlockedAnalysis?.(blocker.payload?.entryId, blocker.payload?.nodeId);
+    }
+    const remaining = (getUIState().queue_blockers || []).filter(function(entry) {
+      return entry.id !== blocker.id;
+    });
+    native?.updateUIState?.({ queue_blockers: remaining });
+    render();
+    return true;
+  }
+
   function openProjectSwitcher() {
     if (onboardingActive() && !onboardingAllowsProjectSwitcher()) return;
     const projects = getProjects();
@@ -1089,9 +1208,33 @@
     transition(STATES.PROJECT_SWITCHER, { projectListIndex: index });
   }
 
-  function activateSelectedProject() {
+  function getProjectSwitcherRows() {
     const projects = getProjects();
-    if (!projects.length) return false;
+    const activeCount = projects.filter(function(project) { return project.status !== 'archived'; }).length;
+    const rows = projects.map(function(project) {
+      return { type: 'project', project: project };
+    });
+    if (activeCount < 3) rows.push({ type: 'add' });
+    return rows;
+  }
+
+  function openNewProjectFlow() {
+    voiceReturnState = STATES.PROJECT_SWITCHER;
+    transition(STATES.VOICE_OPEN, {
+      fromPTT: true,
+      tellStatus: 'name project',
+      inlinePTTSurface: 'project',
+      buildContext: {
+        kind: 'new-project-name',
+        text: 'name a new project',
+        surface: 'project_switcher'
+      }
+    });
+  }
+
+  function activateSelectedProject() {
+    const rows = getProjectSwitcherRows();
+    if (!rows.length) return false;
     if (onboardingActive() && getOnboardingStep() === 1) {
       setOnboardingStep(2);
       pushLog('lesson 1 complete', 'system');
@@ -1099,9 +1242,14 @@
       return true;
     }
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
-    const index = Math.max(0, Math.min(selectedIndexValue, projects.length - 1));
-    const project = projects[index];
-    if (!project) return false;
+    const index = Math.max(0, Math.min(selectedIndexValue, rows.length - 1));
+    const row = rows[index];
+    if (!row) return false;
+    if (row.type === 'add') {
+      openNewProjectFlow();
+      return true;
+    }
+    const project = row.project;
     native?.switchProject?.(project.project_id);
     pushLog(`project: ${project.name}`, 'voice');
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -1217,6 +1365,9 @@
     const openQuestions = (project?.open_questions || []).map(function(question) {
       return softenGuidedAsk(question);
     });
+    const queueBlockers = Array.isArray(ui.queue_blockers) ? ui.queue_blockers : [];
+    const queueBlocker = queueBlockers[0] || null;
+    const projectCapNotice = lower(ui.project_cap_notice || '');
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
@@ -1236,8 +1387,8 @@
 
     // Latest impact chain from storage
     const storedImpacts = project?.impact_chain || [];
-    const blockerQuestion = openQuestions[0] || '';
-    const blockerCount = pendingDecisions.length + openQuestions.length;
+    const blockerQuestion = queueBlocker?.body || projectCapNotice || openQuestions[0] || '';
+    const blockerCount = pendingDecisions.length + openQuestions.length + (queueBlocker ? 1 : 0) + (projectCapNotice ? 1 : 0);
 
     return {
       title: project?.name || 'new project',
@@ -1255,6 +1406,8 @@
       pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
       blockerCount,
       blockerQuestion,
+      queueBlocker,
+      projectCapNotice,
       chainPhase,
       chainActive,
       chainImpacts,
@@ -1685,6 +1838,150 @@
     });
   }
 
+  function drawAmbientQueueIndicator() {
+    if (logOpen || currentState === STATES.LOG_OPEN) return;
+    const jobs = getQueuePendingJobs();
+    const depth = jobs.length;
+    const width = depth ? Math.min(220, 24 + depth * 28) : 220;
+    const opacity = depth ? String(0.96 + (Math.sin(Date.now() / 260) * 0.04)) : '0.08';
+    const fill = depth ? getQueueTierColor(jobs[0].priority) : 'rgba(244,239,228,0.18)';
+    const indicator = mk('rect', {
+      x: 10,
+      y: 288,
+      width: width,
+      height: 2,
+      rx: 1,
+      ry: 1,
+      fill: fill,
+      opacity: opacity,
+      style: onboardingAllowsLogs() ? 'cursor: pointer;' : ''
+    });
+    if (onboardingAllowsLogs()) {
+      indicator.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        transition(STATES.LOG_OPEN);
+      });
+    }
+  }
+
+  function drawKnowItemDots(count, currentIndex, x, y) {
+    const safeCount = Math.max(1, count || 1);
+    for (let index = 0; index < safeCount; index += 1) {
+      mk('circle', {
+        cx: x + (index * 8),
+        cy: y,
+        r: 2,
+        fill: index === currentIndex ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.24)'
+      });
+    }
+  }
+
+  function drawKnowScrollFrame(textValue, frame, key) {
+    const frameGroup = mk('g');
+    mk('rect', {
+      x: frame.x,
+      y: frame.y,
+      width: frame.width,
+      height: frame.height,
+      rx: 10,
+      ry: 10,
+      fill: 'rgba(8,8,8,0.06)'
+    }, frameGroup);
+
+    const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+    fo.setAttribute('x', frame.x);
+    fo.setAttribute('y', frame.y);
+    fo.setAttribute('width', frame.width);
+    fo.setAttribute('height', frame.height);
+
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    wrapper.style.position = 'relative';
+    wrapper.style.width = '100%';
+    wrapper.style.height = '100%';
+    wrapper.style.overflow = 'hidden';
+    wrapper.style.borderRadius = '10px';
+
+    const scroller = document.createElement('div');
+    scroller.style.height = '100%';
+    scroller.style.overflowY = 'auto';
+    scroller.style.padding = '0 14px 24px 0';
+    scroller.style.color = 'rgba(8,8,8,0.88)';
+    scroller.style.fontFamily = 'PowerGrotesk-Regular, sans-serif';
+    scroller.style.fontSize = '12px';
+    scroller.style.lineHeight = '1.45';
+    scroller.style.textTransform = 'lowercase';
+    scroller.style.whiteSpace = 'pre-wrap';
+    scroller.style.wordBreak = 'normal';
+    scroller.style.overflowWrap = 'anywhere';
+    scroller.textContent = lower(textValue || 'no content yet');
+
+    const track = document.createElement('div');
+    track.style.position = 'absolute';
+    track.style.top = '0';
+    track.style.right = '0';
+    track.style.width = '2px';
+    track.style.height = '100%';
+    track.style.borderRadius = '1px';
+    track.style.background = 'rgba(8,8,8,0.10)';
+    track.style.display = 'none';
+
+    const fill = document.createElement('div');
+    fill.style.position = 'absolute';
+    fill.style.top = '0';
+    fill.style.right = '0';
+    fill.style.width = '2px';
+    fill.style.borderRadius = '1px';
+    fill.style.background = 'rgba(8,8,8,0.42)';
+    track.appendChild(fill);
+
+    const fade = document.createElement('div');
+    fade.style.position = 'absolute';
+    fade.style.left = '0';
+    fade.style.right = '6px';
+    fade.style.bottom = '0';
+    fade.style.height = '8px';
+    fade.style.background = 'linear-gradient(to bottom, rgba(248,193,93,0), rgba(248,193,93,0.96))';
+    fade.style.pointerEvents = 'none';
+    fade.style.display = 'none';
+
+    function updateIndicators() {
+      const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const needsOverflow = maxScroll > 6;
+      track.style.display = needsOverflow ? 'block' : 'none';
+      fade.style.display = needsOverflow && scroller.scrollTop < maxScroll - 2 ? 'block' : 'none';
+      if (!needsOverflow) return;
+      const ratio = scroller.clientHeight / scroller.scrollHeight;
+      const thumbHeight = Math.max(18, scroller.clientHeight * ratio);
+      const top = maxScroll <= 0 ? 0 : ((scroller.scrollTop / maxScroll) * (scroller.clientHeight - thumbHeight));
+      fill.style.height = thumbHeight + 'px';
+      fill.style.transform = 'translateY(' + top + 'px)';
+    }
+
+    const scrollKey = key || '';
+    if (stateData.knowBodyKey !== scrollKey) {
+      stateData.knowBodyKey = scrollKey;
+      stateData.knowBodyScrollTop = 0;
+    }
+
+    scroller.addEventListener('scroll', function() {
+      stateData.knowBodyScrollTop = scroller.scrollTop;
+      updateIndicators();
+    });
+
+    wrapper.appendChild(scroller);
+    wrapper.appendChild(track);
+    wrapper.appendChild(fade);
+    fo.appendChild(wrapper);
+    frameGroup.appendChild(fo);
+
+    setTimeout(function() {
+      try { scroller.scrollTop = stateData.knowBodyScrollTop || 0; } catch (_) {}
+      updateIndicators();
+    }, 0);
+  }
+
   function drawTriangleOverlay() {
     if (!surfaceIsVisible('triangle')) return;
     const triangle = getTriangleState();
@@ -1791,14 +2088,14 @@
     if (currentState !== STATES.PROJECT_SWITCHER) return;
     const projects = getProjects();
     const activeId = getActiveProjectId();
+    const rows = getProjectSwitcherRows();
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
-    const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
-    const selectedProject = projects[selected] || projects[0];
+    const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(rows.length - 1, 0)));
+    const selectedRow = rows[selected] || rows[0];
+    const selectedProject = selectedRow?.project || projects[0];
     const isFreshWorkspace = freshWorkspaceState() && !onboardingAllowsProjectSwitcher();
-    const onboardingProjectLesson = onboardingActive();
-    const headerTitle = onboardingProjectLesson
-      ? 'first project'
-      : (isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project'));
+    const onboardingProjectLesson = onboardingActive() && getOnboardingStep() === 1;
+    const activeCount = projects.filter(function(project) { return project.status !== 'archived'; }).length;
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
     if (recordingActive()) recordingDot(23, 25, 10, svg);
@@ -1814,11 +2111,6 @@
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '22'
-    });
-    text(14, 54, headerTitle, {
-      fill: '#f8c15d',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '15'
     });
     text(226, 54, 'projects', {
       fill: 'rgba(244,239,228,0.36)',
@@ -1875,63 +2167,66 @@
     }
 
     const startY = 84;
-    const rowH = 54;
-    const visibleRows = 3;
-    const offset = Math.max(0, Math.min(selected - 1, Math.max(0, projects.length - visibleRows)));
-    projects.slice(offset, offset + visibleRows).forEach((project, visibleIndex) => {
+    const rowH = 46;
+    const visibleRows = 4;
+    const offset = Math.max(0, Math.min(selected - 1, Math.max(0, rows.length - visibleRows)));
+    rows.slice(offset, offset + visibleRows).forEach((row, visibleIndex) => {
       const absoluteIndex = offset + visibleIndex;
       const y = startY + (visibleIndex * rowH);
       const isSelected = absoluteIndex === selected;
-      const isActive = project.project_id === activeId;
       const tap = mk('g', { style: 'cursor: pointer;' });
-
-      mk('rect', {
-        x: 10,
-        y,
-        width: 220,
-        height: 42,
-        rx: 10,
-        ry: 10,
-        fill: isSelected ? 'rgba(248,193,93,0.14)' : 'rgba(255,255,255,0.025)',
-        stroke: isSelected ? 'rgba(248,193,93,0.42)' : 'rgba(255,255,255,0.05)',
-        'stroke-width': '1'
-      }, tap);
-
-      text(18, y + 16, compactProjectName(project.name || 'Untitled Project'), {
-        fill: isActive ? '#f8c15d' : '#f4efe4',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '14'
-      }, tap);
-
-      text(18, y + 30, project.type || 'general', {
-        fill: 'rgba(244,239,228,0.40)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      }, tap);
-
-      text(128, y + 30, project.status || 'active', {
-        fill: isSelected ? 'rgba(248,193,93,0.58)' : 'rgba(244,239,228,0.28)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      }, tap);
-
-      text(220, y + 16, recentTimeLabel(project.updated_at), {
-        fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      }, tap);
-
-      const compactCount = [project.counts?.captures || 0, project.counts?.insights || 0].reduce((a, b) => a + b, 0);
-      text(220, y + 30, compactCount ? `${compactCount} items` : 'quiet', {
-        fill: 'rgba(244,239,228,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      }, tap);
-
-      if (isActive) {
-        mk('rect', { x: 18, y: y + 36, width: 20, height: 2, rx: 1, ry: 1, fill: '#f8c15d' }, tap);
+      if (row.type === 'add') {
+        mk('rect', {
+          x: 10,
+          y,
+          width: 220,
+          height: 38,
+          rx: 10,
+          ry: 10,
+          fill: isSelected ? 'rgba(248,193,93,0.08)' : 'rgba(255,255,255,0.012)',
+          stroke: isSelected ? 'rgba(248,193,93,0.58)' : 'rgba(248,193,93,0.40)',
+          'stroke-width': '1'
+        }, tap);
+        text(18, y + 24, '+ new project', {
+          fill: isSelected ? '#f8c15d' : 'rgba(244,239,228,0.88)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '14'
+        }, tap);
+      } else {
+        const project = row.project;
+        const isActive = project.project_id === activeId;
+        mk('rect', {
+          x: 10,
+          y,
+          width: 220,
+          height: 38,
+          rx: 10,
+          ry: 10,
+          fill: isSelected ? 'rgba(248,193,93,0.14)' : 'rgba(255,255,255,0.025)',
+          stroke: isSelected ? 'rgba(248,193,93,0.42)' : 'rgba(255,255,255,0.05)',
+          'stroke-width': '1'
+        }, tap);
+        text(18, y + 16, compactProjectName(project.name || 'Untitled Project'), {
+          fill: isActive ? '#f8c15d' : '#f4efe4',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '14'
+        }, tap);
+        text(18, y + 29, project.type || 'general', {
+          fill: 'rgba(244,239,228,0.40)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        }, tap);
+        text(128, y + 29, project.status || 'active', {
+          fill: isSelected ? 'rgba(248,193,93,0.58)' : 'rgba(244,239,228,0.28)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        }, tap);
+        text(220, y + 16, recentTimeLabel(project.updated_at), {
+          fill: isActive ? 'rgba(248,193,93,0.70)' : 'rgba(244,239,228,0.36)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10',
+          'text-anchor': 'end'
+        }, tap);
       }
 
       tap.addEventListener('pointerup', event => {
@@ -1943,7 +2238,7 @@
       });
     });
 
-    if (projects.length > 1 && selectedProject && selectedProject.status !== 'archived') {
+    if (selectedRow?.type === 'project' && projects.length > 1 && selectedProject && selectedProject.status !== 'archived') {
       const archiveTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 14, y: 248, width: 74, height: 20, rx: 8, ry: 8,
@@ -1967,8 +2262,8 @@
     }
 
     text(226, 268, onboardingProjectLesson
-      ? 'lesson 2 · click returns'
-      : (projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded'), {
+      ? 'lesson 1 · click opens'
+      : `${activeCount} of 3`, {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -2744,7 +3039,7 @@
     const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
     const inlineListening = recordingActive() && activeSurface() === 'project';
-    const queueCount = window.StructaLLM?.pendingCount || 0;
+    const queueCount = getQueuePendingJobs().length;
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
@@ -2778,7 +3073,28 @@
       }
     }
 
-    if (data.pendingDecisions.length > 0) {
+    if (data.queueBlocker) {
+      const blocker = data.queueBlocker;
+      const boxY = 84;
+      mk('rect', { x: 10, y: boxY, width: 220, height: 142, rx: 8, fill: 'rgba(8,8,8,0.12)' });
+      text(18, boxY + 16, 'queue blocker', {
+        fill: 'rgba(8,8,8,0.50)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      wrapTextBlock(undefined, lower(String(blocker.body || 'queue stalled').slice(0, 132)), 18, boxY + 36, 192, 13, 'rgba(8,8,8,0.96)', '13', 5);
+      mk('rect', { x: 18, y: boxY + 100, width: 88, height: 20, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
+      text(28, boxY + 113, 'tap retry', {
+        fill: 'rgba(244,239,228,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      });
+      text(18, boxY + 136, 'double side skips', {
+        fill: 'rgba(8,8,8,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+    } else if (data.pendingDecisions.length > 0) {
       const pd = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
       const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
       const pdOptions = typeof pd === 'string' ? [] : (pd.options || []);
@@ -2852,7 +3168,7 @@
 
       optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
-    } else if (data.openQuestions > 0) {
+    } else if (data.projectCapNotice || data.openQuestions > 0) {
       const boxY = 78;
       mk('rect', { x: 10, y: boxY, width: 220, height: 170, rx: 12, fill: 'rgba(8,8,8,0.15)' });
       text(18, boxY + 18, 'answer to continue', {
@@ -2873,12 +3189,14 @@
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
       const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);
-      mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
+      if (!data.projectCapNotice) {
+        mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+        text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
+          fill: 'rgba(244,239,228,0.96)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '12'
+        });
+      }
       if (data.blockerCount > 1) {
         text(18, ctaY + 42, `${data.blockerCount} blockers waiting to clear`, {
           fill: 'rgba(8,8,8,0.36)',
@@ -3040,123 +3358,86 @@
       });
     }
 
-    // Content area - directly below chips
-    const contentY = showChipRow ? 142 : 124;
-
-    if (currentState === STATES.KNOW_BROWSE) {
-      const titleText = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, 178, 15, 'rgba(8,8,8,0.96)', '15', 3);
-
-      text(226, contentY + 1, formatTimeLabel(item.created_at), {
-        fill: 'rgba(8,8,8,0.40)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10', 'text-anchor': 'end'
-      });
-      if (item.triangulated) {
-        text(198, contentY + 1, '▼', {
-          fill: 'rgba(8,8,8,0.56)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9'
-        });
-      }
-
-      // Context label - source type
-      const contextLabel = item.source === 'question' ? 'guided ask'
-        : item.source === 'insight' ? 'signal'
-        : item.source === 'capture-image' ? 'visual note'
-        : item.source === 'decision' ? 'locked decision'
-        : item.source === 'backlog' ? 'open task'
-        : lane.label;
-      const metaY = contentY + (titleRows * 14) + 6;
-      text(14, metaY, contextLabel, {
-        fill: 'rgba(8,8,8,0.40)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-
-      const bodyY = metaY + 18;
-      const bodyText = String(item.body || 'no content yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const bodyRows = wrapTextBlock(undefined, lower(bodyText), 14, bodyY, 212, 13, 'rgba(8,8,8,0.85)', '12', 7);
-
-      const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      if (nextText && nextText !== 'review this') {
-        const actionY = Math.min(238, bodyY + (bodyRows * 13) + 16);
-        text(14, actionY, '→', {
-          fill: 'rgba(8,8,8,0.50)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '12'
-        });
-        wrapTextBlock(undefined, nextText, 26, actionY, 196, 12, 'rgba(8,8,8,0.70)', '11', 2);
-      }
-
-      // Scroll hint
-      const browseHint = onboardingActive() && getOnboardingStep() === 3
-        ? 'scroll once inside'
-        : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length, false));
-      text(226, 276, `${browseHint}${items.length > 1 ? ' · ' + (itemIdx + 1) + '/' + items.length : ''}`, {
-        fill: 'rgba(8,8,8,0.50)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-
-      // Touchable content area - tap opens detail
-      const contentGroup = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x: 0, y: contentY - 16, width: 240, height: 206, fill: 'transparent' }, contentGroup);
-      contentGroup.addEventListener('pointerup', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        transition(STATES.KNOW_DETAIL);
-      });
-      return;
+    const detailMode = currentState === STATES.KNOW_DETAIL;
+    const contentY = showChipRow ? 120 : 104;
+    const titleText = normalizeTinyText(item.title || lane.label || 'untitled');
+    const contextLabel = item.source === 'question' ? 'guided ask'
+      : item.source === 'insight' ? 'signal'
+      : item.source === 'triangle' ? 'triangle signal'
+      : item.source === 'capture-image' ? 'visual note'
+      : item.source === 'decision' ? 'decision'
+      : item.source === 'backlog' ? 'task'
+      : lane.label;
+    const titleWidth = items.length > 1 ? 150 : 176;
+    const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, titleWidth, 16, 'rgba(8,8,8,0.96)', '16', 2);
+    const dotsCount = Math.min(Math.max(1, items.length || 1), 6);
+    const dotsIndex = Math.min(safeItemIdx, dotsCount - 1);
+    const dotsWidth = dotsCount > 1 ? ((dotsCount - 1) * 8) : 0;
+    if (dotsCount > 1) {
+      drawKnowItemDots(dotsCount, dotsIndex, 226 - dotsWidth - 4, contentY + 4);
     }
-
-    // KNOW_DETAIL - expanded view
-    const detailTitle = String(item.title || lane.label || 'untitled').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const detailTitleRows = wrapTextBlock(undefined, lower(detailTitle), 14, contentY, 178, 15, 'rgba(8,8,8,0.96)', '15', 3);
-    text(226, contentY + 1, formatTimeLabel(item.created_at), {
-      fill: 'rgba(8,8,8,0.50)',
+    text(226, contentY + 22, formatTimeLabel(item.created_at), {
+      fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10', 'text-anchor': 'end'
+      'font-size': '10',
+      'text-anchor': 'end'
     });
     if (item.triangulated) {
-      text(198, contentY + 1, '▼', {
-        fill: 'rgba(8,8,8,0.60)',
+      text(188, contentY + 22, '▼', {
+        fill: 'rgba(8,8,8,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
     }
 
-    const detailSection = item.source === 'question' ? 'guided ask' : 'detail';
-    const detailMetaY = contentY + (detailTitleRows * 14) + 8;
-    drawSectionLabel(undefined, 14, detailMetaY, detailSection);
-    const detailBodyY = detailMetaY + 16;
-    const detailBodyText = String(item.body || 'no detail yet').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const detailRows = wrapTextBlock(undefined, lower(detailBodyText), 14, detailBodyY, 212, 13, 'rgba(8,8,8,0.90)', '13', 9);
+    const metaY = contentY + (titleRows * 16) + 4;
+    drawSectionLabel(undefined, 14, metaY, contextLabel);
 
-    if (item.source === 'question') {
-      const actionY = Math.min(234, detailBodyY + (detailRows * 13) + 16);
-      mk('rect', { x: 10, y: actionY - 6, width: 220, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.10)' });
-      drawSquaredPill(18, actionY + 1, 78, 14, 'hold ptt', true, 'light');
-      text(108, actionY + 12, 'to answer this branch', {
-        fill: 'rgba(8,8,8,0.56)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-    } else {
-      const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      if (nextText && nextText !== 'review this') {
-        const nextY = Math.min(236, detailBodyY + (detailRows * 13) + 18);
-        drawSectionLabel(undefined, 14, nextY, 'next move');
-        wrapTextBlock(undefined, nextText, 14, nextY + 16, 212, 12, 'rgba(8,8,8,0.96)', '12', 2);
-      }
+    const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    let bodyText = normalizeTinyText(item.body || 'no content yet');
+    if (detailMode && nextText && nextText !== 'review this') {
+      bodyText = `${bodyText}\n\nnext move\n${nextText}`;
     }
 
-    const detailHint = onboardingActive() && getOnboardingStep() === 3
-      ? 'scroll once inside'
-      : (recordingActive() && activeSurface() === 'insight' ? 'release to build context' : getKnowHintText(item, lane, items.length, true));
-    text(226, 276, `${detailHint}${items.length > 1 ? ' · ' + (safeItemIdx + 1) + '/' + items.length : ''}`, {
-      fill: 'rgba(8,8,8,0.34)',
+    const frameY = metaY + 14;
+    const frameBottom = detailMode ? 252 : 248;
+    const frame = {
+      x: 14,
+      y: frameY,
+      width: 212,
+      height: Math.max(76, frameBottom - frameY)
+    };
+    drawKnowScrollFrame(bodyText, frame, `${currentState}:${lane.id}:${safeChipIdx}:${safeItemIdx}:${item.node_id || item.created_at || ''}`);
+
+    if (!detailMode) {
+      const titleTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 10,
+        y: contentY - 10,
+        width: 220,
+        height: Math.max(38, metaY - contentY + 16),
+        fill: 'transparent'
+      }, titleTap);
+      titleTap.addEventListener('pointerup', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        transition(STATES.KNOW_DETAIL);
+      });
+    }
+
+    const footerLeft = `${Math.min(safeItemIdx + 1, Math.max(items.length, 1))} of ${Math.max(items.length, 1)}`;
+    const footerRight = onboardingActive() && getOnboardingStep() === 3
+      ? 'scroll once'
+      : (!detailMode
+          ? 'click · detail'
+          : (item.source === 'question' ? 'hold ptt · answer' : 'hold ptt · reflect'));
+    text(14, 276, footerLeft, {
+      fill: 'rgba(8,8,8,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+    text(226, 276, footerRight, {
+      fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
@@ -3189,6 +3470,7 @@
     drawInsightSurface();
     drawTriangleOverlay();
     drawTriangleIndicator();
+    drawAmbientQueueIndicator();
 
     const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
@@ -3205,10 +3487,10 @@
     switch (currentState) {
       case STATES.PROJECT_SWITCHER: {
         if (onboardingActive() && !onboardingAllowsProjectSwitcher()) break;
-        const projects = getProjects();
-        if (!projects.length) break;
+        const rows = getProjectSwitcherRows();
+        if (!rows.length) break;
         const currentIndex = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
-        stateData.projectListIndex = Math.max(0, Math.min(currentIndex + (direction > 0 ? 1 : -1), projects.length - 1));
+        stateData.projectListIndex = Math.max(0, Math.min(currentIndex + (direction > 0 ? 1 : -1), rows.length - 1));
         stateData.projectFlushConfirm = false;
         render();
         break;
@@ -3352,6 +3634,10 @@
       case STATES.KNOW_BROWSE:
       case STATES.KNOW_DETAIL:
       case STATES.NOW_BROWSE: {
+        if (currentState === STATES.NOW_BROWSE && buildNowSummary().queueBlocker) {
+          skipCurrentQueueBlocker();
+          break;
+        }
         dispatchTriangleDoubleSide(buildTriangleCurrentItem());
         break;
       }
@@ -3438,6 +3724,10 @@
             render();
             return;
           }
+          return;
+        }
+        if (buildNowSummary().queueBlocker) {
+          retryCurrentQueueBlocker();
           return;
         }
         if (approveCurrentNowDecision()) {
@@ -3946,6 +4236,14 @@
     scheduleLogRefresh();
     updateLogOps();
   });
+  ['structa-queue-enqueued', 'structa-queue-started', 'structa-queue-progress', 'structa-queue-resolved', 'structa-queue-rejected', 'structa-queue-blocked'].forEach(function(name) {
+    window.addEventListener(name, function() {
+      syncQueueBlockers();
+      scheduleLogRefresh();
+      updateLogOps();
+      scheduleRender();
+    });
+  });
 
   window.addEventListener('structa-triangle-copied', function(event) {
     const itemType = event?.detail?.item?.type || 'item';
@@ -4100,7 +4398,9 @@
 
   native?.setActiveNode?.(currentCard().id);
   native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: 'home', resumed_at: new Date().toISOString() });
+  syncQueueBlockers();
   refreshLogFromMemory();
+  updateLogOps();
   renderNow();
   maybeStartHeartbeat();
 
@@ -4254,9 +4554,14 @@
 
     if (cmd.command === 'new-project') {
       if (cmd.name && native?.createProject) {
-        native.createProject(cmd.name);
-        pushLog('project: ' + cmd.name.slice(0, 30), 'voice');
-        transition(STATES.HOME);
+        var created = native.createProject(cmd.name);
+        if (created && created.ok === false) {
+          selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
+          transition(STATES.HOME);
+        } else {
+          pushLog('project: ' + cmd.name.slice(0, 30), 'voice');
+          transition(STATES.HOME);
+        }
       }
       render();
     }

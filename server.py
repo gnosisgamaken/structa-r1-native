@@ -65,13 +65,19 @@ def soften_branch_prompt(text, limit=120):
     value = compact(text, limit)
     lowered = value.lower()
     if lowered.startswith("what specific help do you need"):
-        return "let's shape the next branch: what matters most first?"
+        return "let's open the next branch: what matters most first?"
     if lowered.startswith("what help do you need") or lowered.startswith("what do you need help"):
-        return "let's shape the next branch: what matters most first?"
+        return "let's open the next branch: what matters most first?"
     if lowered.startswith("how can i help") or lowered.startswith("how can structa help"):
         return "let's choose where this should begin."
     if lowered.startswith("what should happen first"):
         return "let's decide what should happen first."
+    if lowered.startswith("what do you need for") or lowered.startswith("what do you need to"):
+        return "let's choose what this needs first."
+    if lowered.startswith("what are you trying to"):
+        return "let's name what this is moving toward."
+    if lowered.startswith("what matters most"):
+        return "let's name what matters most first."
     if value.endswith(("?", "!", ".")):
         return value
     if lowered.startswith(("what ", "how ", "where ", "when ", "who ")):

@@ -2,6 +2,7 @@
   'use strict';
 
   const native = window.StructaNative;
+  const queue = window.StructaProcessingQueue;
 
   function getLLM() {
     return window.StructaLLM;
@@ -12,6 +13,7 @@
   let pair = null;
   let status = '';
   let lastError = '';
+  let queuedJobId = '';
 
   function clone(value) {
     return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -252,6 +254,7 @@
     pair = null;
     status = '';
     lastError = '';
+    queuedJobId = '';
     persistArmed();
   }
 
@@ -281,6 +284,7 @@
   }
 
   function dismiss() {
+    if (queuedJobId && queue?.cancel) queue.cancel(queuedJobId);
     clearRuntimeState();
     emit('structa-triangle-dismissed', {});
     return getState();
@@ -305,11 +309,13 @@
   }
 
   function cancel() {
+    if (queuedJobId && queue?.cancel) queue.cancel(queuedJobId);
     if (armed) {
       mode = 'armed';
       pair = null;
       status = 'armed';
       lastError = '';
+      queuedJobId = '';
       persistArmed();
       emit('structa-triangle-cancelled', {
         item: clone(armed)
@@ -338,8 +344,39 @@
       angle: spoken
     });
 
-    const pointA = describeForTriangle(pair.a);
-    const pointB = describeForTriangle(pair.b);
+    const payload = {
+      pair: clone(pair),
+      angle: spoken
+    };
+    if (!queue) {
+      return runTriangleSynthesis(payload);
+    }
+    const jobId = queue.enqueue({
+      kind: 'triangle-synthesize',
+      priority: 'P0',
+      payload: payload,
+      origin: {
+        screen: 'triangle',
+        itemId: itemKey(pair.a) + '|' + itemKey(pair.b)
+      },
+      timeoutMs: 8000
+    });
+    queuedJobId = jobId;
+    return Promise.resolve({ ok: true, queued: true, jobId: jobId });
+  }
+
+  function runTriangleSynthesis(payload) {
+    const localPair = payload?.pair || {};
+    const spoken = String(payload?.angle || '').trim();
+    if (!localPair?.a || !localPair?.b || !spoken) {
+      lastError = 'synthesis failed — try again';
+      status = 'retry';
+      emit('structa-triangle-failed', { message: lastError, recoverable: true });
+      return Promise.resolve({ ok: false, error: lastError, recoverable: true });
+    }
+
+    const pointA = describeForTriangle(localPair.a);
+    const pointB = describeForTriangle(localPair.b);
     const imageData = pointB.hasImage ? pointB.imageData : (pointA.hasImage ? pointA.imageData : '');
     const imageBase64 = /^data:image\/\w+;base64,/i.test(imageData)
       ? imageData.replace(/^data:image\/\w+;base64,/, '')
@@ -357,19 +394,19 @@
     return orchestrator.synthesizeTriangle({
       project: buildProjectEnvelope(),
       pointA: {
-        id: pair.a.id,
+        id: localPair.a.id,
         type: pointA.type,
         time: pointA.time,
         body: pointA.body,
-        project_id: pair.a.project_id || '',
+        project_id: localPair.a.project_id || '',
         imageBase64: imageBase64 || ''
       },
       pointB: {
-        id: pair.b.id,
+        id: localPair.b.id,
         type: pointB.type,
         time: pointB.time,
         body: pointB.body,
-        project_id: pair.b.project_id || '',
+        project_id: localPair.b.project_id || '',
         imageBase64: imageBase64 || ''
       },
       input: {
@@ -407,8 +444,8 @@
         meta: {
           triangulated: true,
           triangle_inputs: {
-            a: { type: pair.a.type, id: pair.a.id },
-            b: { type: pair.b.type, id: pair.b.id },
+            a: { type: localPair.a.type, id: localPair.a.id },
+            b: { type: localPair.b.type, id: localPair.b.id },
             angle: spoken
           }
         }
@@ -426,16 +463,16 @@
           meta: {
             triangulated: true,
             triangle_inputs: {
-              a: { type: pair.a.type, id: pair.a.id },
-              b: { type: pair.b.type, id: pair.b.id },
+              a: { type: localPair.a.type, id: localPair.a.id },
+              b: { type: localPair.b.type, id: localPair.b.id },
               angle: spoken
             }
           }
         });
       }
 
-      updateLinks(signalNode?.node_id || '', pair.a, pair.b, questionNode?.node_id || '');
-      const origin = clone(pair.origin || {});
+      updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
+      const origin = clone(localPair.origin || {});
       clearRuntimeState();
       window.StructaLLM?.speakMilestone?.('triangle');
       emit('structa-triangle-result', {
@@ -458,6 +495,28 @@
       status = 'retry';
       emit('structa-triangle-failed', { message: lastError, recoverable: true });
       return { ok: false, error: lastError, recoverable: true };
+    });
+  }
+
+  if (queue && !window.__STRUCTA_TRIANGLE_QUEUE_REGISTERED__) {
+    window.__STRUCTA_TRIANGLE_QUEUE_REGISTERED__ = true;
+    queue.registerHandler('triangle-synthesize', function(job) {
+      return runTriangleSynthesis(job.payload || {}).then(function(result) {
+        if (!result || !result.ok) {
+          return {
+            ok: false,
+            blocked: true,
+            message: 'synthesis stalled — tap to retry, double side skips'
+          };
+        }
+        return result;
+      }).catch(function() {
+        return {
+          ok: false,
+          blocked: true,
+          message: 'synthesis stalled — tap to retry, double side skips'
+        };
+      });
     });
   }
 

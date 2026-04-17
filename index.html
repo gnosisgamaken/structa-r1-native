@@ -231,9 +231,10 @@
       display: block;
     }
 
+    #log-queue-row,
     #log-phase-row,
     #log-stats-row {
-      white-space: nowrap;
+      white-space: pre-line;
       overflow: hidden;
       text-overflow: ellipsis;
     }
@@ -614,6 +615,7 @@
         <span id="log-chain-badge" class="idle"><span class="chain-dot"></span><span id="chain-phase-text">idle</span></span>
       </button>
       <div id="log-ops" hidden>
+        <div id="log-queue-row">queue · clear</div>
         <div id="log-phase-row">chain idle · □□□□□</div>
         <div id="log-stats-row">captures 0 · signals 0 · decisions 0 · open 0</div>
       </div>
@@ -653,6 +655,7 @@
   <script src="js/validation.js?v=20260417"></script>
   <script src="js/storage-manager.js?v=20260417"></script>
   <script src="js/rabbit-adapter.js?v=20260417"></script>
+  <script src="js/processing-queue.js?v=20260418"></script>
   <script src="js/context-router.js?v=20260417"></script>
   <script src="js/audio-engine.js?v=20260417"></script>
   <script src="js/voice-capture.js?v=20260417"></script>

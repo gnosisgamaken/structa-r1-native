@@ -18,6 +18,7 @@
 
   var native = window.StructaNative;
   var llm = window.StructaLLM;
+  var queue = window.StructaProcessingQueue;
   var panel = window.StructaPanel;
 
   // === Chain state ===
@@ -310,12 +311,37 @@
     return Math.max(nodeCount, legacyCount) < 5;
   }
 
-  function runChainStep(payload) {
+  function runChainStepNow(payload) {
     var orchestrator = window.StructaOrchestrator;
     if (!orchestrator || !orchestrator.runChainStep || !llm || !llm.executePreparedLLM) {
       return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
     return orchestrator.runChainStep(payload, llm.executePreparedLLM);
+  }
+
+  if (queue && !window.__STRUCTA_CHAIN_QUEUE_REGISTERED__) {
+    window.__STRUCTA_CHAIN_QUEUE_REGISTERED__ = true;
+    queue.registerHandler('chain-step', function(job) {
+      return runChainStepNow(job.payload || {});
+    });
+  }
+
+  function runChainStep(payload) {
+    if (!queue) return runChainStepNow(payload);
+    return new Promise(function(resolve, reject) {
+      queue.enqueue({
+        kind: 'chain-step',
+        priority: 'P3',
+        payload: payload,
+        origin: {
+          screen: 'chain',
+          itemId: payload.phase || chain.currentPhase || 'observe'
+        },
+        timeoutMs: 30000,
+        onResolve: resolve,
+        onReject: reject
+      });
+    });
   }
 
   function getBlockers() {
@@ -352,7 +378,7 @@
       pause('onboarding');
       return;
     }
-    if (llm && llm.pendingHighPriorityCount > 0 && chain.currentPhase !== 'cooldown') {
+    if (queue && queue.countByPriority && queue.countByPriority('P2') > 0 && chain.currentPhase !== 'cooldown') {
       return;
     }
 
@@ -608,7 +634,7 @@
     clearTimeout(immediateBeatTimer);
     immediateBeatTimer = setTimeout(function() {
       immediateBeatTimer = null;
-      if (window.StructaLLM && window.StructaLLM.pendingHighPriorityCount > 0) {
+      if (queue && queue.countByPriority && queue.countByPriority('P2') > 0) {
         requestImmediateBeat();
         return;
       }

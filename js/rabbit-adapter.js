@@ -637,12 +637,26 @@
       });
   }
 
+  function activeProjectCount() {
+    ensureProjectRegistry();
+    return memory.projects.filter(function(project) {
+      return project && project.status !== 'archived';
+    }).length;
+  }
+
   function createProject(name, type) {
     ensureProjectRegistry();
     var rawName = String((name || '').trim() || 'Untitled Project');
     var normalizedName = lower(rawName);
     if (normalizedName === '' || normalizedName === 'untitled project' || normalizedName === 'project') {
       return syncActiveProjectAlias();
+    }
+    if (activeProjectCount() >= 3) {
+      updateUIState({
+        project_cap_notice: 'three projects active — archive one to start another',
+        last_surface: 'home'
+      });
+      return { ok: false, error: 'project cap reached' };
     }
     var allowDuplicate = false;
     var existing = allowDuplicate ? null : memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
@@ -660,7 +674,11 @@
     memory.projects.unshift(project);
     memory.active_project_id = project.project_id;
     syncActiveProjectAlias();
-    updateUIState({ last_event_summary: 'project created', last_surface: 'home' });
+    updateUIState({
+      last_event_summary: 'project created',
+      last_surface: 'home',
+      project_cap_notice: ''
+    });
     persist();
     window.StructaLLM?.speakMilestone?.('project_live');
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
@@ -686,6 +704,7 @@
     rebuildLegacyViews();
     memory.uiState.last_event_summary = 'project opened';
     memory.uiState.last_surface = 'home';
+    memory.uiState.project_cap_notice = '';
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return project;
@@ -708,6 +727,7 @@
       rebuildLegacyViews();
     }
     memory.uiState.last_event_summary = 'project archived';
+    memory.uiState.project_cap_notice = '';
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return { ok: true, project: project };
@@ -735,6 +755,7 @@
     syncActiveProjectAlias();
     rebuildLegacyViews();
     memory.uiState.last_event_summary = 'project deleted';
+    memory.uiState.project_cap_notice = '';
     persist();
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return { ok: true, project_id: project.project_id };
@@ -758,6 +779,7 @@
     try {
       window.localStorage?.removeItem(cacheKey);
       window.localStorage?.removeItem(cacheKey + '_emergency');
+      window.localStorage?.removeItem('structa.queue.v1');
     } catch (_) {}
 
     var clearPromise = window.StructaStorage?.clear

@@ -282,9 +282,27 @@
     };
   }
 
+  function onboardingBlocked() {
+    var ui = native && native.getUIState ? native.getUIState() : {};
+    if (ui && ui.onboarded) return false;
+    if (ui && ui.onboarding_step === 'complete') return false;
+    if (ui && typeof ui.onboarding_step === 'number') return true;
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var isUntitled = String(project?.name || '').toLowerCase() === 'untitled project';
+    var nodeCount = (project.nodes || []).length;
+    var legacyCount = (project.insights || []).length + (project.captures || []).length +
+      (project.decisions || []).length + (project.backlog || []).length +
+      (project.open_questions || []).length + (project.pending_decisions || []).length;
+    return isUntitled && nodeCount + legacyCount === 0;
+  }
+
   // === Beat logic ===
   function beat() {
     if (!chain.active) return;
+    if (onboardingBlocked()) {
+      pause('onboarding');
+      return;
+    }
 
     // Check idle timeout
     var idleMs = Date.now() - chain.lastUserActivity;
@@ -422,6 +440,10 @@
         // Intentional fall-through to evaluate when max impacts reached
 
       case 'evaluate':
+        if (!chain.impacts.some(function(impact) { return impact.type === 'clarify'; })) {
+          chain.currentPhase = 'clarify';
+          break;
+        }
         llm.sendToLLM(evaluatePrompt(context, chain.impacts), { speak: false, journal: false, timeout: 25000, priority: 'low' })
           .then(function(result) {
             if (!chain.active) return;
@@ -457,6 +479,7 @@
 
   // === Start / Stop ===
   function start(bpm) {
+    if (onboardingBlocked()) return;
     if (chain.active) return;
     chain.active = true;
     chain.bpm = bpm || 4;
@@ -483,6 +506,7 @@
 
   function resume() {
     chain.lastUserActivity = Date.now();
+    if (onboardingBlocked()) return;
     if (!chain.active && chain.currentPhase !== 'cooldown') {
       start(chain.bpm);
     } else if (!chain.active) {
@@ -499,6 +523,7 @@
 
   var immediateBeatTimer = null;
   function requestImmediateBeat() {
+    if (onboardingBlocked()) return;
     if (!chain.active) return;
     chain.awaitingFastTrack = true;
     clearTimeout(immediateBeatTimer);
@@ -539,6 +564,7 @@
   // Wire to hardware events so chain resumes on device wake
   ['sideClick', 'scrollUp', 'scrollDown', 'longPressStart'].forEach(function(evt) {
     window.addEventListener(evt, function() {
+      if (onboardingBlocked()) return;
       touchActivity();
       if (!chain.active) resume();
     });
@@ -547,12 +573,14 @@
   // Also resume on visibility change (device wake)
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
+      if (onboardingBlocked()) return;
       touchActivity();
       if (!chain.active) resume();
     }
   });
 
   window.addEventListener('structa-fast-feedback', function() {
+    if (onboardingBlocked()) return;
     touchActivity();
     if (!chain.active) resume();
     requestImmediateBeat();

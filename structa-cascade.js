@@ -66,9 +66,23 @@
   }
 
   function recordingDot(x, y, r, parent = svg, fill = '#b51212') {
-    mk('circle', { cx: x, cy: y, r: r + 1, fill: 'rgba(22,3,3,0.48)' }, parent);
-    mk('circle', { cx: x, cy: y, r, fill, opacity: '0.96' }, parent);
-    mk('circle', { cx: x, cy: y, r: Math.max(1, r - 2), fill: 'rgba(255,255,255,0.10)' }, parent);
+    const group = mk('g', {}, parent);
+    mk('circle', { cx: x, cy: y, r: r + 1, fill: 'rgba(22,3,3,0.48)' }, group);
+    const outer = mk('circle', { cx: x, cy: y, r, fill, opacity: '0.96' }, group);
+    const inner = mk('circle', { cx: x, cy: y, r: Math.max(1, r - 2), fill: 'rgba(255,255,255,0.10)' }, group);
+    const animateOuter = mk('animate', {
+      attributeName: 'opacity',
+      values: '0.98;0.44;0.98',
+      dur: '0.82s',
+      repeatCount: 'indefinite'
+    }, outer);
+    const animateInner = mk('animate', {
+      attributeName: 'opacity',
+      values: '0.18;0.02;0.18',
+      dur: '0.82s',
+      repeatCount: 'indefinite'
+    }, inner);
+    return group;
   }
 
   // Derived from stateData (shorthand accessors)
@@ -167,13 +181,24 @@
     const projectCaptures = ((getProjectMemory()?.captures) || []).filter(Boolean).map(capture => {
       return capture && !capture.project_id ? { ...capture, project_id: activeProjectId } : capture;
     });
-    const seen = new Set();
-    return memoryCaptures.concat(projectCaptures).filter(capture => {
+    const merged = new Map();
+    memoryCaptures.forEach(function(capture) {
       const key = capture?.entry_id || capture?.id || capture?.node_id || '';
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).sort((a, b) => {
+      if (!key) return;
+      merged.set(key, capture);
+    });
+    projectCaptures.forEach(function(capture) {
+      const key = capture?.entry_id || capture?.id || capture?.node_id || '';
+      if (!key) return;
+      const existing = merged.get(key) || {};
+      merged.set(key, {
+        ...existing,
+        ...capture,
+        meta: { ...(existing.meta || {}), ...(capture.meta || {}) },
+        image_asset: capture.image_asset || existing.image_asset || null
+      });
+    });
+    return Array.from(merged.values()).sort((a, b) => {
       const aTime = new Date(a?.captured_at || a?.created_at || a?.meta?.captured_at || 0).getTime();
       const bTime = new Date(b?.captured_at || b?.created_at || b?.meta?.captured_at || 0).getTime();
       return aTime - bTime;
@@ -251,6 +276,78 @@
     const pending = (project?.pending_decisions || []).length;
     const nodes = (project?.nodes || []).length;
     return captures + insights + backlog + asks + pending + nodes === 0;
+  }
+
+  function getOnboardingStep() {
+    const ui = getUIState();
+    if (ui?.onboarded) return 'complete';
+    if (ui?.onboarding_step === 'complete') return 'complete';
+    if (typeof ui?.onboarding_step === 'number') return ui.onboarding_step;
+    return freshWorkspaceState() ? 0 : 'complete';
+  }
+
+  function onboardingActive() {
+    return getOnboardingStep() !== 'complete';
+  }
+
+  function onboardingAllowedCardIds(step = getOnboardingStep()) {
+    if (step === 'complete') return cards.map(card => card.id);
+    if (step >= 4) return ['now', 'know', 'show'];
+    if (step >= 3) return ['now', 'know'];
+    return ['now'];
+  }
+
+  function onboardingAllowsLogs() {
+    return !onboardingActive();
+  }
+
+  function onboardingAllowsProjectSwitcher() {
+    return getOnboardingStep() === 1;
+  }
+
+  function setOnboardingStep(step) {
+    native?.updateUIState?.({
+      onboarding_step: step,
+      onboarded: step === 'complete'
+    });
+  }
+
+  function completeOnboarding() {
+    setOnboardingStep('complete');
+    pushLog('onboarding complete', 'system');
+    if (window.StructaHeartbeat && window.StructaHeartbeat.bpm === 0 && projectHasMeaningfulContent()) {
+      window.StructaHeartbeat.start(3);
+    }
+    if (projectHasMeaningfulContent()) {
+      chainStarted = true;
+      window.StructaImpactChain?.start?.(2);
+    }
+  }
+
+  function homeOnboardingSelectionAllowed(cardId) {
+    return onboardingAllowedCardIds().includes(cardId);
+  }
+
+  function selectNextAllowedCard(direction) {
+    const allowed = onboardingAllowedCardIds();
+    if (!allowed.length) return;
+    if (allowed.length === 1) {
+      const onlyIndex = cards.findIndex(card => card.id === allowed[0]);
+      if (onlyIndex >= 0) selectedIndex = onlyIndex;
+      render();
+      return;
+    }
+    const currentId = currentCard()?.id;
+    let idx = allowed.indexOf(currentId);
+    if (idx === -1) idx = 0;
+    idx = (idx + (direction > 0 ? 1 : -1) + allowed.length) % allowed.length;
+    const nextIndex = cards.findIndex(card => card.id === allowed[idx]);
+    if (nextIndex >= 0) {
+      selectedIndex = nextIndex;
+      native?.setActiveNode?.(currentCard().id);
+      native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: currentState });
+      render();
+    }
   }
 
   function getCaptureSummary(capture) {
@@ -395,6 +492,13 @@
     document.title = 'structa';
     window.__STRUCTA_PTT_TARGET__ = null;
     document.body.classList.remove('input-locked');
+    if (onboardingActive()) {
+      const allowed = onboardingAllowedCardIds();
+      if (!allowed.includes(currentCard()?.id)) {
+        const nextIndex = cards.findIndex(function(card) { return card.id === allowed[0]; });
+        if (nextIndex >= 0) selectedIndex = nextIndex;
+      }
+    }
     maybeStartHeartbeat();
   };
 
@@ -410,6 +514,7 @@
     const activeId = getActiveProjectId();
     const activeIndex = Math.max(0, projects.findIndex(project => project.project_id === activeId));
     stateData.projectListIndex = typeof data.projectListIndex === 'number' ? data.projectListIndex : activeIndex;
+    stateData.projectFlushConfirm = false;
   };
 
   stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
@@ -590,6 +695,11 @@
     stateData.knowLaneIndex = typeof data?.knowLaneIndex === 'number' ? data.knowLaneIndex : (typeof stateData.knowLaneIndex === 'number' ? stateData.knowLaneIndex : 0);
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
+    stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
+    if (getOnboardingStep() === 3) {
+      setOnboardingStep(4);
+      pushLog('lesson 3 complete', 'system');
+    }
   };
 
   // --- KNOW_DETAIL ---
@@ -636,6 +746,9 @@
 
   // === Open a card's primary surface ===
   function openCard(card) {
+    if (onboardingActive() && !onboardingAllowedCardIds().includes(card.id)) {
+      return;
+    }
     if (card.surface === 'camera') {
       transition(STATES.SHOW_BROWSE);
       return;
@@ -710,6 +823,13 @@
     pushLog(selectedOption ? `decision approved: ${selectedOption}` : 'decision approved', 'decision');
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
+    stateData.nowFeedback = 'decision queued';
+    setTimeout(function() {
+      if (stateData.nowFeedback === 'decision queued') {
+        stateData.nowFeedback = '';
+        render();
+      }
+    }, 1200);
     render();
     return true;
   }
@@ -738,6 +858,7 @@
   }
 
   function openProjectSwitcher() {
+    if (onboardingActive() && !onboardingAllowsProjectSwitcher()) return;
     const projects = getProjects();
     if (!projects.length) return;
     const activeId = getActiveProjectId();
@@ -748,6 +869,12 @@
   function activateSelectedProject() {
     const projects = getProjects();
     if (!projects.length) return false;
+    if (onboardingActive() && getOnboardingStep() === 1) {
+      setOnboardingStep(2);
+      pushLog('lesson 1 complete', 'system');
+      transition(STATES.NOW_BROWSE);
+      return true;
+    }
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const index = Math.max(0, Math.min(selectedIndexValue, projects.length - 1));
     const project = projects[index];
@@ -831,6 +958,7 @@
 
   // === Heartbeat ===
   function maybeStartHeartbeat() {
+    if (onboardingActive()) return;
     if (window.StructaHeartbeat && window.StructaHeartbeat.bpm === 0) {
       if (projectHasMeaningfulContent()) {
         window.StructaHeartbeat.start(3);
@@ -913,6 +1041,102 @@
     };
   }
 
+  function drawOnboardingNowPanel(nowCard, data) {
+    const step = getOnboardingStep();
+    const inlineListening = recordingActive() && activeSurface() === 'project';
+    const cardY = 84;
+    mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
+
+    if (step === 0) {
+      text(18, cardY + 18, 'welcome to structa', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      wrapTextBlock(undefined, 'this is your project surface. everything starts here.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 4);
+      mk('rect', { x: 18, y: cardY + 116, width: 116, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      text(30, cardY + 132, 'ptt click → begin', {
+        fill: 'rgba(244,239,228,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'lesson 1 of 4', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    if (step === 1) {
+      text(18, cardY + 18, 'lesson 1 · shake to stack', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      wrapTextBlock(undefined, 'shake the device to see your projects. this is how you switch context.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
+      text(18, cardY + 132, 'shake now →', {
+        fill: 'rgba(8,8,8,0.54)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'lesson 2 unlocks after stack', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    if (step === 2) {
+      text(18, cardY + 18, 'lesson 2 · hold ptt', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      mk('rect', { x: 10, y: cardY + 30, width: 3, height: 108, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.76)' });
+      wrapTextBlock(undefined, 'what is this project about?', 20, cardY + 50, 190, 15, 'rgba(8,8,8,0.96)', '16', 4);
+      mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      text(30, cardY + 134, inlineListening ? 'release to answer' : 'hold ptt → answer', {
+        fill: 'rgba(244,239,228,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'lesson 3 unlocks after answer', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    if (step === 3) {
+      text(18, cardY + 18, 'lesson 3 · scroll to know', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      wrapTextBlock(undefined, 'your answer created project meaning. scroll home to know and open it.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
+      text(18, cardY + 132, 'scroll → know', {
+        fill: 'rgba(8,8,8,0.54)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'lesson 4 starts in know', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    return false;
+  }
+
   // === KNOW card builder ===
   function textHasAny(text = '', terms = []) {
     const value = lower(text);
@@ -947,7 +1171,9 @@
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex }) => classify({
+    const focusNodeId = stateData.knowFocusNodeId || '';
+
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [] }) => classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
       body: lower(normalizeTinyText(body || '')),
@@ -955,7 +1181,9 @@
       created_at: created_at || new Date().toISOString(),
       source: source || lane,
       chips: chipHints.slice(),
-      questionIndex
+      questionIndex,
+      node_id: node_id || '',
+      links: Array.isArray(links) ? links.slice() : []
     });
 
     const questions = [];
@@ -1001,7 +1229,8 @@
         lane: 'signals', title: insight.title || `signal ${index + 1}`,
         body: insight.body || 'extracted',
         next: backlog[0]?.title || '',
-        created_at: insight.created_at, source: 'insight', chips: index < 2 ? ['latest'] : []
+        created_at: insight.created_at, source: 'insight', chips: index < 2 ? ['latest'] : [],
+        node_id: insight.node_id, links: insight.links
       }));
     });
 
@@ -1011,7 +1240,8 @@
         body: capture.summary || 'stored',
         next: backlog[0]?.title || '',
         created_at: capture.created_at,
-        source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : []
+        source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : [],
+        node_id: capture.node_id, links: capture.links
       }));
     });
 
@@ -1022,7 +1252,8 @@
       decisionsLane.push(makeItem({
         lane: 'decisions', title: decisionTitle, body: decisionBody,
         next: backlog[0]?.title || '',
-        created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : []
+        created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : [],
+        node_id: decision.node_id, links: decision.links
       }));
     });
 
@@ -1052,7 +1283,14 @@
       { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'clear', body: 'no open loops', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
       lane.items
-        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+        .sort((a, b) => {
+          if (focusNodeId) {
+            const aLinked = a.node_id === focusNodeId || (a.links || []).includes(focusNodeId);
+            const bLinked = b.node_id === focusNodeId || (b.links || []).includes(focusNodeId);
+            if (aLinked !== bLinked) return aLinked ? -1 : 1;
+          }
+          return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+        })
         .forEach((item, index) => {
           if (index < 2 && !item.chips.includes('latest')) item.chips.push('latest');
         });
@@ -1173,8 +1411,8 @@
 
   function drawCardIcon(card, selected, parent) {
     if (!selected) return;
-    if (recordingActive() && card.id === 'tell' && activeSurface() === 'home') {
-      recordingDot(33, 31, 13, parent);
+    if (recordingActive() && activeSurface() === 'home') {
+      recordingDot(33, 31, 14, parent);
       return;
     }
     if (card.iconPath) {
@@ -1192,8 +1430,7 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    if (recordingActive() && activeSurface() === 'home') recordingDot(23, 26, 10, svg);
-    else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
+    drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
       x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
     }, svg, {
       inset: 1.5,
@@ -1220,7 +1457,7 @@
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
     const selectedProject = projects[selected] || projects[0];
-    const isFreshWorkspace = freshWorkspaceState();
+    const isFreshWorkspace = freshWorkspaceState() && !onboardingAllowsProjectSwitcher();
     const headerTitle = isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project');
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
@@ -1393,7 +1630,7 @@
     }
 
     text(226, 268, canFlush
-      ? (flushConfirm ? 'tap flush again · resets onboarding' : 'staging tools · click opens')
+      ? (flushConfirm ? 'tap flush again · resets onboarding' : (onboardingAllowsProjectSwitcher() ? 'lesson 1 · click returns' : 'staging tools · click opens'))
       : (projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded'), {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -1427,9 +1664,10 @@
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
     const stackLead = !selected && layout.depth === 0;
+    const onboardingDim = onboardingActive() && currentState === STATES.HOME && !homeOnboardingSelectionAllowed(card.id);
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
-      opacity: String(layout.opacity), tabindex: '0', role: 'button',
+      opacity: String(onboardingDim ? Math.min(layout.opacity, 0.3) : layout.opacity), tabindex: '0', role: 'button',
       'aria-label': `${card.title} ${card.role}`,
       'data-card-index': index
     });
@@ -1451,7 +1689,10 @@
       let statNumber = '';
       let statLabel = '';
       const project = getProjectMemory();
-      if (card.id === 'show') {
+      if (onboardingActive() && card.id === 'now') {
+        statNumber = '0';
+        statLabel = 'start here';
+      } else if (card.id === 'show') {
         statNumber = String(getCaptureList().length);
         statLabel = 'frames';
       } else if (card.id === 'tell') {
@@ -1514,6 +1755,7 @@
 
     const activate = event => {
       event.preventDefault();
+      if (onboardingActive() && !homeOnboardingSelectionAllowed(card.id)) return;
       if (selected && isHome()) {
         if (card.id === 'show' && event.type === 'pointerup') {
           openCameraFromShow('touch');
@@ -1651,7 +1893,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, inlineListening ? 'release reprompt' : 'ptt narrates in lens', {
+    text(216, 92, inlineListening ? 'release reprompt' : (canReprompt ? 'ptt on frame' : 'ptt in lens'), {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -1715,13 +1957,18 @@
         'font-size': '10'
       });
     } else {
-      text(20, 150, 'no frames yet', {
+      text(20, 146, 'gallery starts here', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 172, 'touch open lens to begin', {
+      text(20, 168, 'touch open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(20, 188, 'frames appear here immediately', {
+        fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
@@ -1974,6 +2221,7 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
+    if (drawOnboardingNowPanel(nowCard, data)) return;
     const hasBlockers = data.pendingDecisions.length > 0 || data.openQuestions > 0;
     const chainY = 78;
     const phaseLabel = {
@@ -2080,7 +2328,7 @@
     } else if (data.openQuestions > 0) {
       const boxY = 78;
       mk('rect', { x: 10, y: boxY, width: 220, height: 170, rx: 12, fill: 'rgba(8,8,8,0.15)' });
-      text(18, boxY + 18, 'unlock chain', {
+      text(18, boxY + 18, 'answer to continue', {
         fill: 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -2099,7 +2347,7 @@
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
       const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);
       mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, ctaY + 16, inlineListening ? 'release answer now' : 'hold ptt to answer', {
+      text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -2111,42 +2359,37 @@
           'font-size': '10'
         });
       }
-    } else {
-      drawSectionLabel(undefined, 14, 112, 'next move');
-      wrapTextBlock(undefined, lower(data.next || 'capture or tell to build context'), 14, 132, 212, 13, 'rgba(8,8,8,0.96)', '13', 5);
-
-      // Chain status line
-      const chainStatusY = 196;
-      if (data.chainActive || data.chainPhase !== 'idle') {
-        text(14, chainStatusY, phaseLabel, {
-          fill: 'rgba(8,8,8,0.46)',
+      if (stateData.nowFeedback) {
+        text(222, ctaY + 42, lower(stateData.nowFeedback), {
+          fill: 'rgba(8,8,8,0.44)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '11'
+          'font-size': '10',
+          'text-anchor': 'end'
         });
       }
-
-      // Project stats grid
-      const statsY = data.chainActive ? chainStatusY + 18 : chainStatusY;
-      text(14, statsY, `${data.captures} frames · ${data.insights} signals`, {
-        fill: 'rgba(8,8,8,0.40)',
+    } else {
+      text(14, 112, 'boiler room ready', {
+        fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
+        'font-size': '17'
       });
-      text(14, statsY + 14, `${data.openQuestions} asks · ${data.decisions} locked`, {
-        fill: 'rgba(8,8,8,0.36)',
+      wrapTextBlock(undefined, lower(data.next || 'capture or tell to build project structure'), 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 5);
+      text(14, 222, data.chainActive || data.chainPhase !== 'idle' ? phaseLabel : 'waiting for your next move', {
+        fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
+        'font-size': '11'
       });
-      if (data.totalImpacts > 0) {
-        text(14, statsY + 28, `${data.totalImpacts} impacts · ${data.totalDecisions} decided`, {
-          fill: 'rgba(8,8,8,0.28)',
+      if (queueCount > 0) {
+        text(226, 222, `${queueCount} queued`, {
+          fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
+          'font-size': '10',
+          'text-anchor': 'end'
         });
       }
     }
 
-    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · waits` : 'chain waits for answer') : 'scroll decisions · hold ptt', {
+    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · waits` : 'chain waits for answer') : 'hold ptt on project', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -2173,6 +2416,28 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard);
+
+    if (onboardingActive() && getOnboardingStep() === 4) {
+      mk('rect', { x: 10, y: 84, width: 220, height: 152, rx: 12, fill: 'rgba(8,8,8,0.12)' });
+      text(18, 104, 'lesson 4 · show structa', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      wrapTextBlock(undefined, 'go home, scroll to show, and capture your first frame. the first capture unlocks the full app.', 18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
+      text(18, 218, 'back → home', {
+        fill: 'rgba(8,8,8,0.54)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'capture completes onboarding', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
 
     // Touchable lane tabs
     const laneTabs = [
@@ -2384,6 +2649,7 @@
   function handleScrollDirection(direction) {
     switch (currentState) {
       case STATES.PROJECT_SWITCHER: {
+        if (onboardingActive() && !onboardingAllowsProjectSwitcher()) break;
         const projects = getProjects();
         if (!projects.length) break;
         const currentIndex = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
@@ -2475,6 +2741,12 @@
       }
 
       case STATES.HOME:
+        if (onboardingActive()) {
+          const step = getOnboardingStep();
+          if (step < 3) break;
+          selectNextAllowedCard(direction);
+          break;
+        }
         selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
         break;
 
@@ -2497,8 +2769,15 @@
         // Side click on TELL = open KNOW to see impact of this note
         const tellContext = buildTellVoiceContext();
         if (tellContext.text) {
+          const project = getProjectMemory();
+          const relatedInsights = (project?.insights || []).filter(function(insight) {
+            return insight?.node_id === tellContext.nodeId || (insight?.links || []).includes(tellContext.nodeId);
+          });
+          if (!relatedInsights.length) {
+            pushLog('no impacts from note yet', 'voice');
+          }
           selectedIndex = cards.findIndex(c => c.id === 'know');
-          transition(STATES.KNOW_BROWSE, { knowLaneIndex: 1, knowItemIndex: 0 });
+          transition(STATES.KNOW_BROWSE, { knowLaneIndex: 1, knowItemIndex: 0, knowFocusNodeId: tellContext.nodeId || '' });
         }
         break;
       }
@@ -2535,11 +2814,21 @@
           transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
           return;
         }
-        transition(STATES.KNOW_BROWSE);
+        transition(STATES.KNOW_BROWSE, { preserveKnowFocus: true });
         break;
       }
 
       case STATES.NOW_BROWSE: {
+        if (onboardingActive()) {
+          const step = getOnboardingStep();
+          if (step === 0) {
+            setOnboardingStep(1);
+            pushLog('lesson 0 complete', 'system');
+            render();
+            return;
+          }
+          return;
+        }
         if (approveCurrentNowDecision()) {
           if (window.StructaAudio?.play) window.StructaAudio.play('approve');
           return;
@@ -2553,6 +2842,7 @@
         break;
 
       case STATES.HOME:
+        if (onboardingActive() && !homeOnboardingSelectionAllowed(currentCard().id)) return;
         openCard(currentCard());
         break;
 
@@ -2564,10 +2854,11 @@
   function handleLongPressStart() {
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
-        activateSelectedProject();
+        break;
         break;
 
       case STATES.HOME: {
+        if (onboardingActive()) break;
         const card = currentCard();
         voiceReturnState = STATES.HOME;
         transition(STATES.VOICE_OPEN, {
@@ -2609,10 +2900,19 @@
         break;
 
       case STATES.NOW_BROWSE: {
+        if (onboardingActive() && getOnboardingStep() !== 2) {
+          break;
+        }
         const project = getProjectMemory();
         const openQuestions = project?.open_questions || [];
         voiceReturnState = STATES.NOW_BROWSE;
-        if (openQuestions.length) {
+        if (onboardingActive() && getOnboardingStep() === 2) {
+          transition(STATES.VOICE_OPEN, {
+            answeringQuestion: { index: -1, text: 'what is this project about?', onboarding: true },
+            fromPTT: true,
+            inlinePTTSurface: 'project'
+          });
+        } else if (openQuestions.length) {
           transition(STATES.VOICE_OPEN, {
             answeringQuestion: { index: 0, text: openQuestions[0] },
             fromPTT: true,
@@ -2717,6 +3017,10 @@
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         if (event) event.preventDefault?.();
+        if (onboardingActive() && getOnboardingStep() === 1) {
+          transition(STATES.NOW_BROWSE);
+          return;
+        }
         transition(STATES.HOME);
         return;
 
@@ -2784,6 +3088,7 @@
 
   logHandle.addEventListener('click', event => {
     event.preventDefault();
+    if (!onboardingAllowsLogs()) return;
     if (isCaptureState()) return;
     if (currentState === STATES.LOG_OPEN) {
       transition(STATES.HOME);
@@ -2832,7 +3137,23 @@
       stateData.showStatus = 'processing visual note';
       render();
     }
+    if (onboardingActive() && getOnboardingStep() === 4) {
+      completeOnboarding();
+    }
     refreshLogFromMemory();
+  });
+
+  window.addEventListener('structa-onboarding-answer', function(event) {
+    if (!onboardingActive() || getOnboardingStep() !== 2) return;
+    const inferredName = event?.detail?.inferredName || '';
+    if (inferredName) native?.setProjectName?.(inferredName);
+    setOnboardingStep(3);
+    pushLog('lesson 2 complete', 'system');
+    if (currentState === STATES.VOICE_PROCESSING || currentState === STATES.VOICE_OPEN) {
+      voiceReturnState = STATES.NOW_BROWSE;
+    } else if (currentState === STATES.NOW_BROWSE) {
+      render();
+    }
   });
 
   window.addEventListener('structa-voice-open', () => {
@@ -2860,7 +3181,7 @@
     refreshLogFromMemory();
     render();
     maybeStartHeartbeat();
-    if (!chainStarted && projectHasMeaningfulContent() && window.StructaImpactChain && !window.StructaImpactChain.active) {
+    if (!onboardingActive() && !chainStarted && projectHasMeaningfulContent() && window.StructaImpactChain && !window.StructaImpactChain.active) {
       chainStarted = true;
       window.StructaImpactChain.start(2);
     }
@@ -2900,6 +3221,12 @@
     const now = Date.now();
     if (magnitude < 55 || now - lastShakeAt < 2500) return;
     lastShakeAt = now;
+    if (onboardingActive()) {
+      if (getOnboardingStep() === 1) {
+        openProjectSwitcher();
+      }
+      return;
+    }
     if (currentState === STATES.PROJECT_SWITCHER) {
       transition(STATES.HOME);
       return;
@@ -2915,6 +3242,13 @@
   const initialState = native?.getUIState?.() || {};
   selectedIndex = Math.max(0, cards.findIndex(card => card.id === (initialState.selected_card_id || 'now')));
   if (selectedIndex < 0) selectedIndex = 3;
+  if (onboardingActive()) {
+    const allowed = onboardingAllowedCardIds();
+    if (!allowed.includes(currentCard()?.id)) {
+      const nextIndex = cards.findIndex(card => card.id === allowed[0]);
+      if (nextIndex >= 0) selectedIndex = nextIndex;
+    }
+  }
 
   native?.setActiveNode?.(currentCard().id);
   native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: 'home', resumed_at: new Date().toISOString() });
@@ -2989,7 +3323,7 @@
   function startChainOnInteraction() {
     // Init audio engine on first user gesture (required by browsers)
     if (window.StructaAudio) window.StructaAudio.init();
-    if (chainStarted || !projectHasMeaningfulContent()) return;
+    if (onboardingActive() || chainStarted || !projectHasMeaningfulContent()) return;
     chainStarted = true;
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
       window.StructaImpactChain.start(2); // 2bpm = every 30s
@@ -3045,6 +3379,16 @@
     if (source === 'voice-entry') notifyCard('tell', 'soft');
     if (source === 'visual-insight' || source === 'insight' || source === 'question-answer') notifyCard('know', 'soft');
     if (source === 'project-switch') notifyCard('now', 'soft');
+    if (currentState === STATES.NOW_BROWSE && source === 'question-answer') {
+      stateData.nowFeedback = 'answer queued';
+      render();
+      setTimeout(function() {
+        if (stateData.nowFeedback === 'answer queued') {
+          stateData.nowFeedback = '';
+          render();
+        }
+      }, 1200);
+    }
   });
 
   // === Discovery question notification ===

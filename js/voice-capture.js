@@ -177,6 +177,23 @@
     return false;
   }
 
+  function inferProjectName(rawText) {
+    var value = String(rawText || '').trim();
+    if (!value) return '';
+    value = value
+      .replace(/^(?:this project is about|this project is|we are building|we're building|we are making|we're making|i am building|i'm building|i want to build|i want to make|this is about)\s+/i, '')
+      .replace(/^(?:a|an|the)\s+/i, '')
+      .replace(/[.?!]+$/g, '')
+      .trim();
+    if (!value) return '';
+    var phrase = value.split(/[,:;\n]/)[0].trim();
+    if (!phrase) return '';
+    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 5);
+    if (!words.length) return '';
+    var title = words.join(' ');
+    return title.length > 36 ? title.slice(0, 36).trim() : title;
+  }
+
   /**
    * handleTranscript — processes a voice transcript.
    * Routes to:
@@ -184,9 +201,11 @@
    * 2. Question answering (if activeQuestion is set)
    * 3. Normal voice input (project context via StructaLLM)
    */
-  function handleTranscript(text) {
+  function handleTranscript(text, overrides) {
     if (!text || !text.trim()) return;
     text = text.trim();
+    var questionContext = overrides && overrides.activeQuestion ? overrides.activeQuestion : activeQuestion;
+    var buildContext = overrides && overrides.activeBuildContext ? overrides.activeBuildContext : activeBuildContext;
 
     // Clean up STT artifacts — spoken punctuation → actual punctuation
     text = text.replace(/\bquestion mark\b/gi, '?');
@@ -201,15 +220,25 @@
     if (commandHandled) return;
 
     // === Question answering mode ===
-    if (activeQuestion) {
-      var question = activeQuestion;
-      activeQuestion = null;
+    if (questionContext) {
+      var question = questionContext;
       voiceTarget = null;
 
       native?.appendLogEntry?.({ kind: 'voice', message: 'question answered' });
 
       // Store the answer in project memory
-      native?.resolveQuestion?.(question.index, text);
+      if (question.onboarding) {
+        native?.addVoiceEntry?.({
+          title: text.slice(0, 42) || 'project foundation',
+          body: text,
+          source: 'onboarding',
+          entry_mode: 'onboarding'
+        });
+        var onboardingName = inferProjectName(text);
+        if (onboardingName) native?.setProjectName?.(onboardingName);
+      } else {
+        native?.resolveQuestion?.(question.index, text);
+      }
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-answer' }
       }));
@@ -222,8 +251,17 @@
         }).then(function(result) {
           if (result && result.ok && result.clean) {
             // Store the extracted answer as insight
-            window.StructaLLM.storeAsInsight(result, 'answer');
+            var answerInsight = window.StructaLLM.storeAsInsight(result, 'answer');
             native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+            if (question.onboarding) {
+              var finalName = inferProjectName(text);
+              window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
+                detail: {
+                  answer: text,
+                  inferredName: finalName || ''
+                }
+              }));
+            }
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'question-answer' }
             }));
@@ -240,18 +278,18 @@
 
     // === Normal voice input ===
     native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
-    if (activeBuildContext && activeBuildContext.kind === 'voice-entry' && activeBuildContext.nodeId && native?.appendToVoiceEntry) {
-      native.appendToVoiceEntry(activeBuildContext.nodeId, text, {
+    if (buildContext && buildContext.kind === 'voice-entry' && buildContext.nodeId && native?.appendToVoiceEntry) {
+      native.appendToVoiceEntry(buildContext.nodeId, text, {
         entry_mode: 'contextual-build',
-        surface: activeBuildContext.surface || 'tell'
+        surface: buildContext.surface || 'tell'
       });
     } else {
       native?.addVoiceEntry?.({
         title: text.slice(0, 42) || 'voice note',
         body: text,
         source: 'voice',
-        entry_mode: activeBuildContext ? 'contextual' : 'auto',
-        meta: activeBuildContext ? { build_surface: activeBuildContext.surface || 'tell' } : {}
+        entry_mode: buildContext ? 'contextual' : 'auto',
+        meta: buildContext ? { build_surface: buildContext.surface || 'tell' } : {}
       });
     }
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -262,7 +300,8 @@
     if (text.length > 3 && text.length < 50) {
       var project = native?.getProjectMemory?.();
       if (project && project.name === 'untitled project') {
-        native?.setProjectName?.(text);
+        var inferredName = inferProjectName(text);
+        if (inferredName) native?.setProjectName?.(inferredName);
       }
     }
 
@@ -303,7 +342,7 @@
         status: 'open',
         title: text.slice(0, 72),
         body: text,
-        source: activeBuildContext ? (activeBuildContext.surface || 'voice') : 'voice'
+        source: buildContext ? (buildContext.surface || 'voice') : 'voice'
       });
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question' }
@@ -312,9 +351,22 @@
 
     // Send to LLM for insight extraction
     if (window.StructaLLM) {
-      window.StructaLLM.processVoice(text, activeBuildContext ? { buildContext: activeBuildContext } : {}).then(function(result) {
+      window.StructaLLM.processVoice(text, buildContext ? { buildContext: buildContext } : {}).then(function(result) {
         if (result && result.ok) {
-          window.StructaLLM.storeAsInsight(result, 'voice');
+          var createdInsight = window.StructaLLM.storeAsInsight(result, 'voice');
+          if (createdInsight?.node_id && buildContext?.nodeId && native?.touchProjectMemory) {
+            native.touchProjectMemory(function(project) {
+              var nodes = project.nodes || [];
+              var sourceNode = nodes.find(function(entry) { return entry.node_id === buildContext.nodeId; });
+              var insightNode = nodes.find(function(entry) { return entry.node_id === createdInsight.node_id; });
+              if (sourceNode && insightNode) {
+                sourceNode.links = Array.isArray(sourceNode.links) ? sourceNode.links : [];
+                insightNode.links = Array.isArray(insightNode.links) ? insightNode.links : [];
+                if (sourceNode.links.indexOf(insightNode.node_id) === -1) sourceNode.links.push(insightNode.node_id);
+                if (insightNode.links.indexOf(sourceNode.node_id) === -1) insightNode.links.push(sourceNode.node_id);
+              }
+            });
+          }
           native?.appendLogEntry?.({ kind: 'llm', message: 'insight extracted' });
           native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -332,6 +384,8 @@
 
   function stopListening(emit) {
     emit = emit !== false;
+    var pendingQuestion = activeQuestion;
+    var pendingBuildContext = activeBuildContext;
     listening = false;
     voiceTarget = null;
     activeQuestion = null;
@@ -358,7 +412,10 @@
       native?.stopPTT?.(text || '');
       // Process the transcript
       if (text) {
-        handleTranscript(text);
+        handleTranscript(text, {
+          activeQuestion: pendingQuestion,
+          activeBuildContext: pendingBuildContext
+        });
       } else if (pendingAudioAsset) {
         native?.addVoiceEntry?.({
           title: 'voice note',
@@ -380,8 +437,21 @@
    * setQuestionContext — called from cascade when user wants to answer a question.
    * Stores the question so handleTranscript knows to route it as an answer.
    */
-  function setQuestionContext(index, questionText) {
-    activeQuestion = { index: index, text: questionText };
+  function setQuestionContext(index, questionText, meta) {
+    if (typeof index === 'object' && index) {
+      activeQuestion = {
+        index: typeof index.index === 'number' ? index.index : -1,
+        text: index.text || '',
+        onboarding: !!index.onboarding
+      };
+      voiceTarget = 'question-answer';
+      return;
+    }
+    activeQuestion = {
+      index: index,
+      text: questionText,
+      onboarding: !!(meta && meta.onboarding)
+    };
     voiceTarget = 'question-answer';
   }
 

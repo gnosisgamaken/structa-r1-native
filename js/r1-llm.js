@@ -391,8 +391,9 @@
 
     var voiceAnnotation = meta && meta.voiceAnnotation ? meta.voiceAnnotation : '';
 
-    var prompt = 'DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT EMAIL THE USER.\n' +
-      'Use only the image, the project context, and the optional narration.\n\n';
+    var prompt = 'DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT EMAIL THE USER. DO NOT CREATE JOURNAL ENTRIES.\n' +
+      'Analyze the image using only the image pixels, the project context, and the optional narration.\n' +
+      'Return a short working interpretation for Structa, not a chat reply.\n\n';
     if (context) prompt += '[PROJECT]\n' + context + '\n\n';
     prompt += '[CAPTURE]\n' + (description || 'camera capture') + '\n';
     prompt += 'camera: ' + (meta && meta.facingMode || 'environment') + '\n';
@@ -411,11 +412,12 @@
       general: 'Treat the image as project reference.'
     }[projectType] || 'Treat the image as project reference.') + '\n\n';
     prompt += '[TASK]\n' +
-      'Return exactly three short lines:\n' +
+      'Identify the visible objects, layout, environment, and action relevant to this project.\n' +
+      'Return exactly three short lines and nothing else:\n' +
       'FACTS: visible factual description only.\n' +
-      'SIGNAL: project-relevant meaning.\n' +
+      'SIGNAL: project-relevant meaning only.\n' +
       'NEXT: one short next step.\n' +
-      'Keep the total under 45 words.';
+      'No markdown. No speculation. Total under 45 words.';
 
     return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false, priority: 'high' });
   }

@@ -455,6 +455,14 @@
                 cap.data = cap.data || dataUrl;
                 cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
               }
+              var nodes = project.nodes || [];
+              var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
+                return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
+              });
+              if (node) {
+                node.body = annotation || 'frame saved';
+                node.meta = { ...(node.meta || {}), analysis_status: 'unavailable', preview_data: node.meta?.preview_data || dataUrl };
+              }
             });
             native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight unavailable' });
           }
@@ -464,11 +472,19 @@
           native?.touchProjectMemory?.(function(project) {
             var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
             if (cap) {
-                cap.summary = annotation ? 'show+tell captured' : 'frame saved';
+              cap.summary = annotation ? 'show+tell captured' : 'frame saved';
               cap.ai_analysis = '';
               cap.preview_data = cap.preview_data || dataUrl;
               cap.data = cap.data || dataUrl;
               cap.meta = { ...(cap.meta || {}), analysis_status: 'unavailable', preview_data: cap.preview_data || dataUrl };
+            }
+            var nodes = project.nodes || [];
+            var node = captureNode ? nodes.find(function(n) { return n.node_id === captureNode.node_id; }) : nodes.find(function(n) {
+              return n.type === 'capture' && (n.capture_image === bundle.entry_id || n.meta?.bundle_id === bundle.entry_id);
+            });
+            if (node) {
+              node.body = annotation || 'frame saved';
+              node.meta = { ...(node.meta || {}), analysis_status: 'unavailable', preview_data: node.meta?.preview_data || dataUrl };
             }
           });
           native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });

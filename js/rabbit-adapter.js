@@ -107,7 +107,8 @@
         last_capture_summary: '',
         last_insight_summary: '',
         last_event_summary: '',
-        onboarded: false
+        onboarded: false,
+        onboarding_step: 0
       },
       active_project_id: baseProject.project_id,
       projects: [baseProject],
@@ -263,7 +264,16 @@
     var nodes = pm.nodes;
 
     pm.backlog = nodes.filter(function(n) { return n.type === 'task' && n.status === 'open'; })
-      .map(function(n) { return { title: n.title, body: n.body, created_at: n.created_at, state: 'open', node_id: n.node_id }; });
+      .map(function(n) {
+        return {
+          title: n.title,
+          body: n.body,
+          created_at: n.created_at,
+          state: 'open',
+          node_id: n.node_id,
+          links: Array.isArray(n.links) ? n.links.slice() : []
+        };
+      });
 
     pm.decisions = nodes.filter(function(n) { return n.type === 'decision' && n.status === 'resolved'; })
       .map(function(n) {
@@ -272,7 +282,8 @@
           options: n.decision_options, selected_option: n.selected_option,
           selected_option_index: n.decision_options.indexOf(n.selected_option),
           source: n.source + ' → approved',
-          created_at: n.created_at, approved_at: n.resolved_at, node_id: n.node_id
+          created_at: n.created_at, approved_at: n.resolved_at, node_id: n.node_id,
+          links: Array.isArray(n.links) ? n.links.slice() : []
         };
       });
 
@@ -280,16 +291,38 @@
       .map(function(n) {
         return {
           text: n.title, options: n.decision_options, source: n.source,
-          insight_body: n.body, created_at: n.created_at, node_id: n.node_id
+          insight_body: n.body, created_at: n.created_at, node_id: n.node_id,
+          links: Array.isArray(n.links) ? n.links.slice() : []
         };
       });
 
     pm.captures = nodes.filter(function(n) { return n.type === 'capture'; })
       .map(function(n) {
+        var meta = n.meta || {};
         return {
-          id: n.node_id, type: n.capture_image ? 'image' : 'voice',
-          summary: n.body || n.title, ai_analysis: n.body,
-          created_at: n.created_at, node_id: n.node_id
+          id: n.node_id,
+          entry_id: meta.bundle_id || n.capture_image || n.node_id,
+          type: n.capture_image ? 'image' : 'voice',
+          summary: n.body || n.title,
+          ai_analysis: n.body,
+          created_at: n.created_at,
+          captured_at: meta.captured_at || n.created_at,
+          node_id: n.node_id,
+          capture_image: n.capture_image || meta.bundle_id || '',
+          voice_annotation: n.voice_annotation || '',
+          prompt_text: n.voice_annotation || '',
+          preview_data: meta.preview_data || '',
+          image_asset: meta.image_asset || {
+            entry_id: meta.image_asset_id || '',
+            name: meta.image_asset_name || '',
+            data: meta.preview_data || ''
+          },
+          meta: {
+            ...meta,
+            analysis_status: meta.analysis_status || '',
+            preview_data: meta.preview_data || ''
+          },
+          links: Array.isArray(n.links) ? n.links.slice() : []
         };
       });
 
@@ -297,7 +330,8 @@
       .map(function(n) {
         return {
           title: n.title, body: n.body, next: n.next_action,
-          confidence: n.confidence, created_at: n.created_at, node_id: n.node_id
+          confidence: n.confidence, created_at: n.created_at, node_id: n.node_id,
+          links: Array.isArray(n.links) ? n.links.slice() : []
         };
       });
 
@@ -429,8 +463,8 @@
     appendProbeEvent({ source: 'probe', name: 'mode active' });
     const eventLabels = {
       sideClick: 'ptt click',
-      scrollUp: 'scroll up',
-      scrollDown: 'scroll down',
+      scrollUp: 'scroll down',
+      scrollDown: 'scroll up',
       longPressStart: 'ptt hold',
       longPressEnd: 'ptt release',
       backbutton: 'back',

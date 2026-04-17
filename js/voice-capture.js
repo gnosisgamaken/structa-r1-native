@@ -269,6 +269,10 @@
         onboardingFinalized = true;
         var currentProject = native?.getProjectMemory?.();
         var heuristicName = inferProjectName(text);
+        native?.updateUIState?.({
+          onboarding_step: 3,
+          onboarded: false
+        });
         window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
           detail: {
             answer: text,

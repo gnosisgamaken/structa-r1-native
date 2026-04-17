@@ -1647,7 +1647,10 @@
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
     const selectedProject = projects[selected] || projects[0];
     const isFreshWorkspace = freshWorkspaceState() && !onboardingAllowsProjectSwitcher();
-    const headerTitle = isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project');
+    const onboardingProjectLesson = onboardingActive() && getOnboardingStep() === 1;
+    const headerTitle = onboardingProjectLesson
+      ? 'first project'
+      : (isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project'));
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
     if (recordingActive()) recordingDot(23, 25, 10, svg);
@@ -1766,9 +1769,6 @@
       });
     });
 
-    const canFlush = allowStagingFlush();
-    const flushConfirm = !!stateData.projectFlushConfirm;
-
     if (projects.length > 1 && selectedProject && selectedProject.status !== 'archived') {
       const archiveTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
@@ -1792,34 +1792,8 @@
       });
     }
 
-    if (canFlush) {
-      const flushTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', {
-        x: 144, y: 248, width: 82, height: 20, rx: 8, ry: 8,
-        fill: flushConfirm ? 'rgba(181,18,18,0.18)' : 'rgba(255,255,255,0.05)',
-        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.12)',
-        'stroke-width': 1
-      }, flushTap);
-      text(185, 261, flushConfirm ? 'confirm wipe' : 'flush memory', {
-        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'middle'
-      }, flushTap);
-      flushTap.addEventListener('pointerup', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (stateData.projectFlushConfirm) {
-          flushTestingMemory();
-          return;
-        }
-        stateData.projectFlushConfirm = true;
-        render();
-      });
-    }
-
-    text(226, 268, canFlush
-      ? (flushConfirm ? 'tap flush again · resets onboarding' : (onboardingAllowsProjectSwitcher() ? 'lesson 1 · click returns' : 'staging tools · click opens'))
+    text(226, 268, onboardingProjectLesson
+      ? 'lesson 2 · click returns'
       : (projects.length > 1 ? `${projects.length} loaded · click opens` : '1 project loaded'), {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3634,7 +3608,9 @@
   });
 
   window.addEventListener('structa-onboarding-answer', function(event) {
-    if (!onboardingActive() || getOnboardingStep() !== 2) return;
+    if (!onboardingActive()) return;
+    const step = getOnboardingStep();
+    if (step !== 2 && step !== 3) return;
     const inferredName = event?.detail?.inferredName || '';
     if (inferredName) native?.setProjectName?.(inferredName);
     setOnboardingStep(3);

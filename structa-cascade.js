@@ -555,7 +555,7 @@
   };
 
   stateExitHandlers[STATES.HOME] = function(data) {
-    // nothing specific
+    stateData.projectFlushConfirm = false;
   };
 
   // --- PROJECT_SWITCHER ---
@@ -570,7 +570,7 @@
   };
 
   stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
-    // no-op
+    stateData.projectFlushConfirm = false;
   };
 
   // --- TELL_BROWSE ---
@@ -1610,6 +1610,33 @@
       'font-size': '15'
     });
     mk('rect', { x: 14, y: 62, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
+
+    if (currentState === STATES.HOME && allowStagingFlush()) {
+      const flushConfirm = !!stateData.projectFlushConfirm;
+      const flushTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 180, y: 14, width: 46, height: 18, rx: 7, ry: 7,
+        fill: flushConfirm ? 'rgba(181,18,18,0.20)' : 'rgba(255,255,255,0.05)',
+        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.10)',
+        'stroke-width': 1
+      }, flushTap);
+      text(203, 26, flushConfirm ? 'wipe' : 'flush', {
+        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      }, flushTap);
+      flushTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (stateData.projectFlushConfirm) {
+          flushTestingMemory();
+          return;
+        }
+        stateData.projectFlushConfirm = true;
+        render();
+      });
+    }
   }
 
   function drawProjectSwitcher() {
@@ -3455,7 +3482,9 @@
           if (!heard) stateData.triangleStatus = 'no angle heard — hold ptt again';
         }
         window.StructaVoice?.stopListening?.(true);
-        transition(STATES.VOICE_PROCESSING);
+        if (currentState === STATES.VOICE_OPEN) {
+          transition(STATES.VOICE_PROCESSING);
+        }
         break;
 
       default:

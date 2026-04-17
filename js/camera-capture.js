@@ -414,26 +414,21 @@
       return lower(cap?.meta?.analysis_status || '') === 'ready';
     });
 
-    function runAnalysis() {
-      return Promise.race([
-        window.StructaLLM.processImage(rawBase64, desc, {
-          facingMode: facingMode,
-          voiceAnnotation: annotation
-        }),
-        new Promise(function(resolve) {
-          setTimeout(function() {
-            resolve({ ok: false, reason: 'timeout' });
-          }, 40000);
-        })
-      ]);
-    }
-
     // Send to LLM with voice annotation context
     if (window.StructaLLM) {
-      native?.appendLogEntry?.({ kind: 'camera', message: 'visual analysis queued' });
       var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
-      var analyze = function(attempt) {
-        return runAnalysis().then(function(result) {
+      var analyze = function() {
+        return Promise.race([
+          window.StructaLLM.processImage(rawBase64, desc, {
+            facingMode: facingMode,
+            voiceAnnotation: annotation
+          }),
+          new Promise(function(resolve) {
+            setTimeout(function() {
+              resolve({ ok: false, reason: 'timeout' });
+            }, 28000);
+          })
+        ]).then(function(result) {
           if (result && result.ok && result.clean) {
             var insightNode = window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
             native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
@@ -479,10 +474,6 @@
             }));
             window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           } else {
-            if (result && result.reason === 'timeout') {
-              native?.appendLogEntry?.({ kind: 'camera', message: 'visual analysis timed out' });
-            }
-            if (attempt === 0) return analyze(1);
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
               if (cap) {
@@ -505,7 +496,6 @@
           }
         })
         .catch(function() {
-          if (attempt === 0) return analyze(1);
           native?.touchProjectMemory?.(function(project) {
             var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });
             if (cap) {
@@ -527,7 +517,7 @@
           native?.appendLogEntry?.({ kind: 'camera', message: 'visual insight failed' });
         });
       };
-      analyze(0);
+      analyze();
     }
 
     return bundle;

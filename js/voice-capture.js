@@ -194,21 +194,24 @@
     var value = String(rawText || '').trim();
     if (!value) return '';
     value = value
-      .replace(/^(?:this project is about|this project is|we are building|we're building|we are making|we're making|i am building|i'm building|i want to build|i want to make|this is about)\s+/i, '')
+      .replace(/^(?:this project is about|this project is|project about|project is|we are building|we're building|we are making|we're making|i am building|i'm building|i want to build|i want to make|this is about|this is|about)\s+/i, '')
       .replace(/^(?:a|an|the)\s+/i, '')
       .replace(/[.?!]+$/g, '')
       .trim();
     if (!value) return '';
     var phrase = value.split(/[,:;\n]/)[0].trim();
     if (!phrase) return '';
-    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 4);
+    var words = phrase.split(/\s+/).filter(Boolean).slice(0, 3);
     if (!words.length) return '';
-    var title = words.join(' ').slice(0, 24).trim().toLowerCase();
+    var title = words.join(' ').slice(0, 22).trim().toLowerCase();
     return title.length >= 3 ? title : '';
   }
 
   function resolveProjectTitle(rawText, project) {
     var heuristic = inferProjectName(rawText);
+    if (lower(project?.name || '') !== 'untitled project') {
+      return Promise.resolve(heuristic);
+    }
     if (!window.StructaLLM?.titleProject || !project) {
       return Promise.resolve(heuristic);
     }

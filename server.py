@@ -437,7 +437,7 @@ def project_title_prepare(payload):
     project = payload.get("project") or {}
     lines = [
         "You are Structa, naming a new project from the user's first words.",
-        "Return only a 2-4 word lowercase title that captures the project's subject.",
+        "Return only a 2-3 word lowercase title that captures the project's subject.",
         "No explanation, no quotes, no punctuation, no trailing period.",
         "If the transcript is unusable, return: untitled project",
         "",
@@ -465,9 +465,10 @@ def project_title_normalize(payload):
     raw = compact(payload.get("rawResponse") or "", 64).lower()
     cleaned = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in raw)
     cleaned = " ".join(cleaned.split())
-    if cleaned.startswith("title "):
-        cleaned = cleaned[6:]
-    words = cleaned.split()[:4]
+    for prefix in ("title ", "project about ", "project ", "this is about ", "this is ", "about ", "name ", "called "):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+    words = cleaned.split()[:3]
     title = " ".join(words).strip() or "untitled project"
     return {"ok": True, "title": title}
 

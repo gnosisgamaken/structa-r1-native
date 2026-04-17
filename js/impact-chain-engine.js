@@ -352,6 +352,9 @@
       pause('onboarding');
       return;
     }
+    if (llm && llm.pendingHighPriorityCount > 0 && chain.currentPhase !== 'cooldown') {
+      return;
+    }
 
     // Check idle timeout
     var idleMs = Date.now() - chain.lastUserActivity;

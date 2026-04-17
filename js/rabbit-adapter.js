@@ -823,30 +823,45 @@
     if (raw.includes('paused —') && k === 'heartbeat') return null;
     if (raw.includes('chain started')) return null;
     if (raw.includes('chain paused')) return null;
-    if (raw === 'camera opened' || raw.endsWith('camera open')) return 'camera ready';
-    if (raw === 'capture capture') return 'capturing image';
-    if (raw === 'camera image captured' || raw === 'image captured') return 'image captured';
+    if (raw.includes('chain resumed')) return null;
+    if (raw.includes('chain speed:')) return null;
+    if (raw.includes('visual analysis queued')) return null;
+    if (raw.includes('visual analysis timed out')) return null;
+    if (raw.includes('lesson 0 complete') || raw.includes('lesson 1 complete') || raw.includes('lesson 2 complete') || raw.includes('lesson 3 complete')) return null;
+    if (raw === 'camera opened' || raw.endsWith('camera open')) return null;
+    if (raw === 'capture capture') return null;
+    if (raw === 'camera image captured' || raw === 'image captured') return 'frame captured';
+    if (raw === 'show+tell captured') return 'show+tell captured';
     if (raw === 'image saved') return 'frame saved';
-    if (raw === 'voice saved') return 'voice saved';
-    if (raw === 'question answered') return 'question answered';
-    if (raw === 'insight extracted') return 'insight added';
-    if (raw === 'insight unavailable' || raw === 'insight failed') return 'insight unavailable';
-    if (raw === 'visual insight ready') return 'visual note ready';
+    if (raw === 'voice saved') return null;
+    if (raw === 'question answered') return null;
+    if (raw === 'insight extracted') return 'signal ready';
+    if (raw === 'insight unavailable' || raw === 'insight failed') return null;
+    if (raw === 'visual insight ready' || raw === 'show+tell insight ready') return 'visual note ready';
     if (raw === 'visual insight unavailable' || raw === 'visual insight failed') return 'visual note unavailable';
     if (raw.startsWith('bridge-in onpluginmessage')) return null;
+    if (raw.startsWith('bridge-in response')) return null;
+    if (raw.startsWith('bridge-in response received')) return null;
     if (raw.startsWith('bridge-out pluginmessagehandler.postmessage')) return null;
-    if (raw.startsWith('answering:')) return 'answering question';
-    if (raw.startsWith('answered:')) return 'question answered';
+    if (raw.startsWith('answering:')) return null;
+    if (raw.startsWith('answered:')) return null;
     if (raw.startsWith('saved 33 logs')) return 'log export saved';
     if (raw.startsWith('could not save logs')) return 'log export unavailable';
     if (raw.startsWith('decision created:')) return 'decision ready';
     if (raw === 'decision skipped' || raw === 'decision decision skipped') return 'decision skipped';
     if (raw === 'decision decision approved') return 'decision approved';
-    if (raw.startsWith('suggestion:')) return 'new suggestion ready';
+    if (raw.startsWith('suggestion:')) return null;
+    if (raw.startsWith('triangle copy')) return null;
+    if (raw.startsWith('triangle dismiss')) return null;
+    if (raw.startsWith('triangle complete')) return null;
+    if (raw.startsWith('triangle slot cleared')) return null;
+    if (raw.startsWith('triangle signal:')) return compact(raw.replace(/^triangle signal:\s*/i, 'triangle signal: '), 8);
+    if (raw.startsWith('naming project')) return null;
     if (raw.includes('inspect camera') || raw.includes('environment facing')) return null;
     if (raw.includes('r1 msg:') || raw === 'llm: thinking...' || raw === 'r1 stt: start') return null;
     if (raw.includes('heartbeat started') || raw.includes('heartbeat stopped')) return null;
     if (raw.includes('window ') || raw.includes('document ')) return null;
+    if (raw.includes('ptt click') || raw.includes('ptt hold') || raw.includes('longpress')) return null;
 
     if (k === 'heartbeat') return null;
     if (k === 'chain' && raw.startsWith('observe:')) return null;
@@ -854,13 +869,40 @@
     if (k === 'chain' && raw.startsWith('clarify:')) return null;
     if (k === 'chain' && raw.startsWith('evaluate:')) return null;
     if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
+    if (k === 'chain' && raw.startsWith('structa asks:')) return compact(raw.replace(/^structa asks:/i, 'blocker:'), 8);
+
+    if (k === 'system') {
+      if (raw === 'onboarding complete') return 'onboarding complete';
+      return null;
+    }
+
+    if (k === 'triangle') return null;
+    if (k === 'voice') {
+      if (raw.startsWith('project:')) return compact(raw, 6);
+      if (raw.startsWith('project not found:')) return compact(raw, 6);
+      if (raw === 'project archived' || raw === 'project deleted') return raw;
+      if (raw.includes('archive unavailable') || raw.includes('delete unavailable')) return compact(raw, 6);
+      return null;
+    }
+    if (k === 'camera') {
+      if (
+        raw === 'frame captured' ||
+        raw === 'show+tell captured' ||
+        raw === 'visual note ready' ||
+        raw === 'visual note unavailable' ||
+        raw === 'frame capture failed — try again'
+      ) return raw;
+      return null;
+    }
+    if (k === 'llm') {
+      if (raw === 'signal ready' || raw === 'visual note ready' || raw === 'visual note unavailable') return raw;
+      return null;
+    }
+    if (k === 'decision') return compact(raw, 6);
+    if (k === 'export') return compact(raw, 6);
 
     if (k === 'insight') return compact('insight ' + raw.replace(/^new\s+/i, ''));
-    if (k === 'triangle') return compact(raw, 8);
-    if (k === 'voice') return compact(raw);
-    if (k === 'camera') return compact(raw);
     if (k === 'question') return compact(raw);
-    if (k === 'decision') return compact(raw);
 
     return compact(raw
       .replace(/[`*_#{}[\]|]+/g, ' ')
@@ -897,9 +939,9 @@
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
     if (entry.visible && entry.visible_message) {
       memory.uiState.last_event_summary = entry.visible_message;
+      window.dispatchEvent(new CustomEvent('structa-log-updated', { detail: { entry: entry } }));
     }
     persist();
-    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return entry;
   }
 
@@ -914,42 +956,9 @@
     if (entry.visible === false) return false;
     if (!entry.visible_message) return false;
 
-    if (kind === 'probe') {
-      if (!probeMode) return false;
-      if (
-        message.includes('probe started') ||
-        message.includes('probe mode active') ||
-        message.includes('window focus') ||
-        message.includes('window blur') ||
-        message.includes('viewport:') ||
-        message.includes('screen:') ||
-        message.includes('pluginmessagehandler') ||
-        message.includes('onpluginmessage: function') ||
-        message.includes('postmessage=')
-      ) return false;
-      return true;
-    }
+    if (kind === 'probe') return false;
 
-    // Suppress UI noise
-    if (kind === 'ui') {
-      const noisePatterns = [
-        'window focus', 'window blur', 'window scroll', 'window scrollup', 'window scrolldown',
-        'window beforeunload', 'window pagehide', 'window visibilitychange',
-        'document visibilitychange', 'document pointerdown', 'document pointerup',
-        'document keydown', 'document wheel',
-        'probe probe mode active',
-        'hint mode: show', 'hint mode exit', 'hint mode: tell',
-        'show hint', 'tell hint', 'show active', 'tell active',
-        'show ready', 'tell ready', 'tell ready from ptt',
-        'hint mode: show', 'hint mode exit',
-        'camera ready', 'camera frame captured',
-        'voice capture started', 'voice capture stopped'
-      ];
-      if (noisePatterns.some(p => message.includes(p))) return false;
-      // Show meaningful focus events only
-      if (message.includes('surface:')) return false;
-      if (message.includes('ready')) return false;
-    }
+    if (kind === 'ui') return false;
 
     // Suppress empty/meaningless messages
     if (message === 'event' || message === 'no event') return false;
@@ -959,14 +968,7 @@
     if (message === 'no creationvoicehandler') return false;
     if (message.startsWith('camera ready') || message === 'camera frame captured') return false;
 
-    // Suppress heartbeat start/stop messages from visible log (keep in memory)
-    if (kind === 'system' && (message.includes('heartbeat started') || message.includes('heartbeat stopped'))) return false;
-
-    // Suppress R1 hardware bridge noise
-    if (message.includes('inspect camera') || message.includes('environment facing')) return false;
-
-    // Suppress heartbeat beat messages (only show suggestions and start/stop)
-    if (kind === 'heartbeat' && message.startsWith('beat ')) return false;
+    if (kind === 'heartbeat') return false;
 
     return true;
   }

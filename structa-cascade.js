@@ -74,6 +74,22 @@
   const DOUBLE_SIDE_WINDOW_MS = 220;
   const TOUCH_LOG_LONG_PRESS_MS = 620;
   const TOUCH_LOG_MOVE_TOLERANCE = 12;
+  const LOG_FOLLOW_THRESHOLD = 24;
+  const onNextFrame = window.requestAnimationFrame
+    ? window.requestAnimationFrame.bind(window)
+    : function(callback) { return setTimeout(callback, 16); };
+  let renderScheduled = false;
+  let logRefreshScheduled = false;
+  let pendingLogRefreshOptions = {};
+  let logPinnedToBottom = true;
+  let dataCacheVersion = 0;
+  let cachedMemoryVersion = -1;
+  let cachedProjectVersion = -1;
+  let cachedMemory = null;
+  let cachedProject = null;
+  let cachedCaptureList = { version: -1, projectId: '', value: [] };
+  let cachedVoiceEntries = { version: -1, projectId: '', value: [] };
+  let cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
@@ -170,11 +186,17 @@
   }
 
   function getMemory() {
-    return native?.getMemory?.() || { captures: [], runtimeEvents: [], projectMemory: null };
+    if (cachedMemoryVersion === dataCacheVersion && cachedMemory) return cachedMemory;
+    cachedMemory = native?.getMemory?.() || { captures: [], runtimeEvents: [], projectMemory: null };
+    cachedMemoryVersion = dataCacheVersion;
+    return cachedMemory;
   }
 
   function getProjectMemory() {
-    return native?.getProjectMemory?.() || getMemory().projectMemory || null;
+    if (cachedProjectVersion === dataCacheVersion && cachedProject) return cachedProject;
+    cachedProject = native?.getProjectMemory?.() || getMemory().projectMemory || null;
+    cachedProjectVersion = dataCacheVersion;
+    return cachedProject;
   }
 
   function getProjects() {
@@ -191,6 +213,9 @@
 
   function getCaptureList() {
     const activeProjectId = getActiveProjectId();
+    if (cachedCaptureList.version === dataCacheVersion && cachedCaptureList.projectId === activeProjectId) {
+      return cachedCaptureList.value;
+    }
     const memoryCaptures = (getMemory().captures || []).filter(capture => capture && (!capture.project_id || capture.project_id === activeProjectId));
     const projectCaptures = ((getProjectMemory()?.captures) || []).filter(Boolean).map(capture => {
       return capture && !capture.project_id ? { ...capture, project_id: activeProjectId } : capture;
@@ -212,15 +237,23 @@
         image_asset: capture.image_asset || existing.image_asset || null
       });
     });
-    return Array.from(merged.values()).sort((a, b) => {
+    cachedCaptureList = {
+      version: dataCacheVersion,
+      projectId: activeProjectId,
+      value: Array.from(merged.values()).sort((a, b) => {
       const aTime = new Date(a?.captured_at || a?.created_at || a?.meta?.captured_at || 0).getTime();
       const bTime = new Date(b?.captured_at || b?.created_at || b?.meta?.captured_at || 0).getTime();
       return aTime - bTime;
-    });
+      })
+    };
+    return cachedCaptureList.value;
   }
 
   function getVoiceEntries() {
     const activeProjectId = getActiveProjectId();
+    if (cachedVoiceEntries.version === dataCacheVersion && cachedVoiceEntries.projectId === activeProjectId) {
+      return cachedVoiceEntries.value;
+    }
     const nodes = (getProjectMemory()?.nodes || []).filter(Boolean);
     const voiceNodes = nodes
       .filter(entry => entry.type === 'voice-entry' && entry.status !== 'archived' && (!entry.project_id || entry.project_id === activeProjectId))
@@ -228,12 +261,24 @@
       .sort(function(a, b) {
         return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
       });
-    if (voiceNodes.length) return voiceNodes;
+    if (voiceNodes.length) {
+      cachedVoiceEntries = {
+        version: dataCacheVersion,
+        projectId: activeProjectId,
+        value: voiceNodes
+      };
+      return cachedVoiceEntries.value;
+    }
     const journals = (getMemory().journals || []).filter(Boolean);
-    return journals
+    cachedVoiceEntries = {
+      version: dataCacheVersion,
+      projectId: activeProjectId,
+      value: journals
       .filter(entry => lower(entry?.source_type || '') === 'voice' && (!entry.project_id || entry.project_id === activeProjectId))
       .slice()
-      .reverse();
+      .reverse()
+    };
+    return cachedVoiceEntries.value;
   }
 
   function getCaptureImageHref(capture) {
@@ -431,6 +476,45 @@
     return `${pending} queued · ${phase}`;
   }
 
+  function invalidateDataCaches() {
+    dataCacheVersion += 1;
+    cachedMemoryVersion = -1;
+    cachedProjectVersion = -1;
+    cachedMemory = null;
+    cachedProject = null;
+    cachedCaptureList = { version: -1, projectId: '', value: [] };
+    cachedVoiceEntries = { version: -1, projectId: '', value: [] };
+    cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
+  }
+
+  function scheduleRender() {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    onNextFrame(function() {
+      renderScheduled = false;
+      renderNow();
+    });
+  }
+
+  function isLogNearBottom() {
+    return Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight)) <= LOG_FOLLOW_THRESHOLD;
+  }
+
+  function scheduleLogRefresh(options = {}) {
+    pendingLogRefreshOptions = {
+      jumpToLatest: pendingLogRefreshOptions.jumpToLatest || !!options.jumpToLatest,
+      forceFollow: pendingLogRefreshOptions.forceFollow || !!options.forceFollow
+    };
+    if (logRefreshScheduled) return;
+    logRefreshScheduled = true;
+    onNextFrame(function() {
+      logRefreshScheduled = false;
+      const refreshOptions = pendingLogRefreshOptions;
+      pendingLogRefreshOptions = {};
+      refreshLogFromMemory(refreshOptions);
+    });
+  }
+
   function getPhaseDots(phase = '') {
     const order = ['observe', 'clarify', 'evaluate', 'decision', 'cooldown'];
     const activeIndex = order.indexOf(lower(phase));
@@ -482,7 +566,7 @@
   }
 
   function renderLogRows(entries) {
-    log.innerHTML = '';
+    const fragment = document.createDocumentFragment();
     entries.forEach(entry => {
       const row = document.createElement('div');
       row.className = 'entry';
@@ -493,8 +577,9 @@
       const message = document.createElement('span');
       message.textContent = lower(entry.message || 'event');
       row.appendChild(message);
-      log.appendChild(row);
+      fragment.appendChild(row);
     });
+    log.replaceChildren(fragment);
   }
 
   // === Transition ===
@@ -514,30 +599,42 @@
     stateEnterHandlers[newState]?.(stateData);
 
     // Render
-    render();
+    renderNow();
   }
 
   // === Log management ===
   function pushLog(text, strong = '') {
     native?.appendLogEntry?.({ kind: lower(strong || 'ui'), message: lower(text) });
-    refreshLogFromMemory();
+    scheduleLogRefresh();
   }
 
-  function refreshLogFromMemory() {
+  function refreshLogFromMemory(options = {}) {
     const limit = logOpen ? 33 : 5;
     const previousScroll = log.scrollTop;
+    const previousBottomOffset = Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight));
+    const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
       logPreview.textContent = getQueueLine();
       updateLogOps();
+      if (logOpen) logPinnedToBottom = true;
       return;
     }
     renderLogRows(entries);
     logPreview.textContent = latestLogText();
     updateLogOps();
-    if (logOpen) log.scrollTop = previousScroll;
+    if (logOpen) {
+      if (followLatest) {
+        log.scrollTop = log.scrollHeight;
+        logPinnedToBottom = true;
+      } else {
+        log.scrollTop = Math.max(0, log.scrollHeight - log.clientHeight - previousBottomOffset);
+        if (!Number.isFinite(log.scrollTop)) log.scrollTop = previousScroll;
+        logPinnedToBottom = isLogNearBottom();
+      }
+    }
   }
 
   function setLogDrawer(open) {
@@ -546,14 +643,17 @@
     logDrawer.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
     if (logOps) logOps.hidden = !logOpen;
     if (logOpen) {
-      const entries = native?.getRecentLogEntries?.(33, { visible_only: true }) || [];
-      renderLogRows(entries);
-      updateLogOps();
-      log.scrollTop = 0;
+      logPinnedToBottom = true;
+      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     } else {
-      refreshLogFromMemory();
+      scheduleLogRefresh();
     }
   }
+
+  log?.addEventListener('scroll', function() {
+    if (!logOpen) return;
+    logPinnedToBottom = isLogNearBottom();
+  });
 
   // === State enter/exit handlers ===
   const stateEnterHandlers = {};
@@ -1243,6 +1343,16 @@
   }
 
   function buildKnowModel() {
+    const activeProjectId = getActiveProjectId();
+    const focusNodeId = stateData.knowFocusNodeId || '';
+    if (
+      cachedKnowModel.version === dataCacheVersion &&
+      cachedKnowModel.projectId === activeProjectId &&
+      cachedKnowModel.focusNodeId === focusNodeId &&
+      cachedKnowModel.value
+    ) {
+      return cachedKnowModel.value;
+    }
     const memory = getMemory();
     const project = getProjectMemory();
     const ui = getUIState();
@@ -1262,8 +1372,6 @@
       item.chips = Array.from(bucket);
       return item;
     };
-
-    const focusNodeId = stateData.knowFocusNodeId || '';
 
     const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false }) => classify({
       lane,
@@ -1394,7 +1502,13 @@
       return { ...lane, availableChipIndexes: availableChipIndexes.length ? availableChipIndexes : [0] };
     });
 
-    return { chips, lanes };
+    cachedKnowModel = {
+      version: dataCacheVersion,
+      projectId: activeProjectId,
+      focusNodeId: focusNodeId,
+      value: { chips, lanes }
+    };
+    return cachedKnowModel.value;
   }
 
   function getKnowVisibleItems(model = buildKnowModel()) {
@@ -1629,32 +1743,6 @@
     });
     mk('rect', { x: 14, y: 62, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
 
-    if (currentState === STATES.HOME && allowStagingFlush()) {
-      const flushConfirm = !!stateData.projectFlushConfirm;
-      const flushTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', {
-        x: 180, y: 14, width: 46, height: 18, rx: 7, ry: 7,
-        fill: flushConfirm ? 'rgba(181,18,18,0.20)' : 'rgba(255,255,255,0.05)',
-        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.10)',
-        'stroke-width': 1
-      }, flushTap);
-      text(203, 26, flushConfirm ? 'wipe' : 'flush', {
-        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'middle'
-      }, flushTap);
-      flushTap.addEventListener('pointerup', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (stateData.projectFlushConfirm) {
-          flushTestingMemory();
-          return;
-        }
-        stateData.projectFlushConfirm = true;
-        render();
-      });
-    }
   }
 
   function drawProjectSwitcher() {
@@ -1696,6 +1784,32 @@
       'font-size': '10',
       'text-anchor': 'end'
     });
+    if (allowStagingFlush()) {
+      const flushConfirm = !!stateData.projectFlushConfirm;
+      const flushTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 180, y: 14, width: 46, height: 18, rx: 7, ry: 7,
+        fill: flushConfirm ? 'rgba(181,18,18,0.20)' : 'rgba(255,255,255,0.05)',
+        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.10)',
+        'stroke-width': 1
+      }, flushTap);
+      text(203, 26, flushConfirm ? 'wipe' : 'flush', {
+        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      }, flushTap);
+      flushTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (stateData.projectFlushConfirm) {
+          flushTestingMemory();
+          return;
+        }
+        stateData.projectFlushConfirm = true;
+        render();
+      });
+    }
     mk('rect', { x: 14, y: 60, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
 
     if (!projects.length || isFreshWorkspace) {
@@ -2997,7 +3111,8 @@
   }
 
   // === Main render ===
-  function render() {
+  function renderNow() {
+    renderScheduled = false;
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     drawWordmark();
 
@@ -3024,6 +3139,10 @@
 
     const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
+  }
+
+  function render() {
+    scheduleRender();
   }
 
   // === Input handlers (all routed through state machine) ===
@@ -3284,7 +3403,7 @@
           window.StructaImpactChain?.resumeManual?.();
           pushLog('chain resumed', 'system');
         }
-        refreshLogFromMemory();
+        scheduleLogRefresh({ forceFollow: true });
         break;
 
       case STATES.HOME:
@@ -3697,7 +3816,7 @@
         showStatus: 'latest visual memory'
       });
     }
-    refreshLogFromMemory();
+    scheduleLogRefresh({ forceFollow: true });
   });
 
   window.addEventListener('structa-capture-stored', event => {
@@ -3718,7 +3837,7 @@
     if (onboardingActive() && getOnboardingStep() === 4) {
       completeOnboarding();
     }
-    refreshLogFromMemory();
+    scheduleLogRefresh({ forceFollow: true });
   });
 
   window.addEventListener('structa-onboarding-answer', function(event) {
@@ -3756,11 +3875,12 @@
       voiceReturnState = STATES.HOME;
       transition(returnState || STATES.HOME, { tellStatus: 'voice saved' });
     }
-    refreshLogFromMemory();
+    scheduleLogRefresh();
   });
 
   window.addEventListener('structa-memory-updated', () => {
-    refreshLogFromMemory();
+    invalidateDataCaches();
+    scheduleLogRefresh();
     updateLogOps();
     render();
     maybeStartHeartbeat();
@@ -3769,17 +3889,19 @@
       window.StructaImpactChain.start(2);
     }
   });
+  window.addEventListener('structa-log-updated', () => {
+    scheduleLogRefresh();
+    updateLogOps();
+  });
 
   window.addEventListener('structa-triangle-copied', function(event) {
     const itemType = event?.detail?.item?.type || 'item';
     pushLog('triangle copy · ' + itemType, 'triangle');
-    refreshLogFromMemory();
     render();
   });
 
   window.addEventListener('structa-triangle-dismissed', function() {
     pushLog('triangle dismiss', 'triangle');
-    refreshLogFromMemory();
     render();
   });
 
@@ -3789,7 +3911,6 @@
     const right = pair?.b?.type || 'b';
     pushLog('triangle complete · ' + left + '+' + right, 'triangle');
     stateData.triangleStatus = 'hold ptt to tell your angle';
-    refreshLogFromMemory();
     render();
   });
 
@@ -3815,7 +3936,6 @@
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'triangle' }
     }));
-    refreshLogFromMemory();
     if (currentState === STATES.TRIANGLE_OPEN || stateData.inlinePTTSurface === 'triangle' || voiceReturnState === STATES.TRIANGLE_OPEN) {
       restoreTriangleOrigin();
       return;
@@ -3825,7 +3945,6 @@
 
   window.addEventListener('structa-triangle-failed', function(event) {
     stateData.triangleStatus = event?.detail?.message || 'synthesis failed — try again';
-    refreshLogFromMemory();
     if (currentState === STATES.TRIANGLE_OPEN) {
       render();
     }
@@ -3833,17 +3952,16 @@
 
   window.addEventListener('structa-triangle-cleared', function() {
     pushLog('triangle slot cleared (source removed)', 'triangle');
-    refreshLogFromMemory();
     render();
   });
 
-  window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
+  window.addEventListener('structa-probe-event', () => { scheduleLogRefresh(); });
   window.addEventListener('structa-impact-phase', event => { updateLogOps(event?.detail || {}); });
   window.addEventListener('structa-capture-failed', () => {
     if (currentState === STATES.CAMERA_CAPTURE || currentState === STATES.CAMERA_OPEN) {
       transition(STATES.CAMERA_OPEN);
     }
-    refreshLogFromMemory();
+    scheduleLogRefresh();
   });
 
   // Hardware inputs
@@ -3930,7 +4048,7 @@
   native?.setActiveNode?.(currentCard().id);
   native?.updateUIState?.({ selected_card_id: currentCard().id, last_surface: 'home', resumed_at: new Date().toISOString() });
   refreshLogFromMemory();
-  render();
+  renderNow();
   maybeStartHeartbeat();
 
   // Probe bootstrap now lives in rabbit-adapter and stays concise.

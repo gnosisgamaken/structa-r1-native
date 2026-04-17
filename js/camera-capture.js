@@ -497,6 +497,12 @@
   }
 
   function close() {
+    voiceStripActive = false;
+    voiceStripTranscript = '';
+    voiceStripStopping = false;
+    pendingVoiceCapture = false;
+    clearTimeout(pendingVoiceCaptureTimer);
+    pendingVoiceCaptureTimer = null;
     hideOverlay();
   }
 

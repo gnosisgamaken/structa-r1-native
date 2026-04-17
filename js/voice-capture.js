@@ -42,6 +42,18 @@
     if (status) status.textContent = String(text || '').toLowerCase();
   }
 
+  function setContextLabel(text) {
+    const label = document.getElementById('voice-context-label');
+    if (!label) return;
+    if (text) {
+      label.textContent = String(text);
+      label.style.display = 'block';
+      return;
+    }
+    label.textContent = '';
+    label.style.display = 'none';
+  }
+
   function showOverlay() {
     if (inlineMode()) {
       window.dispatchEvent(new CustomEvent('structa-voice-open'));
@@ -611,6 +623,7 @@
     if (listening) {
       stopListening(false);
     }
+    setContextLabel('');
     hideOverlay();
   }
 
@@ -641,6 +654,7 @@
     stopListening: stopListening,
     setQuestionContext: setQuestionContext,
     setBuildContext: setBuildContext,
+    setContextLabel: setContextLabel,
     get listening() { return listening; },
     get activeQuestion() { return activeQuestion; }
   });

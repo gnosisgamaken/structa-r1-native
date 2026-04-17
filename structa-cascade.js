@@ -629,28 +629,24 @@
     // If answering a question, set context before starting
     if (data.answeringQuestion) {
       if (window.StructaVoice?.setQuestionContext) {
-        window.StructaVoice.setQuestionContext(data.answeringQuestion.index, data.answeringQuestion.text);
+        window.StructaVoice.setQuestionContext(data.answeringQuestion);
       }
       native?.appendLogEntry?.({ kind: 'voice', message: 'answering: ' + data.answeringQuestion.text.slice(0, 40) });
     } else if (data.buildContext && window.StructaVoice?.setBuildContext) {
       window.StructaVoice.setBuildContext(data.buildContext);
     }
 
-    // Show context label on voice overlay for all voice opens
-    const voiceContextLabel = document.getElementById('voice-context-label');
-    if (voiceContextLabel) {
-      const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision' };
-      const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
-      if (data.answeringQuestion) {
-        voiceContextLabel.textContent = 'answering ask';
-        voiceContextLabel.style.display = 'block';
-      } else if (surface && surfaceMap[surface]) {
-        voiceContextLabel.textContent = surfaceMap[surface];
-        voiceContextLabel.style.display = 'block';
-      } else {
-        voiceContextLabel.style.display = 'none';
-      }
+    const voiceOverlay = document.getElementById('voice-overlay');
+    const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision' };
+    const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
+    const contextLabelText = data.answeringQuestion
+      ? 'answering ask'
+      : (surface && surfaceMap[surface] ? surfaceMap[surface] : '');
+    if (voiceOverlay) {
+      if (data.answeringQuestion) voiceOverlay.classList.add('answer-mode');
+      else voiceOverlay.classList.remove('answer-mode');
     }
+    window.StructaVoice?.setContextLabel?.(contextLabelText);
 
     if (data.fromPTT) {
       document.body.classList.add('input-locked');
@@ -667,8 +663,13 @@
     if (transitionTargetState !== STATES.VOICE_PROCESSING) {
       stateData.inlinePTTSurface = '';
     }
+    const voiceOverlay = document.getElementById('voice-overlay');
     const voiceContextLabel = document.getElementById('voice-context-label');
-    if (voiceContextLabel) voiceContextLabel.style.display = 'none';
+    if (voiceOverlay) voiceOverlay.classList.remove('answer-mode');
+    if (voiceContextLabel) {
+      voiceContextLabel.textContent = '';
+      voiceContextLabel.style.display = 'none';
+    }
   };
 
   // --- VOICE_PROCESSING ---
@@ -713,7 +714,7 @@
     voiceReturnState = STATES.KNOW_BROWSE;
     transition(STATES.VOICE_OPEN, {
       answeringQuestion: data.question,
-      fromPTT: false
+      fromPTT: true
     });
   };
 
@@ -784,6 +785,7 @@
     if (source !== 'touch') {
       stateData.showStatus = 'touch to start camera';
       stateData.pendingShowNarration = false;
+      window.StructaAudio?.play?.('error');
       render();
       return false;
     }
@@ -1208,7 +1210,7 @@
 
     if (!questions.length) {
       questions.push(makeItem({
-        lane: 'questions', title: 'all clear', body: 'no open asks',
+        lane: 'questions', title: 'no asks', body: 'no asks yet',
         next: '',
         created_at: new Date().toISOString(), source: 'empty', chips: ['latest']
       }));
@@ -1259,8 +1261,8 @@
 
     if (!decisionsLane.length) {
       decisionsLane.push(makeItem({
-        lane: 'decisions', title: 'no decisions locked',
-        body: 'no locked decisions yet',
+        lane: 'decisions', title: 'no decisions',
+        body: 'no decisions yet',
         next: '',
         created_at: new Date().toISOString(), source: 'decision-gap', chips: []
       }));
@@ -1278,9 +1280,9 @@
 
     const lanes = [
       { id: 'questions', label: 'asks', summary: 'open asks', items: questions },
-      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'no signal extracted yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
+      { id: 'signals', label: 'signals', summary: 'extracted signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'no signals yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
       { id: 'decisions', label: 'decided', summary: 'locked decisions', items: decisionsLane },
-      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'clear', body: 'no open loops', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
+      { id: 'open loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no tasks', body: 'no tasks yet', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
       lane.items
         .sort((a, b) => {
@@ -1862,6 +1864,21 @@
       : 0;
     stateData.showCaptureIndex = safeIndex;
     const current = captures[safeIndex] || null;
+    if (!current) {
+      return {
+        title: project?.name || 'new project',
+        captures,
+        current: null,
+        currentIndex: 0,
+        insights: (project?.insights || []).length,
+        status: stateData.showStatus || 'empty',
+        summary: 'no frames',
+        imageHref: '',
+        analysisReady: false,
+        analysisState: '',
+        createdAt: null
+      };
+    }
     return {
       title: project?.name || 'new project',
       captures,
@@ -2691,10 +2708,6 @@
         break;
 
       case STATES.VOICE_OPEN:
-        if (!window.StructaVoice?.listening) {
-          document.body.classList.add('input-locked');
-          window.StructaVoice?.startListening?.();
-        }
         break;
 
       case STATES.KNOW_BROWSE: {
@@ -2883,6 +2896,7 @@
       case STATES.SHOW_BROWSE:
         if (!captureAnalysisReady(buildShowSummary().current)) {
           pushLog('wait for visual note', 'camera');
+          window.StructaAudio?.play?.('error');
           break;
         }
         voiceReturnState = STATES.SHOW_BROWSE;
@@ -3202,6 +3216,11 @@
 
   // Keyboard fallback
   document.addEventListener('keydown', event => {
+    if ((event.key === 'l' || event.key === 'L') && onboardingAllowsLogs() && (currentState === STATES.HOME || currentState === STATES.LOG_OPEN)) {
+      event.preventDefault();
+      transition(currentState === STATES.LOG_OPEN ? STATES.HOME : STATES.LOG_OPEN);
+      return;
+    }
     if (currentState === STATES.HOME) {
       if (event.key === 'ArrowRight') selectIndex(selectedIndex + 1);
       if (event.key === 'ArrowLeft') selectIndex(selectedIndex - 1);

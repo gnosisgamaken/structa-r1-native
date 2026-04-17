@@ -268,14 +268,17 @@
         if (!question.onboarding || onboardingFinalized) return;
         onboardingFinalized = true;
         var currentProject = native?.getProjectMemory?.();
+        var heuristicName = inferProjectName(text);
+        window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
+          detail: {
+            answer: text,
+            inferredName: heuristicName || ''
+          }
+        }));
         resolveProjectTitle(text, currentProject).then(function(finalName) {
           if (finalName) native?.setProjectName?.(finalName);
-          window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
-            detail: {
-              answer: text,
-              inferredName: finalName || ''
-            }
-          }));
+        }).catch(function() {
+          if (heuristicName) native?.setProjectName?.(heuristicName);
         });
       }
 
@@ -295,6 +298,9 @@
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-answer' }
       }));
+      if (question.onboarding) {
+        finalizeOnboardingAnswer();
+      }
 
       // Send to LLM for structured extraction (answer mode)
       if (window.StructaLLM) {

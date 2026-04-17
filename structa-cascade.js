@@ -1170,7 +1170,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      mk('rect', { x: 10, y: cardY + 30, width: 3, height: 108, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.76)' });
+      mk('rect', { x: 14, y: cardY + 30, width: 3, height: 108, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.76)' });
       wrapTextBlock(undefined, 'what is this project about?', 20, cardY + 50, 190, 15, 'rgba(8,8,8,0.96)', '16', 4);
       mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
       text(30, cardY + 134, inlineListening ? 'release to answer' : 'hold ptt → answer', {
@@ -3612,6 +3612,8 @@
     pushLog('lesson 2 complete', 'system');
     if (currentState === STATES.VOICE_PROCESSING || currentState === STATES.VOICE_OPEN) {
       voiceReturnState = STATES.NOW_BROWSE;
+    } else if (currentState === STATES.HOME) {
+      transition(STATES.NOW_BROWSE);
     } else if (currentState === STATES.NOW_BROWSE) {
       render();
     }

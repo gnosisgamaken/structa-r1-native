@@ -32,6 +32,10 @@
   let pendingVoiceCaptureTimer = null;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+  function lower(text) {
+    return String(text || '').toLowerCase();
+  }
+
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
   }
@@ -314,7 +318,18 @@
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(preview, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/png');
+    let dataUrl = '';
+    try {
+      dataUrl = canvas.toDataURL('image/png');
+    } catch (_) {
+      dataUrl = '';
+    }
+    if (!dataUrl) {
+      native?.appendLogEntry?.({ kind: 'camera', message: 'frame capture failed — try again' });
+      window.StructaAudio?.play?.('error');
+      window.dispatchEvent(new CustomEvent('structa-capture-failed'));
+      return null;
+    }
     const rawBase64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
 
     if (pendingVoiceCaptureTimer) {
@@ -394,15 +409,31 @@
 
     hideOverlay();
 
+    const projectBefore = native?.getProjectMemory?.() || {};
+    const hadAnalyzedCaptures = (projectBefore.captures || []).some(function(cap) {
+      return lower(cap?.meta?.analysis_status || '') === 'ready';
+    });
+
+    function runAnalysis() {
+      return Promise.race([
+        window.StructaLLM.processImage(rawBase64, desc, {
+          facingMode: facingMode,
+          voiceAnnotation: annotation
+        }),
+        new Promise(function(resolve) {
+          setTimeout(function() {
+            resolve({ ok: false, reason: 'timeout' });
+          }, 40000);
+        })
+      ]);
+    }
+
     // Send to LLM with voice annotation context
     if (window.StructaLLM) {
       native?.appendLogEntry?.({ kind: 'camera', message: 'visual analysis queued' });
       var desc = 'User captured a ' + facingMode + ' photo (' + w + 'x' + h + ')';
       var analyze = function(attempt) {
-        return window.StructaLLM.processImage(rawBase64, desc, {
-          facingMode: facingMode,
-          voiceAnnotation: annotation
-        }).then(function(result) {
+        return runAnalysis().then(function(result) {
           if (result && result.ok && result.clean) {
             var insightNode = window.StructaLLM.storeAsInsight(result, annotation ? 'show-tell' : 'capture');
             native?.appendLogEntry?.({ kind: 'llm', message: annotation ? 'show+tell insight ready' : 'visual insight ready' });
@@ -440,11 +471,17 @@
                 last_insight_summary: result.clean
               });
             });
+            if (!hadAnalyzedCaptures) {
+              window.StructaLLM?.speakMilestone?.('first_capture');
+            }
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'visual-insight' }
             }));
             window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           } else {
+            if (result && result.reason === 'timeout') {
+              native?.appendLogEntry?.({ kind: 'camera', message: 'visual analysis timed out' });
+            }
             if (attempt === 0) return analyze(1);
             native?.touchProjectMemory?.(function(project) {
               var cap = (project.captures || []).find(function(c) { return c.id === bundle.entry_id; });

@@ -21,6 +21,9 @@
   const logDrawer = document.getElementById('log-drawer');
   const logHandle = document.getElementById('log-handle');
   const logPreview = document.getElementById('log-preview');
+  const logOps = document.getElementById('log-ops');
+  const logPhaseRow = document.getElementById('log-phase-row');
+  const logStatsRow = document.getElementById('log-stats-row');
   const native = window.StructaNative;
   const router = window.StructaActionRouter;
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
@@ -355,6 +358,13 @@
   }
 
   function getCaptureSummary(capture) {
+    if (!capture) return 'no frames';
+    const status = lower(capture?.meta?.analysis_status || '');
+    if (status === 'pending') return 'analyzing…';
+    if (status === 'unavailable') {
+      const fallback = String(capture?.summary || capture?.prompt_text || capture?.voice_annotation || 'frame saved');
+      return lower('unanalyzed · ' + fallback);
+    }
     const raw = String(capture?.ai_analysis || capture?.ai_response || capture?.summary || capture?.prompt_text || 'untitled capture');
     const signalMatch = raw.match(/signal:\s*(.+)/i);
     if (signalMatch && signalMatch[1]) return lower(signalMatch[1].trim());
@@ -381,6 +391,17 @@
     ];
   }
 
+  function getOpsStatsLine() {
+    const project = getProjectMemory() || {};
+    const captures = getCaptureList().length;
+    const signals = (project.insights || []).length;
+    const decisions = (project.decisions || []).length;
+    const open = (project.open_questions || []).filter(function(item) {
+      return !item || typeof item === 'string' || item.status !== 'answered';
+    }).length;
+    return `captures ${captures} · signals ${signals} · decisions ${decisions} · open ${open}`;
+  }
+
   function getQueueLine() {
     const pending = window.StructaLLM?.pendingCount || 0;
     const priority = window.StructaLLM?.pendingHighPriorityCount || 0;
@@ -388,6 +409,25 @@
     if (!pending) return `queue clear · ${phase}`;
     if (priority && priority !== pending) return `${pending} queued · ${priority} priority · ${phase}`;
     return `${pending} queued · ${phase}`;
+  }
+
+  function getPhaseDots(phase = '') {
+    const order = ['observe', 'clarify', 'evaluate', 'decision', 'cooldown'];
+    const activeIndex = order.indexOf(lower(phase));
+    if (lower(phase) === 'paused') return '■□□□□';
+    if (lower(phase) === 'idle') return '□□□□□';
+    return order.map(function(_, index) { return index <= activeIndex ? '●' : '○'; }).join('');
+  }
+
+  function updateLogOps(detail) {
+    if (!logPhaseRow || !logStatsRow) return;
+    const chain = window.StructaImpactChain;
+    const phase = lower(detail?.phase || chain?.phase || 'idle');
+    const cooldown = Math.max(0, detail?.cooldownMs ?? chain?.cooldownRemaining ?? 0);
+    const cooldownLabel = cooldown > 0 ? ` · cool ${Math.ceil(cooldown / 1000)}s` : '';
+    logPhaseRow.textContent = `chain ${phase} · ${getPhaseDots(phase)}${cooldownLabel}`;
+    logStatsRow.textContent = getOpsStatsLine();
+    if (logOps) logOps.hidden = !logOpen;
   }
 
   function getTriangleState() {
@@ -421,32 +461,8 @@
     return true;
   }
 
-  function renderLogRows(entries, options = {}) {
+  function renderLogRows(entries) {
     log.innerHTML = '';
-    if (options.includeStats) {
-      const queueRow = document.createElement('div');
-      queueRow.className = 'entry';
-      const queueLabel = document.createElement('span');
-      queueLabel.className = 'muted';
-      queueLabel.textContent = '[queue]';
-      queueRow.appendChild(queueLabel);
-      const queueMessage = document.createElement('span');
-      queueMessage.textContent = getQueueLine();
-      queueRow.appendChild(queueMessage);
-      log.appendChild(queueRow);
-      getStatsLines().forEach(function(line, index) {
-        const statsRow = document.createElement('div');
-        statsRow.className = 'entry';
-        const label = document.createElement('span');
-        label.className = 'muted';
-        label.textContent = index === 0 ? '[stats]' : '[—]';
-        statsRow.appendChild(label);
-        const message = document.createElement('span');
-        message.textContent = line;
-        statsRow.appendChild(message);
-        log.appendChild(statsRow);
-      });
-    }
     entries.forEach(entry => {
       const row = document.createElement('div');
       row.className = 'entry';
@@ -492,16 +508,15 @@
     const previousScroll = log.scrollTop;
     const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     if (!entries.length) {
-      if (logOpen) {
-        renderLogRows([], { includeStats: true });
-      } else {
-        log.innerHTML = '';
-      }
+      if (logOpen) renderLogRows([]);
+      else log.innerHTML = '';
       logPreview.textContent = getQueueLine();
+      updateLogOps();
       return;
     }
-    renderLogRows(entries, { includeStats: logOpen });
+    renderLogRows(entries);
     logPreview.textContent = latestLogText();
+    updateLogOps();
     if (logOpen) log.scrollTop = previousScroll;
   }
 
@@ -509,9 +524,11 @@
     logOpen = !!open;
     logDrawer.classList.toggle('open', logOpen);
     logDrawer.setAttribute('aria-expanded', logOpen ? 'true' : 'false');
+    if (logOps) logOps.hidden = !logOpen;
     if (logOpen) {
       const entries = native?.getRecentLogEntries?.(33, { visible_only: true }) || [];
-      renderLogRows(entries, { includeStats: true });
+      renderLogRows(entries);
+      updateLogOps();
       log.scrollTop = 0;
     } else {
       refreshLogFromMemory();
@@ -674,7 +691,7 @@
     }
 
     const voiceOverlay = document.getElementById('voice-overlay');
-    const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision' };
+    const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision', log: 'to log' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
     const contextLabelText = data.triangleMode
       ? 'your angle'
@@ -874,6 +891,7 @@
     const selectedOptionIndex = Math.max(0, Math.min(stateData.selectedOption || 0, Math.max(options.length - 1, 0)));
     const selectedOption = options.length ? options[selectedOptionIndex] : null;
     native?.approvePendingDecision?.(decisionIndex, selectedOptionIndex, selectedOption);
+    window.StructaLLM?.speakMilestone?.('decision_approved');
     pushLog(selectedOption ? `decision approved: ${selectedOption}` : 'decision approved', 'decision');
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
@@ -883,7 +901,7 @@
         stateData.nowFeedback = '';
         render();
       }
-    }, 1200);
+    }, 520);
     render();
     return true;
   }
@@ -1584,7 +1602,7 @@
     text(40, 34, 'structa', {
       fill: '#f4efe4',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '34', 'letter-spacing': '0.0em'
+      'font-size': '32', 'letter-spacing': '0.0em'
     });
     text(14, 56, compactProjectName(projectDisplayName(project)), {
       fill: '#f8c15d',
@@ -3129,7 +3147,7 @@
 
       case STATES.LOG_OPEN:
         window.StructaImpactChain?.stop?.();
-        pushLog('chain killed', 'system');
+        pushLog('chain killed by user', 'system');
         break;
 
       default:
@@ -3353,11 +3371,11 @@
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
           tellStatus: 'log note',
-          inlinePTTSurface: 'home',
+          inlinePTTSurface: 'log',
           buildContext: {
             kind: 'log-note',
             text: getQueueLine(),
-            surface: 'home'
+            surface: 'log'
           }
         });
         break;
@@ -3622,6 +3640,7 @@
 
   window.addEventListener('structa-memory-updated', () => {
     refreshLogFromMemory();
+    updateLogOps();
     render();
     maybeStartHeartbeat();
     if (!onboardingActive() && !chainStarted && projectHasMeaningfulContent() && window.StructaImpactChain && !window.StructaImpactChain.active) {
@@ -3698,6 +3717,13 @@
   });
 
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
+  window.addEventListener('structa-impact-phase', event => { updateLogOps(event?.detail || {}); });
+  window.addEventListener('structa-capture-failed', () => {
+    if (currentState === STATES.CAMERA_CAPTURE || currentState === STATES.CAMERA_OPEN) {
+      transition(STATES.CAMERA_OPEN);
+    }
+    refreshLogFromMemory();
+  });
 
   // Hardware inputs
   window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(1); });

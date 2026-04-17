@@ -638,6 +638,7 @@
     syncActiveProjectAlias();
     updateUIState({ last_event_summary: 'project created', last_surface: 'home' });
     persist();
+    window.StructaLLM?.speakMilestone?.('project_live');
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return project;
   }

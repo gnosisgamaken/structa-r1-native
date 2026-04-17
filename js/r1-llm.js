@@ -4,6 +4,13 @@
  * Uses PluginMessageHandler.postMessage() to send messages to the R1's
  * on-device LLM. Responses come back via window.onPluginMessage().
  *
+ * VOICE DOCTRINE
+ * Structa speaks only at milestones. Silence is the default.
+ * A milestone is a moment the user did something that produced a real artifact.
+ * Voice strings: ≤ 3 words, lowercase, declarative, no hedging, no questions.
+ * Tone: quiet accomplishment. Never instructional, never conversational.
+ * If unsure whether a moment is a milestone — it isn't.
+ *
  * Changes (2026-04-13):
  * - processVoice() now injects project context + conversation history
  * - conversationHistory[] is populated on every exchange
@@ -22,10 +29,39 @@
   var lastCallTime = 0;
   var MIN_GAP_MS = 350;
   var dispatchTimer = null;
+  var lastMilestoneSpeechAt = 0;
+  var MILESTONE_COOLDOWN_MS = 6000;
 
   function getNextId() {
     requestId++;
     return 'structa-' + Date.now() + '-' + requestId;
+  }
+
+  function speakMilestone(kind) {
+    var STRINGS = {
+      triangle: 'signal captured',
+      decision_created: 'decision ready',
+      decision_approved: 'locked',
+      first_capture: 'frame ready',
+      project_live: 'project live'
+    };
+    var text = STRINGS[kind];
+    if (!text || typeof PluginMessageHandler === 'undefined') return false;
+    var now = Date.now();
+    if (now - lastMilestoneSpeechAt < MILESTONE_COOLDOWN_MS) return false;
+    lastMilestoneSpeechAt = now;
+    try {
+      PluginMessageHandler.postMessage(JSON.stringify({
+        message: text,
+        useLLM: false,
+        useSerpAPI: false,
+        wantsR1Response: true,
+        wantsJournalEntry: false
+      }));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /**
@@ -92,7 +128,7 @@
       var payload = {
         message: request.message,
         useLLM: request.opts.useSerpAPI ? false : true,
-        wantsR1Response: request.opts.speak || false,
+        wantsR1Response: false,
         wantsJournalEntry: request.opts.journal || false
       };
 
@@ -363,7 +399,7 @@
     conversationHistory.push({ role: 'user', text: transcript, time: Date.now() });
     if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
 
-    return sendToLLM(prompt, { speak: false, journal: false, priority: 'high' }).then(function(result) {
+    return sendToLLM(prompt, { journal: false, priority: 'high' }).then(function(result) {
       // Track LLM response in history
       if (result && result.ok && result.clean) {
         conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now() });
@@ -419,7 +455,7 @@
       'NEXT: one short next step.\n' +
       'No markdown. No speculation. Total under 45 words.';
 
-    return sendToLLM(prompt, { imageBase64: rawBase64, speak: false, journal: false, priority: 'high' });
+    return sendToLLM(prompt, { imageBase64: rawBase64, journal: false, priority: 'high' });
   }
 
   function query(question) {
@@ -531,7 +567,7 @@
       existing.map(function(n, i) { return (i + 1) + '. "' + (n.title + ' ' + n.body).slice(0, 50) + '" (' + n.type + ')'; }).join('\n') +
       '\n\nWhich items (by number) are related? Return ONLY comma-separated numbers, or "none".';
 
-    return sendToLLM(prompt, { speak: false, journal: false, timeout: 15000, priority: 'low' }).then(function(result) {
+    return sendToLLM(prompt, { journal: false, timeout: 15000, priority: 'low' }).then(function(result) {
       if (!result || !result.ok || !result.clean) return [];
       var matches = result.clean.match(/\d+/g);
       if (!matches) return [];
@@ -570,7 +606,7 @@
       'Topic: "' + query + '"\n' +
       'Write the best web search query only. 3 to 8 words.';
 
-    return sendToLLM(formulationPrompt, { speak: false, journal: false, timeout: 15000, priority: 'high' })
+    return sendToLLM(formulationPrompt, { journal: false, timeout: 15000, priority: 'high' })
       .then(function(formulated) {
         var searchQuery = (formulated && formulated.ok && formulated.clean) ? formulated.clean.replace(/^["']|["']$/g, '') : query;
         return sendToLLM(JSON.stringify({
@@ -579,7 +615,6 @@
           useLocation: false
         }), {
           useSerpAPI: true,
-          speak: false,
           journal: false,
           timeout: 25000,
           priority: 'high'
@@ -596,7 +631,7 @@
           'Search query used: "' + payload.searchQuery + '"\n\n' +
           'Search results:\n' + String(rawResults).slice(0, 2400) + '\n\n' +
           'Return exactly 3 numbered findings. Each finding must be 10 words max and useful for the project.';
-        return sendToLLM(synthesisPrompt, { speak: false, journal: false, timeout: 20000, priority: 'high' })
+        return sendToLLM(synthesisPrompt, { journal: false, timeout: 20000, priority: 'high' })
           .then(function(result) {
             if (!result || !result.ok) return { ok: false, findings: [] };
             var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
@@ -645,7 +680,7 @@
         '\n\nSummarize key themes and implications in 3 paragraphs.';
     }
 
-    return sendToLLM(prompt, { speak: false, journal: false }).then(function(result) {
+    return sendToLLM(prompt, { journal: false }).then(function(result) {
       if (!result || !result.ok) return { ok: false };
       // Send via email through R1
       if (typeof PluginMessageHandler !== 'undefined') {
@@ -670,6 +705,7 @@
     linkNode: linkNode,
     research: research,
     generateExport: generateExport,
+    speakMilestone: speakMilestone,
     resetHistory: resetHistory,
     get pendingCount() { return requestQueue.length + (activeRequest ? 1 : 0); },
     get pendingHighPriorityCount() {

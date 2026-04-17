@@ -385,7 +385,6 @@
 
     return llm.sendToLLM(prompt, {
       imageBase64: imageBase64 || undefined,
-      speak: false,
       journal: false,
       priority: 'high'
     }).then(function(result) {
@@ -444,6 +443,7 @@
       updateLinks(signalNode?.node_id || '', pair.a, pair.b, questionNode?.node_id || '');
       const origin = clone(pair.origin || {});
       clearRuntimeState();
+      window.StructaLLM?.speakMilestone?.('triangle');
       emit('structa-triangle-result', {
         signal: parsed.signal,
         question: parsed.question || '',

@@ -101,7 +101,7 @@
       bottom: 0;
       height: 28px;
       transform: translateY(0);
-      transition: transform 160ms ease, background 160ms ease, height 160ms ease;
+      transition: transform 220ms ease, background 220ms ease, height 220ms ease;
       background: rgba(5, 5, 5, 0.985);
       border-top: 1.5px solid rgba(255, 255, 255, 0.08);
       z-index: 8;
@@ -210,6 +210,35 @@
       font-size: 9px;
       letter-spacing: 0.02em;
       font-family: 'PowerGrotesk-Regular', sans-serif;
+    }
+
+    #log-ops {
+      display: none;
+      min-height: 56px;
+      padding: 8px 12px 6px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 10px;
+      line-height: 1.45;
+      color: rgba(244,239,228,0.72);
+      font-family: 'PowerGrotesk-Regular', sans-serif;
+      text-transform: lowercase;
+    }
+
+    #log-drawer.open #log-ops {
+      display: block;
+    }
+
+    #log-phase-row,
+    #log-stats-row {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #log-stats-row {
+      color: rgba(244,239,228,0.52);
+      margin-top: 4px;
     }
 
     #log {
@@ -355,7 +384,7 @@
       background: rgba(255,92,92,0.92);
       box-shadow: 0 0 18px rgba(255,92,92,0.22);
       opacity: 0.76;
-      animation: pulse-red 1s ease-in-out infinite;
+      animation: pulse-red 450ms ease-in-out infinite;
     }
 
     #voice-overlay.listening .capture-glyph {
@@ -380,7 +409,7 @@
 
     #voice-wave .bar {
       transform-origin: center bottom;
-      animation: wave 900ms ease-in-out infinite;
+      animation: wave 400ms ease-in-out infinite;
     }
 
     #voice-wave .bar:nth-child(2) { animation-delay: 80ms; }
@@ -409,16 +438,16 @@
     }
 
     #voice-overlay.answer-mode #voice-glyph {
-      background: rgba(248,193,93,0.88);
-      box-shadow: 0 0 18px rgba(248,193,93,0.20);
+      background: rgba(244,239,228,0.72);
+      box-shadow: 0 0 18px rgba(244,239,228,0.16);
     }
 
     #voice-overlay.answer-mode #voice-wave .bar {
-      fill: rgba(248,193,93,0.9);
+      fill: rgba(244,239,228,0.72);
     }
 
     #voice-overlay.answer-mode .capture-glyph {
-      box-shadow: 0 0 0 10px rgba(248,193,93,0.06), 0 0 36px rgba(248,193,93,0.16);
+      box-shadow: 0 0 0 10px rgba(244,239,228,0.06), 0 0 36px rgba(244,239,228,0.12);
     }
 
     /* Voice status label — visible context indicator */
@@ -437,7 +466,7 @@
     }
 
     #voice-overlay.answer-mode #voice-context-label {
-      color: rgba(248, 193, 93, 0.88);
+      color: rgba(244, 239, 228, 0.72);
     }
 
     /* === Calm motion system === */
@@ -492,7 +521,7 @@
 
     /* Surface enter animation — cards slide in */
     .overlay.open {
-      animation: surface-enter 160ms ease-out;
+      animation: surface-enter 220ms ease-out;
     }
 
     @keyframes surface-enter {
@@ -507,9 +536,9 @@
 
     /* Log drawer transition */
     #log-drawer.open {
-      transition: transform 160ms ease,
-                  background 160ms ease,
-                  height 160ms ease;
+      transition: transform 220ms ease,
+                  background 220ms ease,
+                  height 220ms ease;
     }
 
     .sr-only {
@@ -553,7 +582,7 @@
       background: rgba(255, 92, 92, 0.92);
       box-shadow: 0 0 14px rgba(255, 92, 92, 0.22);
       flex-shrink: 0;
-      animation: pulse-red 1s ease-in-out infinite;
+      animation: pulse-red 450ms ease-in-out infinite;
     }
 
     #camera-voice-strip .strip-text {
@@ -582,6 +611,10 @@
         <span id="log-preview">audit</span>
         <span id="log-chain-badge" class="idle"><span class="chain-dot"></span><span id="chain-phase-text">idle</span></span>
       </button>
+      <div id="log-ops" hidden>
+        <div id="log-phase-row">chain idle · □□□□□</div>
+        <div id="log-stats-row">captures 0 · signals 0 · decisions 0 · open 0</div>
+      </div>
       <div id="log"></div>
     </section>
 

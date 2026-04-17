@@ -39,6 +39,51 @@
     awaitingFastTrack: false,
     manuallyStopped: false
   };
+  var cooldownTickTimer = null;
+  var PAUSE_KEY = 'structa.chain.paused';
+
+  function emitPhase() {
+    window.dispatchEvent(new CustomEvent('structa-impact-phase', {
+      detail: {
+        phase: chain.currentPhase,
+        cooldownMs: chain.currentPhase === 'cooldown'
+          ? Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt))
+          : 0,
+        paused: !!chain.manuallyStopped
+      }
+    }));
+  }
+
+  function setPhase(phase) {
+    chain.currentPhase = phase;
+    emitPhase();
+  }
+
+  function persistPauseState(paused) {
+    try {
+      if (!window.creationStorage?.plain) return;
+      if (paused) window.creationStorage.plain.setItem(PAUSE_KEY, '1');
+      else window.creationStorage.plain.removeItem(PAUSE_KEY);
+    } catch (_) {}
+  }
+
+  function startCooldownTicker() {
+    stopCooldownTicker();
+    cooldownTickTimer = setInterval(function() {
+      if (chain.currentPhase !== 'cooldown') {
+        stopCooldownTicker();
+        return;
+      }
+      emitPhase();
+    }, 1000);
+  }
+
+  function stopCooldownTicker() {
+    if (cooldownTickTimer) {
+      clearInterval(cooldownTickTimer);
+      cooldownTickTimer = null;
+    }
+  }
 
   // === Impact ID ===
   function makeImpactId(type) {
@@ -210,11 +255,13 @@
     });
 
     chain.lastDecisionAt = Date.now();
-    chain.currentPhase = 'cooldown';
+    setPhase('cooldown');
+    startCooldownTicker();
 
     if (panel && panel.pushLog) {
       panel.pushLog('decision ready', 'decision');
     }
+    llm?.speakMilestone?.('decision_created');
 
     // Notify cascade to show decision on NOW card
     window.dispatchEvent(new CustomEvent('structa-decision-created', {
@@ -329,7 +376,8 @@
         return; // still cooling
       }
       // Cooldown over — restart chain
-      chain.currentPhase = 'observe';
+      stopCooldownTicker();
+      setPhase('observe');
       chain.impacts = [];
       chain.beatCount = 0;
     }
@@ -345,14 +393,14 @@
 
     var blockers = getBlockers();
     if (blockers.total > 0 && chain.currentPhase !== 'cooldown') {
-      chain.currentPhase = 'blocked';
+      setPhase('blocked');
       window.dispatchEvent(new CustomEvent('structa-blocked', { detail: blockers }));
       return;
     }
 
     // === Discovery mode: ask shaping questions when project is new ===
     if (isDiscoveryMode() && chain.currentPhase === 'observe') {
-      llm.sendToLLM(discoveryPrompt(context), { speak: false, journal: false, timeout: 20000, priority: 'low' })
+      llm.sendToLLM(discoveryPrompt(context), { journal: false, timeout: 20000, priority: 'low' })
         .then(function(result) {
           if (!chain.active) return;
           if (result && result.ok && result.clean) {
@@ -376,9 +424,10 @@
               });
             }
 
-            chain.currentPhase = 'cooldown';
+            setPhase('cooldown');
             chain.lastDecisionAt = Date.now();
             chain.cooldownMs = 35000;
+            startCooldownTicker();
 
             // Notify
             window.dispatchEvent(new CustomEvent('structa-discovery-question', {
@@ -395,13 +444,13 @@
       case 'idle':
       case 'blocked':
       case 'observe':
-        chain.currentPhase = 'observe';
-        llm.sendToLLM(observePrompt(context), { speak: false, journal: false, timeout: 20000, priority: 'low' })
+        setPhase('observe');
+        llm.sendToLLM(observePrompt(context), { journal: false, timeout: 20000, priority: 'low' })
           .then(function(result) {
             if (!chain.active) return;
             if (result && result.ok && result.clean) {
               var impact = storeImpact('observe', 'inspect', context, result.clean);
-              chain.currentPhase = 'clarify';
+              setPhase('clarify');
               panel && panel.render && panel.render();
             }
           });
@@ -413,10 +462,10 @@
 
         // Decide: continue clarifying or evaluate?
         if (chain.impacts.length >= chain.maxImpactsPerChain) {
-          chain.currentPhase = 'evaluate';
+          setPhase('evaluate');
           // Fall through to evaluate
         } else {
-          llm.sendToLLM(clarifyPrompt(context, observation), { speak: false, journal: false, timeout: 20000, priority: 'low' })
+          llm.sendToLLM(clarifyPrompt(context, observation), { journal: false, timeout: 20000, priority: 'low' })
             .then(function(result) {
               if (!chain.active) return;
               if (result && result.ok && result.clean) {
@@ -431,7 +480,7 @@
 
                 // After enough clarification, move to evaluate
                 if (chain.impacts.length >= chain.maxImpactsPerChain) {
-                  chain.currentPhase = 'evaluate';
+                  setPhase('evaluate');
                 }
                 panel && panel.render && panel.render();
               }
@@ -442,10 +491,10 @@
 
       case 'evaluate':
         if (!chain.impacts.some(function(impact) { return impact.type === 'clarify'; })) {
-          chain.currentPhase = 'clarify';
+          setPhase('clarify');
           break;
         }
-        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { speak: false, journal: false, timeout: 25000, priority: 'low' })
+        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { journal: false, timeout: 25000, priority: 'low' })
           .then(function(result) {
             if (!chain.active) return;
             if (result && result.ok && result.clean) {
@@ -466,7 +515,7 @@
                   storeDecision(fallback, ['approve', 'skip', 'revise']);
                 }
 
-                chain.currentPhase = 'clarify';
+                setPhase('clarify');
                 panel && panel.render && panel.render();
               }
             }
@@ -483,9 +532,10 @@
     if (onboardingBlocked()) return;
     if (chain.active) return;
     chain.manuallyStopped = false;
+    persistPauseState(false);
     chain.active = true;
     chain.bpm = bpm || 4;
-    chain.currentPhase = 'observe';
+    setPhase('observe');
     chain.impacts = [];
     chain.beatCount = 0;
 
@@ -499,8 +549,14 @@
   function pause(reason) {
     if (!chain.active) return;
     chain.active = false;
-    chain.currentPhase = 'idle';
-    if (reason === 'manual stop') chain.manuallyStopped = true;
+    stopCooldownTicker();
+    if (reason === 'manual stop') {
+      chain.manuallyStopped = true;
+      persistPauseState(true);
+      setPhase('paused');
+    } else {
+      setPhase('idle');
+    }
     if (chain.timerId) {
       clearInterval(chain.timerId);
       chain.timerId = null;
@@ -509,9 +565,11 @@
 
   function stop() {
     chain.manuallyStopped = true;
+    persistPauseState(true);
     pause('manual stop');
     chain.impacts = [];
     chain.awaitingFastTrack = false;
+    setPhase('idle');
   }
 
   function resume() {
@@ -530,7 +588,16 @@
 
   function resumeManual() {
     chain.manuallyStopped = false;
+    persistPauseState(false);
     resume();
+  }
+
+  function kill() {
+    stop();
+  }
+
+  function isPaused() {
+    return !!chain.manuallyStopped;
   }
 
   function touchActivity() {
@@ -559,8 +626,10 @@
     start: start,
     pause: pause,
     stop: stop,
+    kill: kill,
     resume: resume,
     resumeManual: resumeManual,
+    isPaused: isPaused,
     touchActivity: touchActivity,
     requestImmediateBeat: requestImmediateBeat,
     get active() { return chain.active; },
@@ -578,6 +647,27 @@
       return Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt));
     }
   });
+
+  (function restorePauseState() {
+    try {
+      if (!window.creationStorage?.plain?.getItem) {
+        emitPhase();
+        return;
+      }
+      Promise.resolve(window.creationStorage.plain.getItem(PAUSE_KEY)).then(function(value) {
+        if (value) {
+          chain.manuallyStopped = true;
+          setPhase('paused');
+        } else {
+          emitPhase();
+        }
+      }).catch(function() {
+        emitPhase();
+      });
+    } catch (_) {
+      emitPhase();
+    }
+  })();
 
   // === Auto-start on user activity ===
   // Wire to hardware events so chain resumes on device wake

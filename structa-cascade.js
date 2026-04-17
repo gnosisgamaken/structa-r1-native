@@ -66,7 +66,14 @@
   let voiceReturnState = STATES.HOME;
   let transitionTargetState = null;
   let sideClickTimer = null;
+  let touchLogPressTimer = null;
+  let touchLogPressPointerId = null;
+  let touchLogPressStart = null;
+  let touchLogPressTriggered = false;
+  let touchLogSuppressClickUntil = 0;
   const DOUBLE_SIDE_WINDOW_MS = 220;
+  const TOUCH_LOG_LONG_PRESS_MS = 620;
+  const TOUCH_LOG_MOVE_TOLERANCE = 12;
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
@@ -3295,6 +3302,34 @@
     sideClickTimer = null;
   }
 
+  function clearTouchLogPress() {
+    if (touchLogPressTimer) {
+      clearTimeout(touchLogPressTimer);
+      touchLogPressTimer = null;
+    }
+    touchLogPressPointerId = null;
+    touchLogPressStart = null;
+  }
+
+  function touchLogAllowed() {
+    switch (currentState) {
+      case STATES.CAMERA_OPEN:
+      case STATES.CAMERA_CAPTURE:
+      case STATES.VOICE_OPEN:
+      case STATES.VOICE_PROCESSING:
+        return false;
+      default:
+        return true;
+    }
+  }
+
+  function forceOpenDebugLogs() {
+    if (!touchLogAllowed() || currentState === STATES.LOG_OPEN) return false;
+    clearPendingSideClick();
+    transition(STATES.LOG_OPEN);
+    return true;
+  }
+
   function handleLongPressStart() {
     clearPendingSideClick();
     switch (currentState) {
@@ -3557,7 +3592,55 @@
     handleScrollDirection(event.deltaY > 0 ? 1 : -1);
   }
 
+  function onTouchDebugPointerDown(event) {
+    if (event.pointerType !== 'touch') return;
+    if (!touchLogAllowed()) return;
+    clearTouchLogPress();
+    touchLogPressTriggered = false;
+    touchLogPressPointerId = event.pointerId;
+    touchLogPressStart = { x: event.clientX, y: event.clientY };
+    touchLogPressTimer = setTimeout(function() {
+      if (touchLogPressPointerId !== event.pointerId) return;
+      touchLogPressTriggered = forceOpenDebugLogs();
+      if (touchLogPressTriggered) {
+        touchLogSuppressClickUntil = Date.now() + 450;
+      }
+    }, TOUCH_LOG_LONG_PRESS_MS);
+  }
+
+  function onTouchDebugPointerMove(event) {
+    if (event.pointerType !== 'touch') return;
+    if (touchLogPressPointerId !== event.pointerId || !touchLogPressStart) return;
+    var dx = Math.abs((event.clientX || 0) - touchLogPressStart.x);
+    var dy = Math.abs((event.clientY || 0) - touchLogPressStart.y);
+    if (dx > TOUCH_LOG_MOVE_TOLERANCE || dy > TOUCH_LOG_MOVE_TOLERANCE) {
+      clearTouchLogPress();
+    }
+  }
+
+  function onTouchDebugPointerEnd(event) {
+    if (event.pointerType !== 'touch') return;
+    if (touchLogPressPointerId !== null && event.pointerId === touchLogPressPointerId) {
+      clearTouchLogPress();
+    }
+    if (!touchLogPressTriggered) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    touchLogPressTriggered = false;
+  }
+
+  function onTouchDebugClickCapture(event) {
+    if (Date.now() > touchLogSuppressClickUntil) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
   svg.addEventListener('wheel', onWheel, { passive: false });
+  svg.addEventListener('pointerdown', onTouchDebugPointerDown, { passive: true });
+  svg.addEventListener('pointermove', onTouchDebugPointerMove, { passive: true });
+  window.addEventListener('pointerup', onTouchDebugPointerEnd, true);
+  window.addEventListener('pointercancel', onTouchDebugPointerEnd, true);
+  window.addEventListener('click', onTouchDebugClickCapture, true);
 
   log.addEventListener('wheel', event => {
     if (currentState !== STATES.LOG_OPEN) event.preventDefault();

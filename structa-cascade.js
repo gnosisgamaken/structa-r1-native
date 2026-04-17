@@ -2493,9 +2493,15 @@
         openCameraFromShow('touch');
         break;
 
-      case STATES.TELL_BROWSE:
-        openTellSurface({ returnState: STATES.TELL_BROWSE, tellStatus: 'listening' });
+      case STATES.TELL_BROWSE: {
+        // Side click on TELL = open KNOW to see impact of this note
+        const tellContext = buildTellVoiceContext();
+        if (tellContext.text) {
+          selectedIndex = cards.findIndex(c => c.id === 'know');
+          transition(STATES.KNOW_BROWSE, { knowLaneIndex: 1, knowItemIndex: 0 });
+        }
         break;
+      }
 
       case STATES.SHOW_PRIMED:
         // Side while primed — open camera

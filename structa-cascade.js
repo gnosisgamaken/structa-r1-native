@@ -287,8 +287,21 @@
 
   function getOnboardingStep() {
     const ui = getUIState();
+    const project = getProjectMemory();
     if (ui?.onboarded) return 'complete';
     if (ui?.onboarding_step === 'complete') return 'complete';
+    const answeredOnboarding =
+      lower(project?.name || '') !== 'untitled project' ||
+      (project?.nodes || []).some(function(node) {
+        return node?.type === 'voice-entry' && node?.meta?.entry_mode === 'onboarding';
+      });
+    if (answeredOnboarding && typeof ui?.onboarding_step === 'number' && ui.onboarding_step < 3) {
+      native?.updateUIState?.({
+        onboarding_step: 3,
+        onboarded: false
+      });
+      return 3;
+    }
     if (typeof ui?.onboarding_step === 'number') return ui.onboarding_step;
     return freshWorkspaceState() ? 0 : 'complete';
   }
@@ -1647,7 +1660,7 @@
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(projects.length - 1, 0)));
     const selectedProject = projects[selected] || projects[0];
     const isFreshWorkspace = freshWorkspaceState() && !onboardingAllowsProjectSwitcher();
-    const onboardingProjectLesson = onboardingActive() && getOnboardingStep() === 1;
+    const onboardingProjectLesson = onboardingActive();
     const headerTitle = onboardingProjectLesson
       ? 'first project'
       : (isFreshWorkspace ? 'fresh start' : compactProjectName(selectedProject?.name || 'Untitled Project'));

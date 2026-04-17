@@ -362,6 +362,44 @@
     }).join('\n');
   }
 
+  function buildProjectEnvelope(surface) {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    return {
+      id: project.project_id || project.id || '',
+      name: project.name || 'untitled project',
+      type: project.type || 'general',
+      brief: project.brief || '',
+      topQuestions: (project.open_questions || []).slice(0, 3),
+      selectedSurface: surface || '',
+      summary: buildProjectContext({ deep: true })
+    };
+  }
+
+  function buildSelectionEnvelope(buildContext) {
+    if (!buildContext) return null;
+    return {
+      kind: buildContext.kind || '',
+      id: buildContext.nodeId || '',
+      title: buildContext.title || '',
+      summary: String(buildContext.text || '').slice(0, 220),
+      status: buildContext.status || 'open',
+      createdAt: buildContext.createdAt || ''
+    };
+  }
+
+  function executePreparedLLM(prepared) {
+    if (!prepared || !prepared.llm) {
+      return Promise.resolve({ ok: false, error: 'llm payload unavailable' });
+    }
+    return sendToLLM(prepared.llm.prompt || '', {
+      imageBase64: prepared.llm.imageBase64,
+      journal: false,
+      timeout: prepared.llm.timeout,
+      priority: prepared.llm.priority,
+      useSerpAPI: prepared.llm.useSerpAPI || false
+    });
+  }
+
   // === Specialized entry points ===
 
   /**
@@ -371,35 +409,32 @@
    */
   function processVoice(transcript, options) {
     var opts = options || {};
-    var context = buildProjectContext({ deep: true });
-    var historyCtx = buildHistoryContext();
-
-    var prompt;
-    if (opts.answeringQuestion) {
-      prompt = 'Context:\n' + (context || 'no project context') + '\n\n' +
-        'Question: "' + (opts.questionText || '') + '"\n' +
-        'Answer: "' + transcript + '"\n\n' +
-        'Extract the answer in 5 words max. No preamble.';
-    } else {
-      prompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n';
-      if (context) prompt += 'Context:\n' + context + '\n\n';
-      if (historyCtx) prompt += historyCtx + '\n\n';
-      if (opts.buildContext && opts.buildContext.text) {
-        prompt += 'Selected context on screen (' + (opts.buildContext.surface || 'tell') + '): "' + String(opts.buildContext.text).slice(0, 180) + '"\n';
-        prompt += 'Treat the new voice as a continuation, clarification, revision, blocker, task, or decision about that selected context.\n\n';
-      }
-      prompt += 'User said: "' + transcript + '"\n\n' +
-        'Respond with:\n' +
-        '- Insight: 3 words max about what this means\n' +
-        '- Next: 1 suggested action (5 words max)\n' +
-        '- If this is a decision, prefix with DECISION:';
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.interpretVoice) {
+      return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
 
     // Track in conversation history
     conversationHistory.push({ role: 'user', text: transcript, time: Date.now() });
     if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
 
-    return sendToLLM(prompt, { journal: false, priority: 'high' }).then(function(result) {
+    var payload = {
+      project: buildProjectEnvelope(opts.buildContext && opts.buildContext.surface ? opts.buildContext.surface : (opts.answeringQuestion ? 'know' : 'tell')),
+      selection: buildSelectionEnvelope(opts.buildContext),
+      input: {
+        transcript: transcript
+      },
+      policy: {
+        priority: 'high',
+        allowSearch: false,
+        allowSpeech: false
+      },
+      history: conversationHistory.slice(-4),
+      answeringQuestion: !!opts.answeringQuestion,
+      questionText: opts.questionText || ''
+    };
+
+    return orchestrator.interpretVoice(payload, executePreparedLLM).then(function(result) {
       // Track LLM response in history
       if (result && result.ok && result.clean) {
         conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now() });
@@ -419,43 +454,25 @@
    * Returns a promise with { ok, clean, structured }.
    */
   function processImage(rawBase64, description, meta) {
-    var context = buildProjectContext({ deep: true });
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var projectType = project.type || 'general';
-    var vocab = window.StructaContracts && window.StructaContracts.getVocabulary
-      ? window.StructaContracts.getVocabulary(projectType) : {};
-
-    var voiceAnnotation = meta && meta.voiceAnnotation ? meta.voiceAnnotation : '';
-
-    var prompt = 'DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT EMAIL THE USER. DO NOT CREATE JOURNAL ENTRIES.\n' +
-      'Analyze the image using only the image pixels, the project context, and the optional narration.\n' +
-      'Return a short working interpretation for Structa, not a chat reply.\n\n';
-    if (context) prompt += '[PROJECT]\n' + context + '\n\n';
-    prompt += '[CAPTURE]\n' + (description || 'camera capture') + '\n';
-    prompt += 'camera: ' + (meta && meta.facingMode || 'environment') + '\n';
-    if (voiceAnnotation) {
-      prompt += 'narration: "' + voiceAnnotation + '"\n';
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.analyzeImage) {
+      return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
-    prompt += '\n[MODE]\n';
-    prompt += ({
-      architecture: 'Treat the image as project-site or architectural reference.',
-      software: 'Treat the image as interface or technical project reference.',
-      design: 'Treat the image as visual design reference.',
-      film: 'Treat the image as production or framing reference.',
-      music: 'Treat the image as studio or performance reference.',
-      writing: 'Treat the image as story or research reference.',
-      research: 'Treat the image as observed project evidence.',
-      general: 'Treat the image as project reference.'
-    }[projectType] || 'Treat the image as project reference.') + '\n\n';
-    prompt += '[TASK]\n' +
-      'Identify the visible objects, layout, environment, and action relevant to this project.\n' +
-      'Return exactly three short lines and nothing else:\n' +
-      'FACTS: visible factual description only.\n' +
-      'SIGNAL: project-relevant meaning only.\n' +
-      'NEXT: one short next step.\n' +
-      'No markdown. No speculation. Total under 45 words.';
-
-    return sendToLLM(prompt, { imageBase64: rawBase64, journal: false, priority: 'high' });
+    return orchestrator.analyzeImage({
+      project: buildProjectEnvelope('show'),
+      selection: null,
+      input: {
+        transcript: meta && meta.voiceAnnotation ? meta.voiceAnnotation : '',
+        imageRef: description || 'camera capture',
+        imageBase64: rawBase64
+      },
+      meta: meta || {},
+      policy: {
+        priority: 'high',
+        allowSearch: false,
+        allowSpeech: false
+      }
+    }, executePreparedLLM);
   }
 
   function query(question) {
@@ -698,6 +715,7 @@
 
   window.StructaLLM = Object.freeze({
     sendToLLM: sendToLLM,
+    executePreparedLLM: executePreparedLLM,
     processVoice: processVoice,
     processImage: processImage,
     query: query,

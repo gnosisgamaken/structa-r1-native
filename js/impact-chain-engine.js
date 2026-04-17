@@ -164,38 +164,42 @@
     return parts.join('\n');
   }
 
-  // === Prompt templates ===
-  function observePrompt(context) {
-    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-      'You are Structa, a project cognition system. You ONLY process what you are given.\n\n' +
-      '[CONTEXT]\n' + context + '\n\n' +
-      '[TASK]\n' +
-      'In exactly 5 words, state what is most missing from this project right now. ' +
-      'Do not use math drills, counting exercises, or toy examples.';
+  function buildChainProjectEnvelope() {
+    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    return {
+      id: project.project_id || project.id || '',
+      name: project.name || 'untitled project',
+      type: project.type || 'general',
+      brief: project.brief || '',
+      topQuestions: (project.open_questions || []).slice(0, 3),
+      selectedSurface: 'now',
+      summary: buildImpactContext()
+    };
   }
 
-  function clarifyPrompt(context, observation) {
-    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-      'You are Structa. You must reason ONLY from the supplied project memory.\n\n' +
-      '[CONTEXT]\n' + context + '\n\n' +
-      '[OBSERVATION]\n' + observation + '\n\n' +
-      '[TASK]\n' +
-      'Write ONE short clarification angle that tightens project direction. ' +
-      'Stay inside the project context provided. Return ONLY the clarification. 8 words max.';
-  }
-
-  function evaluatePrompt(context, impacts) {
-    var impactSummaries = impacts.map(function(imp, i) {
-      return (i + 1) + '. ' + String(imp.output).slice(0, 80);
-    }).join('\n');
-
-    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-      'You are Structa. Based on these impacts:\n' +
-      impactSummaries + '\n\n' +
-      'Decide: should we keep clarifying, or create a decision?\n' +
-      'If clarification is still needed, respond with "CLARIFY: " followed by a 5-word clarification direction.\n' +
-      'If we have enough, respond with JSON only: {"decision": "...", "options": ["...", "...", "..."]}\n' +
-      'The decision must be 10 words max. Each option must be 6 words max.';
+  function buildChainPayload(phase, extra) {
+    return {
+      project: buildChainProjectEnvelope(),
+      selection: null,
+      input: {},
+      policy: {
+        priority: 'low',
+        allowSearch: false,
+        allowSpeech: false
+      },
+      phase: phase,
+      discoveryMode: !!(extra && extra.discoveryMode),
+      contextSummary: buildImpactContext(),
+      recentArtifacts: chain.impacts.slice(-4).map(function(impact) {
+        return {
+          type: impact.type,
+          body: impact.output,
+          output: impact.output,
+          createdAt: impact.created_at
+        };
+      }),
+      blockers: getBlockers()
+    };
   }
 
   // === Store impact ===
@@ -306,15 +310,12 @@
     return Math.max(nodeCount, legacyCount) < 5;
   }
 
-  function discoveryPrompt(context) {
-    return '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES.\n' +
-      'You are Structa, helping shape a new project.\n\n' +
-      '[CONTEXT]\n' + context + '\n\n' +
-      '[TASK]\n' +
-      'Ask ONE concrete, specific question that would help define this project. ' +
-      'Make it actionable — something the user can answer in one sentence. ' +
-      'Do not ask arithmetic, counting, or classroom-style questions. ' +
-      'Return ONLY the question, 12 words max.';
+  function runChainStep(payload) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.runChainStep || !llm || !llm.executePreparedLLM) {
+      return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
+    }
+    return orchestrator.runChainStep(payload, llm.executePreparedLLM);
   }
 
   function getBlockers() {
@@ -400,11 +401,11 @@
 
     // === Discovery mode: ask shaping questions when project is new ===
     if (isDiscoveryMode() && chain.currentPhase === 'observe') {
-      llm.sendToLLM(discoveryPrompt(context), { journal: false, timeout: 20000, priority: 'low' })
+      runChainStep(buildChainPayload('observe', { discoveryMode: true }))
         .then(function(result) {
           if (!chain.active) return;
-          if (result && result.ok && result.clean) {
-            var questionText = result.clean.replace(/^["']|["']$/g, '');
+          if (result && result.ok && result.artifacts && result.artifacts.length) {
+            var questionText = result.artifacts[0].body || result.ui?.summary || '';
             storeImpact('observe', 'inspect', context, 'discovery: ' + questionText);
 
             // Store as open question
@@ -445,11 +446,11 @@
       case 'blocked':
       case 'observe':
         setPhase('observe');
-        llm.sendToLLM(observePrompt(context), { journal: false, timeout: 20000, priority: 'low' })
+        runChainStep(buildChainPayload('observe'))
           .then(function(result) {
             if (!chain.active) return;
-            if (result && result.ok && result.clean) {
-              var impact = storeImpact('observe', 'inspect', context, result.clean);
+            if (result && result.ok && result.ui && result.ui.summary) {
+              var impact = storeImpact('observe', 'inspect', context, result.ui.summary);
               setPhase('clarify');
               panel && panel.render && panel.render();
             }
@@ -465,18 +466,11 @@
           setPhase('evaluate');
           // Fall through to evaluate
         } else {
-          llm.sendToLLM(clarifyPrompt(context, observation), { journal: false, timeout: 20000, priority: 'low' })
+          runChainStep(buildChainPayload('clarify'))
             .then(function(result) {
               if (!chain.active) return;
-              if (result && result.ok && result.clean) {
-                // Check if LLM wants to continue clarifying
-                var isClarifyContinue = /^CLARIFY:/i.test(result.clean);
-                if (isClarifyContinue) {
-                  var direction = result.clean.replace(/^CLARIFY:\s*/i, '').trim();
-                  storeImpact('clarify', 'clarify', observation, direction);
-                } else {
-                  storeImpact('clarify', 'clarify', observation, result.clean);
-                }
+              if (result && result.ok && result.ui && result.ui.summary) {
+                storeImpact('clarify', 'clarify', observation, result.ui.summary);
 
                 // After enough clarification, move to evaluate
                 if (chain.impacts.length >= chain.maxImpactsPerChain) {
@@ -494,24 +488,23 @@
           setPhase('clarify');
           break;
         }
-        llm.sendToLLM(evaluatePrompt(context, chain.impacts), { journal: false, timeout: 25000, priority: 'low' })
+        runChainStep(buildChainPayload('evaluate'))
           .then(function(result) {
             if (!chain.active) return;
-            if (result && result.ok && result.clean) {
-              // Try to parse as decision JSON
-              var parsed = tryParseDecision(result.clean);
+            if (result && result.ok) {
+              var mainArtifact = result.artifacts && result.artifacts[0] ? result.artifacts[0] : null;
 
-              if (parsed && parsed.decision) {
-                storeImpact('decision', 'decide', chain.impacts.map(function(i) { return i.output; }).join('; '), parsed.decision);
-                storeDecision(parsed.decision, parsed.options);
+              if (mainArtifact && mainArtifact.type === 'decision') {
+                storeImpact('decision', 'decide', chain.impacts.map(function(i) { return i.output; }).join('; '), mainArtifact.body || mainArtifact.title || 'decision ready');
+                storeDecision(mainArtifact.body || mainArtifact.title || 'decision ready', mainArtifact.options || []);
                 panel && panel.render && panel.render();
-              } else {
+              } else if (result.ui && result.ui.summary) {
                 // LLM wants more clarification
-                storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.clean);
+                storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.ui.summary);
 
                 // If we've been going too long, force a decision anyway
                 if (chain.impacts.length >= chain.maxImpactsPerChain + 2) {
-                  var fallback = result.clean.slice(0, 60);
+                  var fallback = result.ui.summary.slice(0, 60);
                   storeDecision(fallback, ['approve', 'skip', 'revise']);
                 }
 

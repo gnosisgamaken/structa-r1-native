@@ -202,49 +202,20 @@
     }
   }
 
-  function buildPrompt(a, b, transcript) {
+  function buildProjectEnvelope() {
     const project = native?.getProjectMemory?.() || {};
-    const questions = (project.open_questions || []).slice(0, 3).join('; ');
-    const crossProject = a.project_id && b.project_id && a.project_id !== b.project_id;
-    const header = crossProject ? 'CROSS-PROJECT NOTE\n\n' : '';
-    return header +
-      'You are Structa, a precision tool for extracting derived insight.\n' +
-      'The user has triangulated three inputs and is asking you to synthesize them into ONE sharp signal.\n\n' +
-      'PROJECT CONTEXT\n' +
-      'Name: ' + (project.name || 'untitled project') + '\n' +
-      'Brief: ' + (project.brief || 'no brief') + '\n' +
-      'Open questions: ' + (questions || 'none') + '\n\n' +
-      'POINT A — ' + a.type + ' captured ' + a.time + '\n' +
-      a.body + '\n\n' +
-      'POINT B — ' + b.type + ' captured ' + b.time + '\n' +
-      b.body + '\n\n' +
-      'ANGLE — the user perspective, just spoken:\n' +
-      '"' + transcript + '"\n\n' +
-      'YOUR TASK\n' +
-      'Produce a single derived insight that:\n' +
-      '1. Treats POINT A and POINT B as related evidence.\n' +
-      '2. Filters them through the user ANGLE — the angle is the lens, not optional context.\n' +
-      '3. States the synthesis in ONE sentence (max 18 words).\n' +
-      '4. Optionally adds ONE follow-up question if the synthesis exposes a gap (max 12 words).\n\n' +
-      'DO NOT\n' +
-      '- Repeat the inputs back.\n' +
-      '- Hedge.\n' +
-      '- Use markdown, emoji, or quotes around the output.\n' +
-      '- Search the web. Use only what is given.\n\n' +
-      'OUTPUT FORMAT (strict)\n' +
-      'SIGNAL: <one sentence>\n' +
-      'QUESTION: <one question, or omit line entirely>';
-  }
-
-  function parseSynthesis(text) {
-    const clean = String(text || '').trim();
-    const signalMatch = clean.match(/SIGNAL:\s*(.+)/i);
-    const questionMatch = clean.match(/QUESTION:\s*(.+)/i);
-    const signal = (signalMatch && signalMatch[1] ? signalMatch[1] : clean.split(/\n+/)[0] || '').trim();
-    const question = (questionMatch && questionMatch[1] ? questionMatch[1] : '').trim();
     return {
-      signal: signal.replace(/^["']|["']$/g, ''),
-      question: question.replace(/^["']|["']$/g, '')
+      id: project.project_id || project.id || '',
+      name: project.name || 'untitled project',
+      type: project.type || 'general',
+      brief: project.brief || '',
+      topQuestions: (project.open_questions || []).slice(0, 3),
+      selectedSurface: 'triangle',
+      summary: [
+        project.name ? 'project: ' + project.name : '',
+        project.brief ? 'brief: ' + project.brief : '',
+        (project.open_questions || []).length ? 'top questions: ' + project.open_questions.slice(0, 3).join('; ') : ''
+      ].filter(Boolean).join('\n')
     };
   }
 
@@ -369,34 +340,57 @@
 
     const pointA = describeForTriangle(pair.a);
     const pointB = describeForTriangle(pair.b);
-    const prompt = buildPrompt(pointA, pointB, spoken);
     const imageData = pointB.hasImage ? pointB.imageData : (pointA.hasImage ? pointA.imageData : '');
     const imageBase64 = /^data:image\/\w+;base64,/i.test(imageData)
       ? imageData.replace(/^data:image\/\w+;base64,/, '')
       : '';
 
     const llm = getLLM();
-    if (!llm?.sendToLLM) {
+    const orchestrator = window.StructaOrchestrator;
+    if (!llm?.executePreparedLLM || !orchestrator?.synthesizeTriangle) {
       lastError = 'synthesis unavailable — try again';
       status = 'retry';
       emit('structa-triangle-failed', { message: lastError, recoverable: true });
       return Promise.resolve({ ok: false, error: lastError, recoverable: true });
     }
 
-    return llm.sendToLLM(prompt, {
-      imageBase64: imageBase64 || undefined,
-      journal: false,
-      priority: 'high'
-    }).then(function(result) {
-      if (!result || !result.ok || !result.clean) {
+    return orchestrator.synthesizeTriangle({
+      project: buildProjectEnvelope(),
+      pointA: {
+        id: pair.a.id,
+        type: pointA.type,
+        time: pointA.time,
+        body: pointA.body,
+        project_id: pair.a.project_id || '',
+        imageBase64: imageBase64 || ''
+      },
+      pointB: {
+        id: pair.b.id,
+        type: pointB.type,
+        time: pointB.time,
+        body: pointB.body,
+        project_id: pair.b.project_id || '',
+        imageBase64: imageBase64 || ''
+      },
+      input: {
+        angle: spoken
+      },
+      policy: {
+        priority: 'high',
+        allowSearch: false,
+        allowSpeech: false
+      }
+    }, llm.executePreparedLLM).then(function(result) {
+      if (!result || !result.ok || !result.artifacts || !result.artifacts.length) {
         lastError = 'synthesis failed — try again';
         status = 'retry';
         emit('structa-triangle-failed', { message: lastError, recoverable: true });
         return { ok: false, error: lastError, recoverable: true };
       }
 
-      const parsed = parseSynthesis(result.clean);
-      if (!parsed.signal) {
+      const signalArtifact = result.artifacts.find(function(entry) { return entry.type === 'signal'; });
+      const questionArtifact = result.artifacts.find(function(entry) { return entry.type === 'question'; });
+      if (!signalArtifact || !signalArtifact.body) {
         lastError = 'synthesis failed — try again';
         status = 'retry';
         emit('structa-triangle-failed', { message: lastError, recoverable: true });
@@ -407,7 +401,7 @@
         type: 'insight',
         status: 'open',
         title: 'triangle signal',
-        body: parsed.signal,
+        body: signalArtifact.body,
         source: 'triangle',
         tags: ['triangle'],
         meta: {
@@ -421,12 +415,12 @@
       });
 
       let questionNode = null;
-      if (parsed.question) {
+      if (questionArtifact && questionArtifact.body) {
         questionNode = native?.addNode?.({
           type: 'question',
           status: 'open',
           title: 'triangle follow up',
-          body: parsed.question,
+          body: questionArtifact.body,
           source: 'triangle',
           tags: ['triangle'],
           meta: {
@@ -445,16 +439,16 @@
       clearRuntimeState();
       window.StructaLLM?.speakMilestone?.('triangle');
       emit('structa-triangle-result', {
-        signal: parsed.signal,
-        question: parsed.question || '',
+        signal: signalArtifact.body,
+        question: (questionArtifact && questionArtifact.body) || '',
         signalNode: clone(signalNode),
         questionNode: clone(questionNode),
         origin: origin
       });
       return {
         ok: true,
-        signal: parsed.signal,
-        question: parsed.question || '',
+        signal: signalArtifact.body,
+        question: (questionArtifact && questionArtifact.body) || '',
         signalNode: signalNode,
         questionNode: questionNode,
         origin: origin

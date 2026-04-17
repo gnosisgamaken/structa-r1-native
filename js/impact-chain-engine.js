@@ -36,7 +36,8 @@
     chainId: 0,
     totalImpacts: 0,
     totalDecisions: 0,
-    awaitingFastTrack: false
+    awaitingFastTrack: false,
+    manuallyStopped: false
   };
 
   // === Impact ID ===
@@ -481,6 +482,7 @@
   function start(bpm) {
     if (onboardingBlocked()) return;
     if (chain.active) return;
+    chain.manuallyStopped = false;
     chain.active = true;
     chain.bpm = bpm || 4;
     chain.currentPhase = 'observe';
@@ -498,15 +500,24 @@
     if (!chain.active) return;
     chain.active = false;
     chain.currentPhase = 'idle';
+    if (reason === 'manual stop') chain.manuallyStopped = true;
     if (chain.timerId) {
       clearInterval(chain.timerId);
       chain.timerId = null;
     }
   }
 
+  function stop() {
+    chain.manuallyStopped = true;
+    pause('manual stop');
+    chain.impacts = [];
+    chain.awaitingFastTrack = false;
+  }
+
   function resume() {
     chain.lastUserActivity = Date.now();
     if (onboardingBlocked()) return;
+    if (chain.manuallyStopped) return;
     if (!chain.active && chain.currentPhase !== 'cooldown') {
       start(chain.bpm);
     } else if (!chain.active) {
@@ -515,6 +526,11 @@
       var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
       chain.timerId = setInterval(beat, intervalMs);
     }
+  }
+
+  function resumeManual() {
+    chain.manuallyStopped = false;
+    resume();
   }
 
   function touchActivity() {
@@ -542,7 +558,9 @@
   window.StructaImpactChain = Object.freeze({
     start: start,
     pause: pause,
+    stop: stop,
     resume: resume,
+    resumeManual: resumeManual,
     touchActivity: touchActivity,
     requestImmediateBeat: requestImmediateBeat,
     get active() { return chain.active; },
@@ -554,6 +572,7 @@
     get totalImpacts() { return chain.totalImpacts; },
     get totalDecisions() { return chain.totalDecisions; },
     get lastImpact() { return chain.impacts[chain.impacts.length - 1] || null; },
+    get manuallyStopped() { return !!chain.manuallyStopped; },
     get cooldownRemaining() {
       if (chain.currentPhase !== 'cooldown') return 0;
       return Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt));

@@ -41,10 +41,12 @@
     KNOW_DETAIL: 'know_detail',
     KNOW_ANSWER: 'know_answer',
     NOW_BROWSE: 'now_browse',
-    LOG_OPEN: 'log_open'
+    LOG_OPEN: 'log_open',
+    TRIANGLE_OPEN: 'triangle_open'
   });
 
   const IC = window.StructaIcons || {};
+  const triangleEngine = window.StructaTriangle;
   const cards = [
     { id: 'show', title: 'show', iconPath: IC['4'] || 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
     { id: 'tell', title: 'tell', iconPath: IC['3'] || 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
@@ -60,6 +62,8 @@
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
   let transitionTargetState = null;
+  let sideClickTimer = null;
+  const DOUBLE_SIDE_WINDOW_MS = 220;
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
@@ -386,6 +390,37 @@
     return `${pending} queued · ${phase}`;
   }
 
+  function getTriangleState() {
+    return triangleEngine?.validateOrClear?.() || triangleEngine?.getState?.() || { mode: 'empty', item: null, pair: null, status: '', lastError: '' };
+  }
+
+  function triangleCardId(item) {
+    return item?.type === 'show' || item?.type === 'tell' || item?.type === 'know' || item?.type === 'now'
+      ? item.type
+      : 'know';
+  }
+
+  function triangleColor(item) {
+    const cardId = triangleCardId(item);
+    return cards.find(function(card) { return card.id === cardId; })?.color || 'rgba(244,239,228,0.18)';
+  }
+
+  function triangleInitial(item) {
+    const map = { show: 's', tell: 't', know: 'k', now: 'n' };
+    return map[triangleCardId(item)] || 't';
+  }
+
+  function triangleSummaryText(item) {
+    if (!item) return '';
+    const textValue = String(item.summary || item.body || item.title || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    return lower(textValue.slice(0, 120));
+  }
+
+  function triangleIndicatorVisible() {
+    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) return false;
+    return true;
+  }
+
   function renderLogRows(entries, options = {}) {
     log.innerHTML = '';
     if (options.includeStats) {
@@ -627,7 +662,9 @@
     stateData.inlinePTTSurface = data.inlinePTTSurface || stateData.inlinePTTSurface || '';
 
     // If answering a question, set context before starting
-    if (data.answeringQuestion) {
+    if (data.triangleMode) {
+      window.StructaVoice?.setTriangleContext?.({ label: 'your angle' });
+    } else if (data.answeringQuestion) {
       if (window.StructaVoice?.setQuestionContext) {
         window.StructaVoice.setQuestionContext(data.answeringQuestion);
       }
@@ -639,9 +676,11 @@
     const voiceOverlay = document.getElementById('voice-overlay');
     const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
-    const contextLabelText = data.answeringQuestion
-      ? 'answering ask'
-      : (surface && surfaceMap[surface] ? surfaceMap[surface] : '');
+    const contextLabelText = data.triangleMode
+      ? 'your angle'
+      : data.answeringQuestion
+        ? 'answering ask'
+        : (surface && surfaceMap[surface] ? surfaceMap[surface] : '');
     if (voiceOverlay) {
       if (data.answeringQuestion) voiceOverlay.classList.add('answer-mode');
       else voiceOverlay.classList.remove('answer-mode');
@@ -660,6 +699,7 @@
     document.body.classList.remove('input-locked');
     window.__STRUCTA_PTT_TARGET__ = null;
     window.__STRUCTA_INLINE_PTT__ = false;
+    window.StructaVoice?.setTriangleContext?.(null);
     if (transitionTargetState !== STATES.VOICE_PROCESSING) {
       stateData.inlinePTTSurface = '';
     }
@@ -735,6 +775,18 @@
 
   stateExitHandlers[STATES.LOG_OPEN] = function(data) {
     setLogDrawer(false);
+  };
+
+  // --- TRIANGLE_OPEN ---
+  stateEnterHandlers[STATES.TRIANGLE_OPEN] = function(data) {
+    document.title = 'triangle';
+    window.__STRUCTA_PTT_TARGET__ = null;
+    if (data?.triangleStatus) stateData.triangleStatus = data.triangleStatus;
+  };
+
+  stateExitHandlers[STATES.TRIANGLE_OPEN] = function() {
+    window.StructaVoice?.setTriangleContext?.(null);
+    stateData.inlinePTTSurface = '';
   };
 
   // === Card selection (HOME only) ===
@@ -932,6 +984,8 @@
       case STATES.VOICE_PROCESSING:
       case STATES.KNOW_ANSWER:
         return stateData.inlinePTTSurface || 'voice';
+      case STATES.TRIANGLE_OPEN:
+        return 'triangle';
       case STATES.KNOW_BROWSE:
       case STATES.KNOW_DETAIL:
         return 'insight';
@@ -1175,7 +1229,7 @@
 
     const focusNodeId = stateData.knowFocusNodeId || '';
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [] }) => classify({
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false }) => classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
       body: lower(normalizeTinyText(body || '')),
@@ -1185,7 +1239,8 @@
       chips: chipHints.slice(),
       questionIndex,
       node_id: node_id || '',
-      links: Array.isArray(links) ? links.slice() : []
+      links: Array.isArray(links) ? links.slice() : [],
+      triangulated: !!triangulated
     });
 
     const questions = [];
@@ -1231,7 +1286,8 @@
         lane: 'signals', title: insight.title || `signal ${index + 1}`,
         body: insight.body || 'extracted',
         next: backlog[0]?.title || '',
-        created_at: insight.created_at, source: 'insight', chips: index < 2 ? ['latest'] : [],
+        created_at: insight.created_at, source: insight.source || 'insight', chips: index < 2 ? ['latest'] : [],
+        triangulated: !!insight.triangulated || lower(insight.source || '') === 'triangle',
         node_id: insight.node_id, links: insight.links
       }));
     });
@@ -1409,6 +1465,92 @@
       style: options.style || 'filter: brightness(0) saturate(100%);',
       'clip-path': `url(#${clipId})`
     }, parent);
+  }
+
+  function drawTriangleIndicator() {
+    if (!triangleIndicatorVisible()) return;
+    const triangle = getTriangleState();
+    const armedItem = triangle.mode === 'armed'
+      ? triangle.item
+      : (triangle.mode === 'synthesizing' ? triangle.pair?.a : null);
+    const x = 8;
+    const y = 264;
+    const fill = triangle.mode === 'empty'
+      ? 'rgba(244,239,228,0.18)'
+      : triangleColor(armedItem);
+    if (triangle.mode !== 'empty' && armedItem) {
+      text(x + 7, y - 2, triangleInitial(armedItem), {
+        fill: 'rgba(244,239,228,0.82)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '8',
+        'text-anchor': 'middle'
+      });
+    }
+    mk('path', {
+      d: `M ${x} ${y} L ${x + 7} ${y + 12} L ${x + 14} ${y} Z`,
+      fill: fill,
+      opacity: triangle.mode === 'empty' ? '0.68' : '1'
+    });
+  }
+
+  function drawTriangleOverlay() {
+    if (!surfaceIsVisible('triangle')) return;
+    const triangle = getTriangleState();
+    const pair = triangle.pair || {};
+    const pointA = pair.a;
+    const pointB = pair.b;
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: 'rgba(7,7,7,0.985)' });
+    const accent = triangleColor(pointB || pointA);
+    mk('path', { d: 'M 14 18 L 23 34 L 32 18 Z', fill: accent });
+    text(40, 31, 'triangle', {
+      fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '18'
+    });
+    mk('rect', { x: 12, y: 42, width: 216, height: 1, fill: 'rgba(244,239,228,0.10)' });
+
+    const describe = function(item) {
+      return {
+        title: item?.type === 'show' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · visual capture'
+          : item?.type === 'tell' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · voice note'
+          : item?.type === 'know' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · signal'
+          : 'point ' + (item === pointA ? 'a' : 'b') + ' · decision',
+        time: item?.timeLabel || recentTimeLabel(item?.created_at),
+        body: triangleSummaryText(item) || 'no context'
+      };
+    };
+
+    const aDesc = describe(pointA);
+    const bDesc = describe(pointB);
+    let cursorY = 66;
+    [aDesc, bDesc].forEach(function(entry, index) {
+      text(16, cursorY, entry.title, {
+        fill: 'rgba(244,239,228,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(224, cursorY, entry.time || 'recent', {
+        fill: 'rgba(244,239,228,0.32)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      const bodyRows = wrapTextBlock(undefined, entry.body, 16, cursorY + 18, 204, 13, 'rgba(244,239,228,0.92)', '12', 3);
+      cursorY += 18 + (bodyRows * 13) + (index === 0 ? 26 : 18);
+    });
+
+    mk('rect', { x: 12, y: cursorY, width: 216, height: 1, fill: 'rgba(244,239,228,0.10)' });
+    const transcript = lower(document.getElementById('voice-transcript')?.textContent || '');
+    const promptY = cursorY + 28;
+    let promptText = stateData.triangleStatus || triangle.lastError || 'hold ptt to tell your angle';
+    if (recordingActive() && activeSurface() === 'triangle') {
+      promptText = transcript || 'listening for your angle...';
+    } else if (triangle.status === 'synthesizing') {
+      promptText = 'synthesizing...';
+    } else if (triangle.lastError) {
+      promptText = triangle.lastError;
+    }
+    wrapTextBlock(undefined, lower(promptText), 16, promptY, 206, 14, 'rgba(244,239,228,0.90)', '13', 4);
   }
 
   function drawCardIcon(card, selected, parent) {
@@ -2113,6 +2255,170 @@
     };
   }
 
+  function buildShowTriangleItem() {
+    const summary = buildShowSummary();
+    const capture = summary.current;
+    if (!capture) return null;
+    return {
+      type: 'show',
+      id: capture?.entry_id || capture?.id || capture?.node_id || '',
+      nodeId: capture?.node_id || '',
+      project_id: capture?.project_id || getActiveProjectId(),
+      title: 'visual capture',
+      body: getCaptureSummary(capture),
+      summary: getCaptureSummary(capture),
+      timeLabel: recentTimeLabel(summary.createdAt),
+      created_at: summary.createdAt,
+      analysisReady: !!summary.analysisReady,
+      previewData: summary.imageHref || capture?.preview_data || capture?.meta?.preview_data || '',
+      cardId: 'show'
+    };
+  }
+
+  function buildTellTriangleItem() {
+    const model = buildTellModel();
+    const entry = model.current;
+    if (!entry) return null;
+    return {
+      type: 'tell',
+      id: entry?.node_id || entry?.entry_id || '',
+      nodeId: entry?.node_id || '',
+      project_id: getActiveProjectId(),
+      title: entry?.title || 'voice note',
+      body: entry?.body || entry?.title || '',
+      summary: entry?.body || entry?.title || '',
+      timeLabel: recentTimeLabel(entry?.created_at),
+      created_at: entry?.created_at || '',
+      cardId: 'tell'
+    };
+  }
+
+  function buildKnowTriangleItem() {
+    const model = buildKnowModel();
+    const items = getKnowVisibleItems(model);
+    const item = items[Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)))];
+    if (!item) return null;
+    return {
+      type: 'know',
+      id: item?.node_id || `${item.source || 'know'}:${item.title || item.body || ''}`,
+      nodeId: item?.node_id || '',
+      project_id: getActiveProjectId(),
+      title: item?.title || 'signal',
+      body: item?.body || item?.title || '',
+      summary: item?.body || item?.title || '',
+      timeLabel: recentTimeLabel(item?.created_at),
+      created_at: item?.created_at || '',
+      cardId: 'know',
+      knowType: item?.source === 'question' ? 'ask' : 'signal'
+    };
+  }
+
+  function buildNowTriangleItem() {
+    const data = buildNowSummary();
+    if (data.pendingDecisions && data.pendingDecisions.length) {
+      const current = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
+      const textValue = typeof current === 'string' ? current : (current?.text || '');
+      return {
+        type: 'now',
+        id: current?.node_id || `decision:${textValue}`,
+        nodeId: current?.node_id || '',
+        project_id: getActiveProjectId(),
+        title: 'decision',
+        body: textValue,
+        summary: textValue,
+        timeLabel: recentTimeLabel(current?.created_at),
+        created_at: current?.created_at || '',
+        cardId: 'now',
+        nowType: 'decision'
+      };
+    }
+    if (data.blockerQuestion) {
+      return {
+        type: 'now',
+        id: `question:${data.blockerQuestion}`,
+        nodeId: '',
+        project_id: getActiveProjectId(),
+        title: 'blocker',
+        body: data.blockerQuestion,
+        summary: data.blockerQuestion,
+        timeLabel: 'now',
+        created_at: new Date().toISOString(),
+        cardId: 'now',
+        nowType: 'question'
+      };
+    }
+    return {
+      type: 'now',
+      id: `project:${getActiveProjectId()}`,
+      nodeId: '',
+      project_id: getActiveProjectId(),
+      title: 'project state',
+      body: data.next || data.insight || data.capture || 'project context',
+      summary: data.next || data.insight || data.capture || 'project context',
+      timeLabel: 'now',
+      created_at: new Date().toISOString(),
+      cardId: 'now',
+      nowType: 'project'
+    };
+  }
+
+  function buildTriangleCurrentItem() {
+    switch (currentState) {
+      case STATES.SHOW_BROWSE:
+        return buildShowTriangleItem();
+      case STATES.TELL_BROWSE:
+        return buildTellTriangleItem();
+      case STATES.KNOW_BROWSE:
+      case STATES.KNOW_DETAIL:
+        return buildKnowTriangleItem();
+      case STATES.NOW_BROWSE:
+        return buildNowTriangleItem();
+      default:
+        return null;
+    }
+  }
+
+  function restoreTriangleOrigin() {
+    const origin = stateData.triangleOrigin || {};
+    const targetState = origin.state || STATES.HOME;
+    const patch = origin.data || {};
+    stateData.triangleStatus = '';
+    transition(targetState, patch);
+  }
+
+  function dispatchTriangleDoubleSide(item) {
+    if (!triangleEngine || !item || onboardingActive()) return false;
+    const triangle = getTriangleState();
+    if (triangle.mode === 'empty') {
+      triangleEngine.copy(item);
+      return true;
+    }
+    if (triangle.mode === 'armed' && triangleEngine.itemMatches?.(triangle.item, item)) {
+      triangleEngine.dismiss();
+      return true;
+    }
+    const originData = {
+      state: currentState,
+      data: {
+        showCaptureIndex: stateData.showCaptureIndex,
+        showCaptureEntryId: stateData.showCaptureEntryId || '',
+        tellEntryIndex: stateData.tellEntryIndex || 0,
+        knowLaneIndex: stateData.knowLaneIndex || 0,
+        knowItemIndex: stateData.knowItemIndex || 0,
+        knowChipIndex: stateData.knowChipIndex || 0,
+        knowFocusNodeId: stateData.knowFocusNodeId || '',
+        decisionIndex: stateData.decisionIndex || 0,
+        selectedOption: stateData.selectedOption || 0
+      }
+    };
+    triangleEngine.complete(item, originData);
+    transition(STATES.TRIANGLE_OPEN, {
+      triangleOrigin: originData,
+      triangleStatus: 'hold ptt to tell your angle'
+    });
+    return true;
+  }
+
   function buildHomeCardVoiceContext(card) {
     if (!card) return { kind: 'project', text: '', surface: 'tell' };
     if (card.id === 'tell') return buildTellVoiceContext();
@@ -2542,6 +2848,13 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10', 'text-anchor': 'end'
       });
+      if (item.triangulated) {
+        text(198, contentY + 1, '▼', {
+          fill: 'rgba(8,8,8,0.56)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9'
+        });
+      }
 
       // Context label - source type
       const contextLabel = item.source === 'question' ? 'open ask'
@@ -2599,6 +2912,13 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10', 'text-anchor': 'end'
     });
+    if (item.triangulated) {
+      text(198, contentY + 1, '▼', {
+        fill: 'rgba(8,8,8,0.60)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+    }
 
     const detailSection = item.source === 'question' ? 'open ask' : 'detail';
     const detailMetaY = contentY + (detailTitleRows * 14) + 8;
@@ -2656,14 +2976,17 @@
     drawTellSurface();
     drawNowPanel();
     drawInsightSurface();
+    drawTriangleOverlay();
+    drawTriangleIndicator();
 
-    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || currentState === STATES.PROJECT_SWITCHER;
+    const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
   }
 
   // === Input handlers (all routed through state machine) ===
 
   function handleScrollDirection(direction) {
+    clearPendingSideClick();
     switch (currentState) {
       case STATES.PROJECT_SWITCHER: {
         if (onboardingActive() && !onboardingAllowsProjectSwitcher()) break;
@@ -2768,6 +3091,52 @@
     }
   }
 
+  function supportsDoubleSideClick() {
+    switch (currentState) {
+      case STATES.HOME:
+      case STATES.PROJECT_SWITCHER:
+      case STATES.SHOW_BROWSE:
+      case STATES.TELL_BROWSE:
+      case STATES.KNOW_BROWSE:
+      case STATES.KNOW_DETAIL:
+      case STATES.NOW_BROWSE:
+      case STATES.LOG_OPEN:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function handleDoubleSideClick() {
+    switch (currentState) {
+      case STATES.HOME:
+      case STATES.PROJECT_SWITCHER: {
+        selectedIndex = cards.findIndex(function(card) { return card.id === 'show'; });
+        native?.setActiveNode?.('show');
+        native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'home' });
+        openCameraFromShow('touch');
+        break;
+      }
+
+      case STATES.SHOW_BROWSE:
+      case STATES.TELL_BROWSE:
+      case STATES.KNOW_BROWSE:
+      case STATES.KNOW_DETAIL:
+      case STATES.NOW_BROWSE: {
+        dispatchTriangleDoubleSide(buildTriangleCurrentItem());
+        break;
+      }
+
+      case STATES.LOG_OPEN:
+        window.StructaImpactChain?.stop?.();
+        pushLog('chain killed', 'system');
+        break;
+
+      default:
+        break;
+    }
+  }
+
   function handleSideClick() {
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
@@ -2851,7 +3220,14 @@
       }
 
       case STATES.LOG_OPEN:
-        transition(STATES.HOME);
+        if (window.StructaImpactChain?.active && !window.StructaImpactChain?.manuallyStopped) {
+          window.StructaImpactChain?.pause?.('manual stop');
+          pushLog('chain paused', 'system');
+        } else {
+          window.StructaImpactChain?.resumeManual?.();
+          pushLog('chain resumed', 'system');
+        }
+        refreshLogFromMemory();
         break;
 
       case STATES.HOME:
@@ -2864,10 +3240,33 @@
     }
   }
 
+  function triggerSideClick() {
+    if (!supportsDoubleSideClick()) {
+      handleSideClick();
+      return;
+    }
+    if (sideClickTimer) {
+      clearTimeout(sideClickTimer);
+      sideClickTimer = null;
+      handleDoubleSideClick();
+      return;
+    }
+    sideClickTimer = setTimeout(function() {
+      sideClickTimer = null;
+      handleSideClick();
+    }, DOUBLE_SIDE_WINDOW_MS);
+  }
+
+  function clearPendingSideClick() {
+    if (!sideClickTimer) return;
+    clearTimeout(sideClickTimer);
+    sideClickTimer = null;
+  }
+
   function handleLongPressStart() {
+    clearPendingSideClick();
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
-        break;
         break;
 
       case STATES.HOME: {
@@ -2950,8 +3349,17 @@
         break;
 
       case STATES.LOG_OPEN:
-        // Long press in log = export
-        exportLogsFromHardware();
+        voiceReturnState = STATES.LOG_OPEN;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'log note',
+          inlinePTTSurface: 'home',
+          buildContext: {
+            kind: 'log-note',
+            text: getQueueLine(),
+            surface: 'home'
+          }
+        });
         break;
 
       case STATES.KNOW_BROWSE:
@@ -2982,12 +3390,22 @@
         break;
       }
 
+      case STATES.TRIANGLE_OPEN:
+        voiceReturnState = STATES.TRIANGLE_OPEN;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          inlinePTTSurface: 'triangle',
+          triangleMode: true
+        });
+        break;
+
       default:
         break;
     }
   }
 
   function handleLongPressEnd() {
+    clearPendingSideClick();
     document.body.classList.remove('input-locked');
 
     switch (currentState) {
@@ -3014,6 +3432,10 @@
 
       case STATES.VOICE_OPEN:
         // PTT released on voice = stop listening
+        if (stateData.inlinePTTSurface === 'triangle') {
+          const heard = lower(document.getElementById('voice-transcript')?.textContent || '').trim();
+          if (!heard) stateData.triangleStatus = 'no angle heard — hold ptt again';
+        }
         window.StructaVoice?.stopListening?.(true);
         transition(STATES.VOICE_PROCESSING);
         break;
@@ -3028,6 +3450,7 @@
   }
 
   function handleNativeBack(event) {
+    clearPendingSideClick();
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         if (event) event.preventDefault?.();
@@ -3062,6 +3485,12 @@
       case STATES.LOG_OPEN:
         if (event) event.preventDefault?.();
         transition(STATES.HOME);
+        return;
+
+      case STATES.TRIANGLE_OPEN:
+        if (event) event.preventDefault?.();
+        triangleEngine?.cancel?.();
+        restoreTriangleOrigin();
         return;
 
       case STATES.HOME:
@@ -3201,12 +3630,79 @@
     }
   });
 
+  window.addEventListener('structa-triangle-copied', function(event) {
+    const itemType = event?.detail?.item?.type || 'item';
+    pushLog('triangle copy · ' + itemType, 'triangle');
+    refreshLogFromMemory();
+    render();
+  });
+
+  window.addEventListener('structa-triangle-dismissed', function() {
+    pushLog('triangle dismiss', 'triangle');
+    refreshLogFromMemory();
+    render();
+  });
+
+  window.addEventListener('structa-triangle-synthesizing', function(event) {
+    const pair = event?.detail?.pair || {};
+    const left = pair?.a?.type || 'a';
+    const right = pair?.b?.type || 'b';
+    pushLog('triangle complete · ' + left + '+' + right, 'triangle');
+    stateData.triangleStatus = 'hold ptt to tell your angle';
+    refreshLogFromMemory();
+    render();
+  });
+
+  window.addEventListener('structa-triangle-submit', function(event) {
+    const transcript = event?.detail?.transcript || '';
+    stateData.triangleStatus = 'synthesizing...';
+    render();
+    Promise.resolve(triangleEngine?.submit?.(transcript)).catch(function() {
+      // Error state is handled by the engine event.
+    });
+  });
+
+  window.addEventListener('structa-triangle-submitting', function() {
+    stateData.triangleStatus = 'synthesizing...';
+    render();
+  });
+
+  window.addEventListener('structa-triangle-result', function(event) {
+    const signal = lower(String(event?.detail?.signal || 'triangle signal'));
+    pushLog('triangle signal: ' + signal.slice(0, 40), 'triangle');
+    notifyCard('know', 'urgent');
+    stateData.triangleStatus = '';
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'triangle' }
+    }));
+    refreshLogFromMemory();
+    if (currentState === STATES.TRIANGLE_OPEN || stateData.inlinePTTSurface === 'triangle' || voiceReturnState === STATES.TRIANGLE_OPEN) {
+      restoreTriangleOrigin();
+      return;
+    }
+    render();
+  });
+
+  window.addEventListener('structa-triangle-failed', function(event) {
+    stateData.triangleStatus = event?.detail?.message || 'synthesis failed — try again';
+    refreshLogFromMemory();
+    if (currentState === STATES.TRIANGLE_OPEN) {
+      render();
+    }
+  });
+
+  window.addEventListener('structa-triangle-cleared', function() {
+    pushLog('triangle slot cleared (source removed)', 'triangle');
+    refreshLogFromMemory();
+    render();
+  });
+
   window.addEventListener('structa-probe-event', () => { refreshLogFromMemory(); });
 
   // Hardware inputs
   window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(1); });
   window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(-1); });
-  window.addEventListener('sideClick', event => { event.preventDefault?.(); handleSideClick(); });
+  window.addEventListener('sideClick', event => { event.preventDefault?.(); triggerSideClick(); });
   window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
   window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
   window.addEventListener('pttStart', event => { event.preventDefault?.(); handleLongPressStart(); });
@@ -3240,6 +3736,12 @@
     const now = Date.now();
     if (magnitude < 55 || now - lastShakeAt < 2500) return;
     lastShakeAt = now;
+    clearPendingSideClick();
+    if (currentState === STATES.TRIANGLE_OPEN) {
+      triangleEngine?.clearAll?.();
+      transition(STATES.HOME);
+      return;
+    }
     if (onboardingActive()) {
       if (getOnboardingStep() === 1) {
         openProjectSwitcher();

@@ -33,6 +33,7 @@
   let voiceTarget = null; // 'tell' | 'question-answer' | null
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
+  let activeTriangleContext = null; // { label }
 
   function inlineMode() {
     return !!window.__STRUCTA_INLINE_PTT__;
@@ -218,6 +219,7 @@
     text = text.trim();
     var questionContext = overrides && overrides.activeQuestion ? overrides.activeQuestion : activeQuestion;
     var buildContext = overrides && overrides.activeBuildContext ? overrides.activeBuildContext : activeBuildContext;
+    var triangleContext = overrides && overrides.activeTriangleContext ? overrides.activeTriangleContext : activeTriangleContext;
 
     // Clean up STT artifacts — spoken punctuation → actual punctuation
     text = text.replace(/\bquestion mark\b/gi, '?');
@@ -230,6 +232,19 @@
     // === Voice commands — intercept before normal processing ===
     var commandHandled = tryVoiceCommand(text);
     if (commandHandled) return;
+
+    if (triangleContext) {
+      activeTriangleContext = null;
+      voiceTarget = null;
+      native?.appendLogEntry?.({ kind: 'triangle', message: 'triangle synthesizing' });
+      window.dispatchEvent(new CustomEvent('structa-triangle-submit', {
+        detail: {
+          transcript: text,
+          label: triangleContext.label || 'your angle'
+        }
+      }));
+      return;
+    }
 
     // === Question answering mode ===
     if (questionContext) {
@@ -285,6 +300,19 @@
       } else {
         window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       }
+      return;
+    }
+
+    if (buildContext && buildContext.kind === 'log-note') {
+      voiceTarget = null;
+      native?.appendLogEntry?.({
+        kind: 'voice',
+        message: 'log note · ' + text.slice(0, 72)
+      });
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'log-note' }
+      }));
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       return;
     }
 
@@ -398,10 +426,12 @@
     emit = emit !== false;
     var pendingQuestion = activeQuestion;
     var pendingBuildContext = activeBuildContext;
+    var pendingTriangleContext = activeTriangleContext;
     listening = false;
     voiceTarget = null;
     activeQuestion = null;
     activeBuildContext = null;
+    activeTriangleContext = null;
 
     // Stop browser recognition
     if (recognition) {
@@ -426,7 +456,8 @@
       if (text) {
         handleTranscript(text, {
           activeQuestion: pendingQuestion,
-          activeBuildContext: pendingBuildContext
+          activeBuildContext: pendingBuildContext,
+          activeTriangleContext: pendingTriangleContext
         });
       } else if (pendingAudioAsset) {
         native?.addVoiceEntry?.({
@@ -477,6 +508,13 @@
     if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
   }
 
+  function setTriangleContext(context) {
+    activeTriangleContext = context ? {
+      label: String(context.label || 'your angle')
+    } : null;
+    if (activeTriangleContext) voiceTarget = 'triangle';
+  }
+
   async function startListening() {
     if (listening) return;
 
@@ -496,7 +534,7 @@
     audioChunks = [];
     pendingAudioAsset = null;
     listening = true;
-    voiceTarget = activeQuestion ? 'question-answer' : 'tell';
+    voiceTarget = activeQuestion ? 'question-answer' : (activeTriangleContext ? 'triangle' : 'tell');
     setStatus('listening');
 
     // Mute heartbeat and play voice start sound
@@ -511,6 +549,8 @@
     // Show context-specific status
     if (activeQuestion) {
       setStatus('answer mode');
+    } else if (activeTriangleContext) {
+      setStatus('triangle angle');
     } else if (activeBuildContext && activeBuildContext.text) {
       setStatus('building ' + (activeBuildContext.surface || 'context'));
     }
@@ -623,6 +663,7 @@
     if (listening) {
       stopListening(false);
     }
+    activeTriangleContext = null;
     setContextLabel('');
     hideOverlay();
   }
@@ -654,6 +695,7 @@
     stopListening: stopListening,
     setQuestionContext: setQuestionContext,
     setBuildContext: setBuildContext,
+    setTriangleContext: setTriangleContext,
     setContextLabel: setContextLabel,
     get listening() { return listening; },
     get activeQuestion() { return activeQuestion; }

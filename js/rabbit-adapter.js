@@ -97,6 +97,7 @@
       journals: [],
       assets: [],
       captures: [],
+      triangleSlot: null,
       exports: [],
       logs: [],
       probeEvents: [],
@@ -331,6 +332,9 @@
         return {
           title: n.title, body: n.body, next: n.next_action,
           confidence: n.confidence, created_at: n.created_at, node_id: n.node_id,
+          source: n.source || '',
+          triangulated: !!(n.meta && n.meta.triangulated),
+          meta: n.meta || {},
           links: Array.isArray(n.links) ? n.links.slice() : []
         };
       });
@@ -753,6 +757,24 @@
     return { ...(memory.uiState || {}) };
   }
 
+  function getTriangleSlot() {
+    return memory.triangleSlot ? JSON.parse(JSON.stringify(memory.triangleSlot)) : null;
+  }
+
+  function setTriangleSlot(slot) {
+    memory.triangleSlot = slot ? JSON.parse(JSON.stringify(slot)) : null;
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return getTriangleSlot();
+  }
+
+  function clearTriangleSlot() {
+    memory.triangleSlot = null;
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return null;
+  }
+
   function normalizeSpacing(text = '') {
     return lower(String(text || ''))
       .replace(/\s+/g, ' ')
@@ -809,6 +831,7 @@
     if (k === 'chain' && raw.startsWith('decision:')) return 'decision ready';
 
     if (k === 'insight') return compact('insight ' + raw.replace(/^new\s+/i, ''));
+    if (k === 'triangle') return compact(raw, 8);
     if (k === 'voice') return compact(raw);
     if (k === 'camera') return compact(raw);
     if (k === 'question') return compact(raw);
@@ -1398,6 +1421,9 @@
     deleteProject,
     flushMemory,
     getMemory,
+    getTriangleSlot,
+    setTriangleSlot,
+    clearTriangleSlot,
     getUIState,
     updateUIState,
     getProbeEvents: () => [...memory.probeEvents],

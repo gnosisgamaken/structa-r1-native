@@ -1,0 +1,14 @@
+{
+  "id": "s7_flush_reset",
+  "title": "flush clears trace-bearing state cleanly",
+  "trace_tail": [
+    { "t": "2026-04-18T12:07:00.000Z", "flow": "queue", "from": "pending", "to": "blocked", "ctx": { "jobId": "job-7" } },
+    { "t": "2026-04-18T12:07:02.000Z", "flow": "answer", "from": "stored", "to": "enriched", "ctx": { "answerId": "a-9", "claimCount": 1 } },
+    { "t": "2026-04-18T12:07:05.000Z", "flow": "system", "from": "flush", "to": "complete", "ctx": { "projectId": "prj-structa-r1" } }
+  ],
+  "expect_tail": [
+    { "flow": "queue", "from": "pending", "to": "blocked" },
+    { "flow": "answer", "from": "stored", "to": "enriched" },
+    { "flow": "system", "from": "flush", "to": "complete" }
+  ]
+}

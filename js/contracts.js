@@ -84,6 +84,14 @@
     'open', 'resolved', 'archived'
   ]);
 
+  const claimKinds = Object.freeze([
+    'fact', 'constraint', 'preference', 'intent', 'question'
+  ]);
+
+  const claimStatuses = Object.freeze([
+    'active', 'superseded', 'disputed', 'stale'
+  ]);
+
   function createNode(input = {}) {
     const now = new Date().toISOString();
     return {
@@ -110,6 +118,38 @@
     };
   }
 
+  function createClaim(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      id: input.id || makeEntryId('claim'),
+      projectId: input.projectId || baseProjectCode,
+      branchId: input.branchId || 'main',
+      text: String(input.text || '').trim().toLowerCase(),
+      kind: claimKinds.includes(input.kind) ? input.kind : 'fact',
+      source: input.source || 'voice',
+      sourceRef: input.sourceRef && typeof input.sourceRef === 'object' ? input.sourceRef : {},
+      evidence: Array.isArray(input.evidence) ? input.evidence.filter(Boolean) : [],
+      confidence: typeof input.confidence === 'number' ? input.confidence : 0.68,
+      sttConfidence: typeof input.sttConfidence === 'number' ? input.sttConfidence : null,
+      status: claimStatuses.includes(input.status) ? input.status : 'active',
+      supersededBy: input.supersededBy || null,
+      createdAt: input.createdAt || now,
+      expiresAt: input.expiresAt || null
+    };
+  }
+
+  function createAnswerNode(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      id: input.id || makeEntryId('answer'),
+      questionId: input.questionId || '',
+      body: String(input.body || '').trim().toLowerCase(),
+      claims: Array.isArray(input.claims) ? input.claims.filter(Boolean) : [],
+      sttConfidence: typeof input.sttConfidence === 'number' ? input.sttConfidence : null,
+      at: input.at || now
+    };
+  }
+
   // === Project Schema ===
   const projectTypes = Object.freeze([
     'architecture', 'software', 'design', 'film', 'music', 'writing', 'research', 'general'
@@ -124,6 +164,14 @@
       user_role: (input.user_role || '').toLowerCase(),
       device_scope_key: input.device_scope_key || '',
       nodes: Array.isArray(input.nodes) ? input.nodes : [],
+      claims: Array.isArray(input.claims) ? input.claims : [],
+      answers: Array.isArray(input.answers) ? input.answers : [],
+      claimIndex: input.claimIndex && typeof input.claimIndex === 'object' ? input.claimIndex : {
+        byItem: {},
+        byBranch: {},
+        byStatus: {}
+      },
+      chainHistory: Array.isArray(input.chainHistory) ? input.chainHistory : [],
       impact_chain: Array.isArray(input.impact_chain) ? input.impact_chain : [],
       exports: Array.isArray(input.exports) ? input.exports : [],
       clarity_score: typeof input.clarity_score === 'number' ? input.clarity_score : 0,
@@ -169,6 +217,8 @@
     baseProjectCode,
     nodeTypes,
     nodeStatuses,
+    claimKinds,
+    claimStatuses,
     projectTypes,
     vocabularyMap,
     makeEntryId,
@@ -176,6 +226,8 @@
     createCaptureBundle,
     createJournalEntry,
     createNode,
+    createClaim,
+    createAnswerNode,
     createProject,
     createTransfer,
     getVocabulary

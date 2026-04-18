@@ -9,6 +9,8 @@
   const MAX_LOG_ITEMS = 240;
   const MAX_PROBE_EVENTS = 240;
   const MAX_TRACE_ITEMS = 200;
+  const MAX_CLAIMS = 320;
+  const MAX_ANSWERS = 120;
   const EXPORT_BATCH_SIZE = 33;
   const UI_STATE_PERSIST_DELAY_MS = 120;
 
@@ -178,8 +180,143 @@
     project.captures = Array.isArray(input.captures) ? input.captures : [];
     project.insights = Array.isArray(input.insights) ? input.insights : [];
     project.open_questions = Array.isArray(input.open_questions) ? input.open_questions : [];
-    project.schema_version = input.schema_version || 3;
+    project.claims = Array.isArray(input.claims) ? input.claims : [];
+    project.answers = Array.isArray(input.answers) ? input.answers : [];
+    project.claimIndex = input.claimIndex && typeof input.claimIndex === 'object' ? input.claimIndex : {
+      byItem: {},
+      byBranch: {},
+      byStatus: {}
+    };
+    project.chainHistory = Array.isArray(input.chainHistory) ? input.chainHistory : [];
+    project.schema_version = input.schema_version || 4;
     return project;
+  }
+
+  function ensureProjectKnowledge(project) {
+    if (!project || typeof project !== 'object') return project;
+    project.claims = Array.isArray(project.claims) ? project.claims : [];
+    project.answers = Array.isArray(project.answers) ? project.answers : [];
+    project.claimIndex = project.claimIndex && typeof project.claimIndex === 'object' ? project.claimIndex : {
+      byItem: {},
+      byBranch: {},
+      byStatus: {}
+    };
+    project.chainHistory = Array.isArray(project.chainHistory) ? project.chainHistory : [];
+    return project;
+  }
+
+  function normalizeClaimText(text = '') {
+    return compact(String(text || '').trim().toLowerCase(), 160);
+  }
+
+  function normalizeClaimConfidence(value, fallback) {
+    if (typeof value === 'number' && isFinite(value)) {
+      return Math.max(0, Math.min(1, value));
+    }
+    if (value === 'high') return 0.86;
+    if (value === 'med') return 0.68;
+    if (value === 'low') return 0.42;
+    return typeof fallback === 'number' ? fallback : 0.68;
+  }
+
+  function normalizeClaimRef(ref, fallback) {
+    var base = {};
+    if (fallback && typeof fallback === 'object') {
+      Object.keys(fallback).forEach(function(key) {
+        if (fallback[key]) base[key] = fallback[key];
+      });
+    }
+    if (ref && typeof ref === 'object') {
+      Object.keys(ref).forEach(function(key) {
+        if (ref[key]) base[key] = ref[key];
+      });
+    }
+    return base;
+  }
+
+  function rebuildClaimIndex(project) {
+    ensureProjectKnowledge(project);
+    var index = {
+      byItem: {},
+      byBranch: {},
+      byStatus: {}
+    };
+    (project.claims || []).forEach(function(claim) {
+      if (!claim || !claim.id) return;
+      var itemKeys = [];
+      if (claim.sourceRef && typeof claim.sourceRef === 'object') {
+        ['itemId', 'imageId', 'questionId', 'threadEntryId', 'answerId'].forEach(function(key) {
+          if (claim.sourceRef[key]) itemKeys.push(String(claim.sourceRef[key]));
+        });
+      }
+      itemKeys.forEach(function(key) {
+        index.byItem[key] = index.byItem[key] || [];
+        if (index.byItem[key].indexOf(claim.id) === -1) index.byItem[key].push(claim.id);
+      });
+      var branchId = String(claim.branchId || 'main');
+      index.byBranch[branchId] = index.byBranch[branchId] || [];
+      if (index.byBranch[branchId].indexOf(claim.id) === -1) index.byBranch[branchId].push(claim.id);
+      var status = String(claim.status || 'active');
+      index.byStatus[status] = index.byStatus[status] || [];
+      if (index.byStatus[status].indexOf(claim.id) === -1) index.byStatus[status].push(claim.id);
+    });
+    project.claimIndex = index;
+    return index;
+  }
+
+  function findExistingClaim(project, claim) {
+    var text = normalizeClaimText(claim.text || '');
+    var kind = lower(claim.kind || 'fact');
+    var source = lower(claim.source || '');
+    var sourceRef = normalizeClaimRef(claim.sourceRef);
+    return (project.claims || []).find(function(entry) {
+      if (!entry) return false;
+      if (normalizeClaimText(entry.text || '') !== text) return false;
+      if (lower(entry.kind || 'fact') !== kind) return false;
+      if (lower(entry.source || '') !== source) return false;
+      var existingRef = normalizeClaimRef(entry.sourceRef);
+      return ['itemId', 'imageId', 'questionId', 'threadEntryId', 'answerId'].every(function(key) {
+        return String(existingRef[key] || '') === String(sourceRef[key] || '');
+      });
+    }) || null;
+  }
+
+  function addClaimsToProject(project, rawClaims, options) {
+    ensureProjectKnowledge(project);
+    var claims = Array.isArray(rawClaims) ? rawClaims : [];
+    var opts = options && typeof options === 'object' ? options : {};
+    var added = [];
+    claims.forEach(function(rawClaim) {
+      if (!rawClaim || !normalizeClaimText(rawClaim.text || '')) return;
+      var candidate = contracts.createClaim({
+        id: rawClaim.id || contracts.makeEntryId('claim'),
+        projectId: project.project_id,
+        branchId: rawClaim.branchId || opts.branchId || 'main',
+        text: normalizeClaimText(rawClaim.text || ''),
+        kind: rawClaim.kind || opts.kind || 'fact',
+        source: rawClaim.source || opts.source || 'voice',
+        sourceRef: normalizeClaimRef(rawClaim.sourceRef, opts.sourceRef),
+        evidence: Array.isArray(rawClaim.evidence) ? rawClaim.evidence.filter(Boolean) : [],
+        confidence: normalizeClaimConfidence(rawClaim.confidence, normalizeClaimConfidence(opts.confidence, 0.68)),
+        sttConfidence: typeof rawClaim.sttConfidence === 'number' ? rawClaim.sttConfidence : (typeof opts.sttConfidence === 'number' ? opts.sttConfidence : null),
+        status: rawClaim.status || 'active',
+        supersededBy: rawClaim.supersededBy || null,
+        createdAt: rawClaim.createdAt || new Date().toISOString(),
+        expiresAt: rawClaim.expiresAt || null
+      });
+      var existing = findExistingClaim(project, candidate);
+      if (existing) {
+        added.push(existing);
+        return;
+      }
+      project.claims.unshift(candidate);
+      if (project.claims.length > MAX_CLAIMS) {
+        project.claims = project.claims.slice(0, MAX_CLAIMS);
+      }
+      added.push(candidate);
+    });
+    rebuildClaimIndex(project);
+    return added;
   }
 
   function buildInitialMemory() {
@@ -272,6 +409,9 @@
       if (!hydrated.project_id) hydrated.project_id = index === 0 ? contracts.baseProjectCode : contracts.makeEntryId('project');
       if (!hydrated.device_scope_key) hydrated.device_scope_key = deviceScopeKey;
       if (!hydrated.schema_version || hydrated.schema_version < 3) migrateV2toV3(hydrated);
+      ensureProjectKnowledge(hydrated);
+      rebuildClaimIndex(hydrated);
+      if (!hydrated.schema_version || hydrated.schema_version < 4) hydrated.schema_version = 4;
       return hydrated;
     });
 
@@ -314,6 +454,7 @@
 
   // === Node helpers ===
   function addNode(input) {
+    ensureProjectKnowledge(memory.projectMemory);
     var node = contracts.createNode({
       ...input,
       project_id: memory.projectMemory.project_id
@@ -456,6 +597,93 @@
     return cloneThread(node?.meta?.thread);
   }
 
+  function findAnswerNode(project, answerId) {
+    ensureProjectKnowledge(project);
+    return (project.answers || []).find(function(entry) {
+      return entry && entry.id === answerId;
+    }) || null;
+  }
+
+  function addAnswerNode(questionId, body, options) {
+    var answerText = String(body || '').trim();
+    if (!questionId || answerText.length < 3) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var created = null;
+    touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
+      created = contracts.createAnswerNode({
+        id: opts.id || contracts.makeEntryId('answer'),
+        questionId: questionId,
+        body: answerText,
+        claims: Array.isArray(opts.claims) ? opts.claims.filter(Boolean) : [],
+        sttConfidence: typeof opts.sttConfidence === 'number' ? opts.sttConfidence : null,
+        at: opts.at || new Date().toISOString()
+      });
+      project.answers.unshift(created);
+      if (project.answers.length > MAX_ANSWERS) {
+        project.answers = project.answers.slice(0, MAX_ANSWERS);
+      }
+      var questionNode = (project.nodes || []).find(function(entry) {
+        return entry.node_id === questionId;
+      });
+      if (questionNode) {
+        questionNode.meta = { ...(questionNode.meta || {}), answer_node_id: created.id, answered_at: created.at };
+      }
+    });
+    if (created) {
+      traceEvent('answer', 'captured', 'stored', {
+        questionId: questionId,
+        answerId: created.id
+      });
+    }
+    return created;
+  }
+
+  function enrichAnswerNode(answerId, patch) {
+    if (!answerId || !patch || typeof patch !== 'object') return null;
+    var updated = null;
+    touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
+      var answerNode = findAnswerNode(project, answerId);
+      if (!answerNode) return;
+      if (typeof patch.body === 'string' && patch.body.trim()) answerNode.body = patch.body.trim().toLowerCase();
+      if (Array.isArray(patch.claims)) answerNode.claims = patch.claims.filter(Boolean);
+      if (typeof patch.sttConfidence === 'number') answerNode.sttConfidence = patch.sttConfidence;
+      if (patch.at) answerNode.at = patch.at;
+      updated = JSON.parse(JSON.stringify(answerNode));
+    });
+    if (updated) {
+      traceEvent('answer', 'stored', 'enriched', {
+        answerId: updated.id,
+        claimCount: (updated.claims || []).length
+      });
+    }
+    return updated;
+  }
+
+  function ingestClaims(rawClaims, options) {
+    var added = [];
+    touchProjectMemory(function(project) {
+      added = addClaimsToProject(project, rawClaims, options);
+    });
+    if (added.length) {
+      traceEvent('claim', 'pending', 'stored', {
+        count: added.length,
+        ids: added.map(function(entry) { return entry.id; }).slice(0, 6),
+        source: lower(options?.source || rawClaims?.[0]?.source || 'unknown')
+      });
+    }
+    return JSON.parse(JSON.stringify(added));
+  }
+
+  function getClaimsForItem(itemId) {
+    ensureProjectRegistry();
+    var ids = memory.projectMemory?.claimIndex?.byItem?.[itemId] || [];
+    return (memory.projectMemory?.claims || []).filter(function(claim) {
+      return ids.indexOf(claim.id) !== -1;
+    }).map(function(claim) { return JSON.parse(JSON.stringify(claim)); });
+  }
+
   function resolveNode(nodeId, resolution) {
     var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
     if (!node) return null;
@@ -509,6 +737,7 @@
   // Rebuild legacy flat-array views from unified nodes[]
   function rebuildLegacyViews() {
     var pm = memory.projectMemory;
+    ensureProjectKnowledge(pm);
     var nodes = pm.nodes;
 
     pm.backlog = nodes.filter(function(n) { return n.type === 'task' && n.status === 'open'; })
@@ -632,6 +861,7 @@
       { title: 'decisions', count: pm.decisions.length },
       { title: 'open items', count: pm.backlog.length }
     ];
+    rebuildClaimIndex(pm);
   }
 
   // === v2 → v3 migration ===
@@ -865,6 +1095,7 @@
 
   function touchProjectMemory(mutator) {
     ensureProjectRegistry();
+    ensureProjectKnowledge(memory.projectMemory);
     mutator(memory.projectMemory);
     memory.projectMemory.updated_at = new Date().toISOString();
     rebuildLegacyViews();
@@ -1053,6 +1284,10 @@
 
     return Promise.resolve(clearPromise).then(function(cleared) {
       persist();
+      traceEvent('system', 'flush', 'complete', {
+        projectId: memory.active_project_id,
+        cleared: Array.isArray(cleared) ? cleared.length : 0
+      });
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       emitModelChange({ scope: 'all' });
       return { ok: true, cleared: cleared, project_id: memory.active_project_id };
@@ -1674,25 +1909,37 @@
       questionNode = questionNodes[idx];
     }
     if (questionNode) {
+      var createdAnswer = addAnswerNode(questionNode.node_id, answer || '', {
+        sttConfidence: typeof index?.sttConfidence === 'number' ? index.sttConfidence : null
+      });
       traceEvent('blocker', 'open', 'answer-received', {
         nodeId: questionNode.node_id,
         index: idx,
         text: questionNode.body || questionNode.title || '',
-        answer: answer || ''
+        answer: answer || '',
+        answerId: createdAnswer?.id || ''
       });
       resolveNode(questionNode.node_id, { question_answer: answer });
       addVoiceEntry({
         title: 'answered: ' + (questionNode.body || '').slice(0, 30),
         body: 'Q: ' + (questionNode.body || '') + '\nA: ' + (answer || ''),
         source: 'voice-answer',
-        entry_mode: 'answer'
+        entry_mode: 'answer',
+        meta: {
+          answer_node_id: createdAnswer?.id || '',
+          question_node_id: questionNode.node_id
+        }
       });
       appendLogEntry({ kind: 'voice', message: 'question answered' });
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-resolved' }
       }));
       emitModelChange({ scope: 'now', itemId: questionNode.node_id });
-      return memory.projectMemory;
+      return {
+        project: memory.projectMemory,
+        questionNode: JSON.parse(JSON.stringify(questionNode)),
+        answerNode: createdAnswer ? JSON.parse(JSON.stringify(createdAnswer)) : null
+      };
     }
     // Legacy fallback
     return touchProjectMemory(function(project) {
@@ -1863,6 +2110,10 @@
     appendThreadComment,
     setThreadCommentSummary,
     getNodeThread,
+    addAnswerNode,
+    enrichAnswerNode,
+    ingestClaims,
+    getClaimsForItem,
     getOpenQuestionNodes: function() { return JSON.parse(JSON.stringify(memory.projectMemory?.open_question_nodes || [])); },
     addVoiceEntry,
     appendToVoiceEntry,

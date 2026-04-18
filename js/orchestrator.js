@@ -101,11 +101,18 @@
     return run('/v1/thread/refine', envelope, executeLLM);
   }
 
+  function backfillClaims(payload, executeLLM) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
+    return run('/v1/claims/backfill', envelope, executeLLM);
+  }
+
   window.StructaOrchestrator = Object.freeze({
     interpretVoice: interpretVoice,
     analyzeImage: analyzeImage,
     runChainStep: runChainStep,
     synthesizeTriangle: synthesizeTriangle,
+    backfillClaims: backfillClaims,
     titleProject: titleProject,
     refineThread: refineThread
   });

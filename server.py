@@ -99,6 +99,69 @@ def artifact(kind, body, title="", status="open", source="orchestrator", options
     return item
 
 
+def infer_claim_kind(text, fallback="fact"):
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return fallback
+    if lowered.endswith("?") or lowered.startswith(("what ", "how ", "where ", "when ", "which ")):
+        return "question"
+    if any(token in lowered for token in ("must ", "need to", "cannot ", "can't ", "should ", "required", "deadline", "by ")):
+        return "constraint"
+    if any(token in lowered for token in ("prefer", "want", "like", "comfortable", "love", "hate")):
+        return "preference"
+    if any(token in lowered for token in ("will ", "going to", "plan ", "decide ", "choose ", "moving toward")):
+        return "intent"
+    return fallback
+
+
+def estimate_stt_confidence(text):
+    words = [word for word in str(text or "").split() if word.strip()]
+    if not words:
+        return 0.0
+    score = 0.45
+    if len(words) >= 4:
+        score += 0.16
+    if len(words) >= 8:
+        score += 0.08
+    if any(ch in str(text or "") for ch in ".?!,"):
+        score += 0.06
+    if not any(fragment in str(text or "").lower() for fragment in (" um ", " uh ", " maybe maybe ", "...", "???")):
+        score += 0.08
+    return round(min(score, 0.96), 2)
+
+
+def claim(text, kind="fact", source="voice", source_ref=None, confidence=0.68, evidence=None, stt_confidence=None):
+    item = {
+        "text": compact(text, 160),
+        "kind": kind,
+        "source": source,
+        "confidence": confidence,
+        "sourceRef": source_ref or {},
+        "evidence": evidence[:] if isinstance(evidence, list) else [],
+        "status": "active",
+    }
+    if stt_confidence is not None:
+        item["sttConfidence"] = stt_confidence
+    return item
+
+
+def extract_simple_claims(parts, source, source_ref=None, stt_confidence=None):
+    claims = []
+    for raw in parts:
+        text = compact(raw or "", 160)
+        if not text:
+            continue
+        claims.append(claim(
+            text=text,
+            kind=infer_claim_kind(text),
+            source=source,
+            source_ref=source_ref,
+            confidence=0.72 if source in {"voice", "answer", "comment"} else 0.7,
+            stt_confidence=stt_confidence,
+        ))
+    return claims
+
+
 def voice_prepare(payload):
     project = payload.get("project") or {}
     selection = payload.get("selection") or {}
@@ -167,6 +230,10 @@ def voice_prepare(payload):
 
 def voice_normalize(payload):
     raw = payload.get("rawResponse") or ""
+    input_data = payload.get("input") or {}
+    transcript = compact(input_data.get("transcript") or "", 240)
+    answering = bool(payload.get("answeringQuestion"))
+    question_text = compact(payload.get("questionText") or input_data.get("questionText") or "", 200)
     parsed = parse_labeled_lines(raw)
     insight = parsed.get("INSIGHT") or compact(raw, 120)
     next_step = parsed.get("NEXT", "")
@@ -180,7 +247,13 @@ def voice_normalize(payload):
         artifacts.append(artifact("decision", decision, title=decision, source="voice"))
     if next_step:
         artifacts.append(artifact("task", next_step, title="next", source="voice"))
-    return {
+    claims = extract_simple_claims(
+        [insight] + ([decision] if decision else []),
+        "answer" if answering else "voice",
+        source_ref={"questionText": question_text} if answering and question_text else {},
+        stt_confidence=estimate_stt_confidence(transcript) if transcript else None,
+    )
+    response = {
         "ok": True,
         "clean": insight,
         "structured": {
@@ -191,6 +264,7 @@ def voice_normalize(payload):
             "conf": "med",
         },
         "artifacts": artifacts,
+        "claims": claims,
         "ui": {
             "summary": insight,
             "logLine": "voice interpreted",
@@ -199,6 +273,14 @@ def voice_normalize(payload):
             "kind": "voice",
         },
     }
+    if answering:
+        response["answerNode"] = {
+            "body": transcript,
+            "claims": [entry["text"] for entry in claims],
+            "sttConfidence": estimate_stt_confidence(transcript) if transcript else None,
+            "questionText": question_text,
+        }
+    return response
 
 
 def image_prepare(payload):
@@ -261,6 +343,11 @@ def image_normalize(payload):
     artifacts = [artifact("signal", summary, source="image")]
     if next_step:
         artifacts.append(artifact("task", next_step, title="next", source="image"))
+    claims = extract_simple_claims(
+        [signal or summary, facts],
+        "image",
+        source_ref={"imageRef": compact(((payload.get("input") or {}).get("imageRef") or ""), 80)},
+    )
     return {
         "ok": True,
         "clean": summary,
@@ -274,6 +361,7 @@ def image_normalize(payload):
             "conf": "med",
         },
         "artifacts": artifacts,
+        "claims": claims,
         "ui": {
             "summary": summary,
             "logLine": "image analyzed",
@@ -373,6 +461,7 @@ def chain_normalize(payload):
         return {
             "ok": True,
             "artifacts": [artifact("question", question, title="structa asks", source="chain")],
+            "claims": [claim(question, kind="question", source="chain", confidence=0.62)],
             "ui": {"summary": question, "logLine": "discovery question"},
             "meta": {"action": "discovery", "phase": "cooldown"},
         }
@@ -381,6 +470,7 @@ def chain_normalize(payload):
         return {
             "ok": True,
             "artifacts": [artifact("decision", parsed["DECISION"], title=parsed["DECISION"], source="chain", options=options)],
+            "claims": [claim(parsed["DECISION"], kind="intent", source="chain", confidence=0.64)],
             "ui": {"summary": parsed["DECISION"], "logLine": "decision ready"},
             "meta": {"action": "decision", "phase": "cooldown"},
         }
@@ -388,6 +478,7 @@ def chain_normalize(payload):
         return {
             "ok": True,
             "artifacts": [artifact("signal", parsed["CLARIFY"], source="chain")],
+            "claims": [claim(parsed["CLARIFY"], kind="question", source="chain", confidence=0.6)],
             "ui": {"summary": parsed["CLARIFY"], "logLine": "clarify"},
             "meta": {"action": "clarify", "phase": "clarify"},
         }
@@ -395,6 +486,7 @@ def chain_normalize(payload):
     return {
         "ok": True,
         "artifacts": [artifact("signal", observe, source="chain")],
+        "claims": [claim(observe, kind="fact", source="chain", confidence=0.6)],
         "ui": {"summary": observe, "logLine": "observe"},
         "meta": {"action": "observe", "phase": "clarify"},
     }
@@ -451,9 +543,13 @@ def triangle_normalize(payload):
     artifacts = [artifact("signal", signal, title="triangle signal", source="triangle")]
     if question:
         artifacts.append(artifact("question", question, title="triangle follow up", source="triangle"))
+    claims = [claim(signal, kind="fact", source="triangle", confidence=0.7)]
+    if question:
+        claims.append(claim(question, kind="question", source="triangle", confidence=0.62))
     return {
         "ok": True,
         "artifacts": artifacts,
+        "claims": claims,
         "ui": {"summary": signal, "logLine": "triangle ready"},
         "meta": {"kind": "triangle"},
     }
@@ -510,12 +606,72 @@ def thread_refine_normalize(payload):
     return {
         "ok": True,
         "summary": summary,
+        "claims": [],
         "ui": {
             "summary": summary,
             "logLine": "comment refined",
         },
         "meta": {
             "kind": "thread-refine",
+        },
+    }
+
+
+def claims_backfill_prepare(payload):
+    project = payload.get("project") or {}
+    body = compact(payload.get("body") or ((payload.get("selection") or {}).get("body")) or "", 320)
+    lines = [
+        "Extract up to three concrete project claims.",
+        "Return only labeled lines. No prose.",
+        "",
+        "PROJECT",
+    ] + build_project_lines(project)
+
+    lines.extend([
+        "",
+        "ITEM",
+        body or "unknown item",
+        "",
+        "Return exactly:",
+        "CLAIM1: <claim or omit>",
+        "CLAIM2: <claim or omit>",
+        "CLAIM3: <claim or omit>",
+    ])
+    return {
+        "ok": True,
+        "llm": {
+            "prompt": "\n".join(lines),
+            "timeout": 18000,
+            "priority": payload.get("policy", {}).get("priority", "low"),
+        },
+        "ui": {
+            "summary": "claim backfill",
+            "logLine": "claims backfill",
+        },
+        "meta": {
+            "kind": "claims-backfill",
+        },
+    }
+
+
+def claims_backfill_normalize(payload):
+    raw = payload.get("rawResponse") or ""
+    parsed = parse_labeled_lines(raw)
+    source_ref = payload.get("sourceRef") or {}
+    claims = extract_simple_claims(
+        [parsed.get("CLAIM1", ""), parsed.get("CLAIM2", ""), parsed.get("CLAIM3", "")],
+        payload.get("source") or "backfill",
+        source_ref=source_ref,
+    )
+    return {
+        "ok": True,
+        "claims": claims,
+        "ui": {
+            "summary": f"{len(claims)} claims",
+            "logLine": "claims backfilled",
+        },
+        "meta": {
+            "kind": "claims-backfill",
         },
     }
 
@@ -601,6 +757,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             "/v1/chain/step": (chain_prepare, chain_normalize),
             "/v1/triangle/synthesize": (triangle_prepare, triangle_normalize),
             "/v1/thread/refine": (thread_refine_prepare, thread_refine_normalize),
+            "/v1/claims/backfill": (claims_backfill_prepare, claims_backfill_normalize),
             "/v1/project/title": (project_title_prepare, project_title_normalize),
         }
         handler = handlers.get(parsed.path)

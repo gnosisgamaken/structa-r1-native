@@ -604,6 +604,26 @@
     });
   }
 
+  function backfillClaimsForItem(payload) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.backfillClaims) {
+      return Promise.resolve({ ok: false, claims: [] });
+    }
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = {
+      priority: 'low',
+      allowSearch: false,
+      allowSpeech: false
+    };
+    return withTimeout(
+      orchestrator.backfillClaims(envelope, executePreparedLLM),
+      18000,
+      'claims backfill'
+    ).catch(function() {
+      return { ok: false, claims: [] };
+    });
+  }
+
   function query(question) {
     var context = buildProjectContext();
     var parts = context ? [context, '', question] : [question];
@@ -614,7 +634,7 @@
    * storeAsInsight -- stores LLM result as project insight.
    * Auto-extracts decisions and creates pending_decisions.
    */
-  function storeAsInsight(result, sourceType) {
+  function storeAsInsight(result, sourceType, sourceMeta) {
     if (!result || !result.ok || !result.clean) return null;
     if (!native) return null;
 
@@ -659,6 +679,29 @@
 
       if (createdNode && window.StructaLLM && window.StructaLLM.linkNode) {
         window.StructaLLM.linkNode(createdNode.node_id);
+      }
+      if (createdNode && Array.isArray(result.claims) && native.ingestClaims) {
+        var sourceRef = {
+          itemId: createdNode.node_id
+        };
+        if (sourceMeta && typeof sourceMeta === 'object') {
+          Object.keys(sourceMeta).forEach(function(key) {
+            if (sourceMeta[key]) sourceRef[key] = sourceMeta[key];
+          });
+        }
+        var storedClaims = native.ingestClaims(result.claims, {
+          source: sourceType || 'voice',
+          sourceRef: sourceRef,
+          sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
+        });
+        if (storedClaims && storedClaims.length && native.touchProjectMemory) {
+          createdNode.meta = { ...(createdNode.meta || {}), claim_ids: storedClaims.map(function(entry) { return entry.id; }) };
+          native.touchProjectMemory(function(project) {
+            var node = (project.nodes || []).find(function(entry) { return entry.node_id === createdNode.node_id; });
+            if (!node) return;
+            node.meta = { ...(node.meta || {}), claim_ids: storedClaims.map(function(entry) { return entry.id; }) };
+          });
+        }
       }
       return createdNode;
     }
@@ -893,6 +936,7 @@
     processVoice: processVoice,
     processImage: processImage,
     refineThreadComment: refineThreadComment,
+    backfillClaimsForItem: backfillClaimsForItem,
     query: query,
     storeAsInsight: storeAsInsight,
     linkNode: linkNode,

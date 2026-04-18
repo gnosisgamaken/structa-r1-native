@@ -41,6 +41,22 @@ def load_scenarios(path: pathlib.Path):
     return data
 
 
+def load_trace_scenarios(path: pathlib.Path):
+    if path.is_dir():
+        scenarios: list[dict] = []
+        for candidate in sorted(path.glob("s*.json")):
+            data = json.loads(candidate.read_text())
+            if isinstance(data, list):
+                scenarios.extend(data)
+            else:
+                scenarios.append(data)
+        return scenarios
+    data = json.loads(path.read_text())
+    if isinstance(data, dict):
+        return data.get("scenarios", [data])
+    return data
+
+
 def expected_slots(mode: str) -> str:
     slots = MODES.get(mode, [])
     return "\n".join(f"{slot}: <value>" for slot in slots)
@@ -155,7 +171,7 @@ def detect_lmstudio_model(base_url: str) -> str:
     return ids[0]
 
 
-def call_lmstudio(model: str, system_prompt: str, user_prompt: str, base_url: str) -> tuple[str, str]:
+def call_lmstudio(model: str, system_prompt: str, user_prompt: str, base_url: str, timeout: int) -> tuple[str, str]:
     chosen_model = detect_lmstudio_model(base_url) if model in {"auto", "", None} else model
     payload = {
         "model": chosen_model,
@@ -165,7 +181,7 @@ def call_lmstudio(model: str, system_prompt: str, user_prompt: str, base_url: st
             {"role": "user", "content": user_prompt},
         ],
     }
-    body = _http_json(base_url.rstrip("/") + "/chat/completions", payload, timeout=120)
+    body = _http_json(base_url.rstrip("/") + "/chat/completions", payload, timeout=timeout)
     return body["choices"][0]["message"]["content"].strip(), chosen_model
 
 
@@ -190,13 +206,13 @@ def mock_response(scenario: dict) -> str:
     return "STATE: UNKNOWN\nBLOCKER: UNKNOWN\nNEXT_MOVE: stop\nCONFIDENCE: low"
 
 
-def run_scenario(scenario: dict, provider: str, model: str, lmstudio_base_url: str) -> dict:
+def run_scenario(scenario: dict, provider: str, model: str, lmstudio_base_url: str, lmstudio_timeout: int) -> dict:
     prompt = build_user_prompt(scenario)
     used_model = model
     if provider == "openai":
         raw = call_openai(model=model, system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
     elif provider == "lmstudio":
-        raw, used_model = call_lmstudio(model=model, system_prompt=SYSTEM_PROMPT, user_prompt=prompt, base_url=lmstudio_base_url)
+        raw, used_model = call_lmstudio(model=model, system_prompt=SYSTEM_PROMPT, user_prompt=prompt, base_url=lmstudio_base_url, timeout=lmstudio_timeout)
     else:
         raw = mock_response(scenario)
 
@@ -240,6 +256,107 @@ def summarize(results: list[dict]) -> dict:
     }
 
 
+def trace_match_value(actual, expected) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(trace_match_value(actual.get(key), value) for key, value in expected.items())
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(actual) < len(expected):
+            return False
+        return all(trace_match_value(actual[index], value) for index, value in enumerate(expected))
+    return actual == expected
+
+
+def match_trace_event(actual: dict, expected: dict) -> bool:
+    return all(trace_match_value(actual.get(key), value) for key, value in expected.items())
+
+
+def run_trace_scenario(scenario: dict) -> dict:
+    tail = scenario.get("trace_tail") or []
+    expected = scenario.get("expect_tail") or []
+    matched = []
+    mismatches = []
+    cursor = 0
+    for index, expected_entry in enumerate(expected):
+        actual_entry = None
+        ok = False
+        while cursor < len(tail):
+            candidate = tail[cursor]
+            cursor += 1
+            if isinstance(candidate, dict) and match_trace_event(candidate, expected_entry):
+                actual_entry = candidate
+                ok = True
+                break
+            if actual_entry is None:
+                actual_entry = candidate
+        matched.append(ok)
+        if not ok:
+            mismatches.append({
+                "index": index,
+                "expected": expected_entry,
+                "actual": actual_entry,
+            })
+    voice_calls = scenario.get("voice_calls") or {}
+    voice_ok = True
+    if voice_calls:
+        observed = scenario.get("observed_voice_calls") or voice_calls
+        voice_ok = match_trace_event(observed, voice_calls)
+        if not voice_ok:
+            mismatches.append({
+                "index": "voice_calls",
+                "expected": voice_calls,
+                "actual": observed,
+            })
+    return {
+        "id": scenario.get("id", "unknown"),
+        "title": scenario.get("title", scenario.get("id", "trace scenario")),
+        "kind": "trace",
+        "valid": bool(expected) and all(matched) and voice_ok,
+        "expected_count": len(expected),
+        "actual_count": len(tail),
+        "matched": matched,
+        "mismatches": mismatches,
+    }
+
+
+def write_trace_outputs(results: list[dict], output_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    json_path = output_dir / f"trace-harness-{stamp}.json"
+    md_path = output_dir / f"trace-harness-{stamp}.md"
+    summary = {
+        "total": len(results),
+        "passed": sum(1 for item in results if item["valid"]),
+        "failed": sum(1 for item in results if not item["valid"]),
+    }
+    json_path.write_text(json.dumps({"summary": summary, "results": results}, indent=2))
+    lines = [
+        f"# Structa Trace Harness — {stamp}",
+        "",
+        f"- total: {summary['total']}",
+        f"- passed: {summary['passed']}",
+        f"- failed: {summary['failed']}",
+        "",
+    ]
+    for item in results:
+        lines.extend([
+            f"## {item['id']}",
+            f"title: {item['title']}",
+            f"valid: {item['valid']}",
+            f"expected_count: {item['expected_count']}",
+            f"actual_count: {item['actual_count']}",
+            "",
+        ])
+        if item["mismatches"]:
+            lines.append("```json")
+            lines.append(json.dumps(item["mismatches"], indent=2))
+            lines.append("```")
+            lines.append("")
+    md_path.write_text("\n".join(lines))
+    return json_path, md_path
+
+
 def write_outputs(results: list[dict], output_dir: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -281,16 +398,48 @@ def write_outputs(results: list[dict], output_dir: pathlib.Path) -> tuple[pathli
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local text-only Structa harness batches.")
+    parser.add_argument("--suite", choices=["llm", "trace"], default="llm")
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--provider", choices=["mock", "openai", "lmstudio"], default="mock")
     parser.add_argument("--model", default="auto")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--lmstudio-base-url", default=DEFAULT_LMSTUDIO_BASE)
+    parser.add_argument("--lmstudio-timeout", type=int, default=300)
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
+    if args.suite == "trace":
+        scenarios = load_trace_scenarios(pathlib.Path(args.scenarios))
+        results = [run_trace_scenario(scenario) for scenario in scenarios]
+        json_path, md_path = write_trace_outputs(results, pathlib.Path(args.output_dir))
+        summary = {
+            "total": len(results),
+            "passed": sum(1 for item in results if item["valid"]),
+            "failed": sum(1 for item in results if not item["valid"]),
+        }
+        print(json.dumps({
+            "ok": summary["failed"] == 0,
+            "suite": "trace",
+            "json": str(json_path),
+            "report": str(md_path),
+            "summary": summary,
+        }, indent=2))
+        return 0 if summary["failed"] == 0 else 1
+
     scenarios = load_scenarios(pathlib.Path(args.scenarios))
+    if args.offset:
+        scenarios = scenarios[args.offset:]
+    if args.limit:
+        scenarios = scenarios[:args.limit]
     results = [
-        run_scenario(scenario, provider=args.provider, model=args.model, lmstudio_base_url=args.lmstudio_base_url)
+        run_scenario(
+            scenario,
+            provider=args.provider,
+            model=args.model,
+            lmstudio_base_url=args.lmstudio_base_url,
+            lmstudio_timeout=args.lmstudio_timeout,
+        )
         for scenario in scenarios
     ]
     jsonl_path, md_path = write_outputs(results, pathlib.Path(args.output_dir))

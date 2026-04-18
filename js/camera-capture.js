@@ -301,7 +301,10 @@
         })
       ]).then(function(result) {
         if (result && result.ok && result.clean) {
-          const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture');
+          const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture', {
+            imageId: payload.entryId || '',
+            itemId: payload.nodeId || ''
+          });
           applyAnalysisReady(payload, result, insightNode);
           window.StructaFeedback?.fire?.('resolve');
           native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell insight ready' : 'visual insight ready' });

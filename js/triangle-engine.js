@@ -533,6 +533,23 @@
         });
       }
 
+      if (Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
+        const claimEntries = native.ingestClaims(result.claims, {
+          source: 'triangle',
+          sourceRef: {
+            itemId: signalNode?.node_id || '',
+            triangleJobId: payload?.jobId || ''
+          }
+        });
+        if (claimEntries?.length && signalNode?.node_id && native?.touchProjectMemory) {
+          native.touchProjectMemory(function(project) {
+            const signal = (project.nodes || []).find(function(entry) { return entry.node_id === signalNode.node_id; });
+            if (!signal) return;
+            signal.meta = { ...(signal.meta || {}), claim_ids: claimEntries.map(function(entry) { return entry.id; }) };
+          });
+        }
+      }
+
       updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
       const origin = clone(localPair.origin || {});
       traceTriangle('synthesizing', 'resolved', {
@@ -569,7 +586,7 @@
   if (queue && !window.__STRUCTA_TRIANGLE_QUEUE_REGISTERED__) {
     window.__STRUCTA_TRIANGLE_QUEUE_REGISTERED__ = true;
     queue.registerHandler('triangle-synthesize', function(job) {
-      return runTriangleSynthesis(job.payload || {}).then(function(result) {
+      return runTriangleSynthesis(Object.assign({}, job.payload || {}, { jobId: job.id || '' })).then(function(result) {
         if (!result || !result.ok) {
           clearRuntimeState();
           return {

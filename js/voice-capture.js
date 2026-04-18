@@ -283,6 +283,62 @@
     });
   }
 
+  function enqueueClaimsBackfill(payload) {
+    if (!queue || !payload?.nodeId || !payload?.body) return;
+    queue.enqueue({
+      kind: 'claims-backfill',
+      priority: 'P3',
+      payload: payload,
+      origin: {
+        screen: payload.surface || 'backfill',
+        itemId: payload.nodeId
+      },
+      timeoutMs: 18000
+    });
+  }
+
+  function scheduleClaimBackfillSweep(delayMs) {
+    if (!queue || !window.StructaLLM?.backfillClaimsForItem || window.__STRUCTA_CLAIM_BACKFILL_SWEEP__) return;
+    window.__STRUCTA_CLAIM_BACKFILL_SWEEP__ = true;
+    setTimeout(function() {
+      try {
+        var project = native?.getProjectMemory?.();
+        var nodes = Array.isArray(project?.nodes) ? project.nodes : [];
+        nodes.slice(0, 24).forEach(function(node) {
+          if (!node || node.status === 'archived') return;
+          var hasClaims = Array.isArray(project?.claimIndex?.byItem?.[node.node_id]) && project.claimIndex.byItem[node.node_id].length;
+          var alreadyBackfilled = !!node.meta?.claims_backfilled;
+          var body = String(node.body || node.title || '').trim();
+          if (!body || hasClaims || alreadyBackfilled) return;
+          enqueueClaimsBackfill({
+            nodeId: node.node_id,
+            body: body,
+            surface: node.type || 'backfill',
+            selection: {
+              kind: node.type || 'item',
+              id: node.node_id,
+              title: node.title || '',
+              body: body,
+              status: node.status || 'open'
+            },
+            project: {
+              id: project?.project_id || '',
+              name: project?.name || 'untitled project',
+              type: project?.type || 'general',
+              topQuestions: (project?.open_questions || []).slice(0, 3),
+              summary: project?.summary || '',
+              selectedSurface: node.type || 'backfill'
+            },
+            source: node.source || node.type || 'backfill',
+            sourceRef: { itemId: node.node_id }
+          });
+        });
+      } finally {
+        window.__STRUCTA_CLAIM_BACKFILL_SWEEP__ = false;
+      }
+    }, Math.max(0, delayMs || 0));
+  }
+
   function linkInsightToContext(buildContext, createdInsight) {
     if (!createdInsight?.node_id || !buildContext?.nodeId || !native?.touchProjectMemory) return;
     native.touchProjectMemory(function(project) {
@@ -348,7 +404,28 @@
       return window.StructaLLM.processVoice(payload.transcript || '', options).then(function(result) {
         if (payload.mode === 'question') {
           if (result && result.ok && result.clean) {
-            var createdInsight = window.StructaLLM.storeAsInsight(result, 'answer');
+            var createdInsight = window.StructaLLM.storeAsInsight(result, 'answer', {
+              questionId: payload.questionNodeId || '',
+              answerId: payload.answerNodeId || ''
+            });
+            var storedClaims = Array.isArray(createdInsight?.meta?.claim_ids) ? createdInsight.meta.claim_ids.slice() : [];
+            if (!storedClaims.length && Array.isArray(result.claims) && native?.ingestClaims) {
+              storedClaims = native.ingestClaims(result.claims, {
+                source: 'answer',
+                sourceRef: {
+                  itemId: createdInsight?.node_id || '',
+                  questionId: payload.questionNodeId || '',
+                  answerId: payload.answerNodeId || ''
+                },
+                sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
+              }).map(function(entry) { return entry.id; });
+            }
+            if (payload.answerNodeId && native?.enrichAnswerNode) {
+              native.enrichAnswerNode(payload.answerNodeId, {
+                claims: storedClaims,
+                sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
+              });
+            }
             if (createdInsight?.node_id && payload.questionNodeId && native?.touchProjectMemory) {
               native.touchProjectMemory(function(project) {
                 var nodes = Array.isArray(project.nodes) ? project.nodes : [];
@@ -357,7 +434,11 @@
                 if (questionNode && insightNode) {
                   questionNode.links = Array.isArray(questionNode.links) ? questionNode.links : [];
                   insightNode.links = Array.isArray(insightNode.links) ? insightNode.links : [];
-                  insightNode.meta = { ...(insightNode.meta || {}), question_node_id: payload.questionNodeId };
+                  insightNode.meta = {
+                    ...(insightNode.meta || {}),
+                    question_node_id: payload.questionNodeId,
+                    answer_node_id: payload.answerNodeId || ''
+                  };
                   if (questionNode.links.indexOf(insightNode.node_id) === -1) questionNode.links.push(insightNode.node_id);
                   if (insightNode.links.indexOf(questionNode.node_id) === -1) insightNode.links.push(questionNode.node_id);
                 }
@@ -375,6 +456,34 @@
               insightId: createdInsight?.node_id || '',
               clean: result.clean || ''
             });
+            if (result.followUpQuestion && native?.addNode) {
+              setTimeout(function() {
+                var project = native?.getProjectMemory?.() || {};
+                var existing = (project.open_question_nodes || []).some(function(entry) {
+                  var current = lower(entry?.body || entry?.title || '');
+                  var nextText = lower(result.followUpQuestion || '');
+                  return current === nextText || current.indexOf(nextText) !== -1 || nextText.indexOf(current) !== -1;
+                });
+                if (!existing) {
+                  native.addNode({
+                    type: 'question',
+                    status: 'open',
+                    title: 'follow up',
+                    body: result.followUpQuestion,
+                    source: 'voice-answer',
+                    meta: {
+                      parent_question_id: payload.questionNodeId || '',
+                      answer_node_id: payload.answerNodeId || '',
+                      evidence_claims: storedClaims
+                    }
+                  });
+                  native?.traceEvent?.('question', 'queued', 'follow-up-open', {
+                    nodeId: payload.questionNodeId || '',
+                    answerId: payload.answerNodeId || ''
+                  });
+                }
+              }, 200);
+            }
             window.StructaLLM?.speakMilestone?.('signal_captured');
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'question-answer' }
@@ -406,6 +515,42 @@
       });
     });
 
+    queue.registerHandler('claims-backfill', function(job) {
+      const payload = job.payload || {};
+      if (!payload.nodeId || !payload.body || !window.StructaLLM?.backfillClaimsForItem) {
+        return { ok: false, stale: true, claims: [] };
+      }
+      native?.traceEvent?.('claim', 'queued', 'backfilling', {
+        jobId: job.id || '',
+        nodeId: payload.nodeId || ''
+      });
+      return window.StructaLLM.backfillClaimsForItem({
+        project: payload.project || null,
+        selection: payload.selection || null,
+        body: payload.body || '',
+        source: payload.source || 'backfill',
+        sourceRef: payload.sourceRef || { itemId: payload.nodeId }
+      }).then(function(result) {
+        if (result && result.ok && Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
+          native.ingestClaims(result.claims, {
+            source: payload.source || 'backfill',
+            sourceRef: payload.sourceRef || { itemId: payload.nodeId }
+          });
+        }
+        native?.touchProjectMemory?.(function(project) {
+          var node = (project.nodes || []).find(function(entry) { return entry.node_id === payload.nodeId; });
+          if (!node) return;
+          node.meta = { ...(node.meta || {}), claims_backfilled: true };
+        });
+        native?.traceEvent?.('claim', 'backfilling', 'backfilled', {
+          jobId: job.id || '',
+          nodeId: payload.nodeId || '',
+          count: Array.isArray(result?.claims) ? result.claims.length : 0
+        });
+        return result || { ok: false, claims: [] };
+      });
+    });
+
     queue.registerHandler('thread-refine', function(job) {
       const payload = job.payload || {};
       if (!payload.nodeId || !payload.commentId || !window.StructaLLM?.refineThreadComment) {
@@ -430,6 +575,14 @@
         if (summary) native?.setThreadCommentSummary?.(payload.nodeId, payload.commentId, summary);
         return { ok: !!summary, summary: summary || payload.commentText || '' };
       });
+    });
+  }
+
+  if (!window.__STRUCTA_CLAIM_BACKFILL_BOOTSTRAPPED__) {
+    window.__STRUCTA_CLAIM_BACKFILL_BOOTSTRAPPED__ = true;
+    scheduleClaimBackfillSweep(1200);
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) scheduleClaimBackfillSweep(600);
     });
   }
 
@@ -506,6 +659,7 @@
       }
 
       native?.appendLogEntry?.({ kind: 'voice', message: 'question answered' });
+      var resolution = null;
 
       // Store the answer in project memory
       if (question.onboarding) {
@@ -516,7 +670,7 @@
           entry_mode: 'onboarding'
         });
       } else {
-        native?.resolveQuestion?.({
+        resolution = native?.resolveQuestion?.({
           index: question.index,
           nodeId: question.nodeId || '',
           text: question.text || '',
@@ -536,7 +690,8 @@
         mode: 'question',
         transcript: text,
         questionText: question.text || '',
-        questionNodeId: question.nodeId || ''
+        questionNodeId: question.nodeId || '',
+        answerNodeId: resolution?.answerNode?.id || ''
       });
       return;
     }

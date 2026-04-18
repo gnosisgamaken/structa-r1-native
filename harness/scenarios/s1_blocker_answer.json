@@ -1,0 +1,23 @@
+{
+  "id": "s1_blocker_answer",
+  "title": "blocker answer resolves into answer node, claim, and insight",
+  "trace_tail": [
+    { "t": "2026-04-18T12:01:00.000Z", "flow": "voice", "from": "captured", "to": "question-answer", "ctx": { "nodeId": "q-1" } },
+    { "t": "2026-04-18T12:01:00.010Z", "flow": "answer", "from": "captured", "to": "stored", "ctx": { "questionId": "q-1", "answerId": "a-1" } },
+    { "t": "2026-04-18T12:01:00.020Z", "flow": "blocker", "from": "open", "to": "answer-received", "ctx": { "nodeId": "q-1", "answerId": "a-1" } },
+    { "t": "2026-04-18T12:01:00.030Z", "flow": "voice", "from": "queued", "to": "interpreting", "ctx": { "jobId": "job-answer-1", "mode": "question", "nodeId": "q-1" } },
+    { "t": "2026-04-18T12:01:00.040Z", "flow": "claim", "from": "pending", "to": "stored", "ctx": { "count": 1, "source": "answer" } },
+    { "t": "2026-04-18T12:01:00.050Z", "flow": "answer", "from": "stored", "to": "enriched", "ctx": { "answerId": "a-1", "claimCount": 1 } },
+    { "t": "2026-04-18T12:01:00.060Z", "flow": "blocker", "from": "answered", "to": "insight-created", "ctx": { "jobId": "job-answer-1", "nodeId": "q-1" } }
+  ],
+  "expect_tail": [
+    { "flow": "answer", "from": "captured", "to": "stored" },
+    { "flow": "blocker", "from": "open", "to": "answer-received" },
+    { "flow": "claim", "from": "pending", "to": "stored", "ctx": { "source": "answer" } },
+    { "flow": "answer", "from": "stored", "to": "enriched" },
+    { "flow": "blocker", "from": "answered", "to": "insight-created" }
+  ],
+  "voice_calls": {
+    "violations": 0
+  }
+}

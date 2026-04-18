@@ -283,16 +283,8 @@
     return 1;
   }
 
-  function allowStagingFlush() {
-    const host = lower(window.location.hostname || '');
-    const search = lower(window.location.search || '');
-    const hash = lower(window.location.hash || '');
-    return !!native?.probeMode ||
-      host.includes('replit') ||
-      host.includes('localhost') ||
-      host.startsWith('127.') ||
-      search.includes('staging') ||
-      hash.includes('staging');
+  function allowMenuFlush() {
+    return !!native?.flushMemory;
   }
 
   function currentCard() {
@@ -1389,7 +1381,7 @@
   }
 
   function flushTestingMemory() {
-    if (!allowStagingFlush() || !native?.flushMemory) return false;
+    if (!allowMenuFlush() || !native?.flushMemory) return false;
     native.flushMemory().then(function() {
       stateData.projectFlushConfirm = false;
       stateData.showCaptureEntryId = '';
@@ -1491,9 +1483,14 @@
     const ui = getUIState();
     const captures = getCaptureList();
     const insights = project?.insights || [];
-    const openQuestions = (project?.open_questions || []).map(function(question) {
-      return softenGuidedAsk(question);
-    });
+    const openQuestionNodes = project?.open_question_nodes || [];
+    const openQuestions = openQuestionNodes.length
+      ? openQuestionNodes.map(function(question) {
+          return softenGuidedAsk(question?.body || question);
+        })
+      : (project?.open_questions || []).map(function(question) {
+          return softenGuidedAsk(question);
+        });
     const queueBlockers = Array.isArray(ui.queue_blockers) ? ui.queue_blockers : [];
     const queueBlocker = queueBlockers[0] || null;
     const projectCapNotice = lower(ui.project_cap_notice || '');
@@ -2350,7 +2347,7 @@
       'font-size': '10',
       'text-anchor': 'end'
     });
-    if (allowStagingFlush()) {
+    if (allowMenuFlush()) {
       const flushConfirm = !!stateData.projectFlushConfirm;
       const flushTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
@@ -2390,7 +2387,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '11'
       });
-      text(226, 268, allowStagingFlush() ? 'flush resets onboarding' : 'ready for first project', {
+      text(226, 268, allowMenuFlush() ? 'flush resets onboarding' : 'ready for first project', {
         fill: 'rgba(244,239,228,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -3382,8 +3379,28 @@
   // Clean hierarchy: project name -> latest change -> pending decision -> stats
   function drawNowPanel() {
     if (!surfaceIsVisible('project')) return;
-    const data = buildNowSummary();
     const nowCard = cards.find(c => c.id === 'now');
+    let data;
+    try {
+      data = buildNowSummary();
+    } catch (error) {
+      console.error('structa now render failed', error);
+      mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
+      drawSurfaceHeader(nowCard);
+      text(14, 112, 'now recovering', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      wrapTextBlock(undefined, 'back out, then reopen now. if the tutorial is stuck, use flush in projects.', 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 5);
+      text(226, 276, 'back · reopen', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
     const inlineListening = recordingActive() && activeSurface() === 'project';
     const queueCount = getQueuePendingJobs().length;
 

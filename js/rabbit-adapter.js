@@ -56,13 +56,7 @@
     }
   }
 
-  const probeMode = window.location.hash.includes('probe') || (() => {
-    try {
-      return window.localStorage?.getItem('structa-probe') === '1';
-    } catch (_) {
-      return false;
-    }
-  })();
+  const probeMode = window.location.hash.includes('probe') || new URLSearchParams(window.location.search || '').get('debug') === '1';
 
   const deviceId = detectDeviceId();
   const deviceScopeKey = hashText(deviceId);
@@ -583,7 +577,6 @@
     persist();
     try {
       window.dispatchEvent(new CustomEvent('structa-probe-event', { detail: entry }));
-      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     } catch (_) {}
     return entry;
   }
@@ -594,8 +587,6 @@
   function startProbeIfNeeded() {
     if (!probeMode || probeListenerAttached) return;
     probeListenerAttached = true;
-
-    try { window.localStorage?.setItem('structa-probe', '1'); } catch (_) {}
     memory.probeEvents = [];
     memory.logs = memory.logs.filter(function(entry) { return entry.kind !== 'probe'; });
 
@@ -895,6 +886,7 @@
       window.localStorage?.removeItem(cacheKey);
       window.localStorage?.removeItem(cacheKey + '_emergency');
       window.localStorage?.removeItem('structa.queue.v1');
+      window.localStorage?.removeItem('structa-probe');
     } catch (_) {}
     memory.triangleSlot = null;
 
@@ -912,7 +904,9 @@
   function updateUIState(patch = {}) {
     memory.uiState = { ...(memory.uiState || {}), ...patch };
     persist();
-    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    window.dispatchEvent(new CustomEvent('structa-ui-state-updated', {
+      detail: { patch: { ...patch } }
+    }));
     return { ...memory.uiState };
   }
 

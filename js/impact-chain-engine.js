@@ -693,7 +693,7 @@
 
   // === Auto-start on user activity ===
   // Wire to hardware events so chain resumes on device wake
-  ['sideClick', 'scrollUp', 'scrollDown', 'longPressStart'].forEach(function(evt) {
+  ['sideClick', 'longPressStart'].forEach(function(evt) {
     window.addEventListener(evt, function() {
       if (onboardingBlocked()) return;
       touchActivity();

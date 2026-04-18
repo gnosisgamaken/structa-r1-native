@@ -77,13 +77,18 @@
   const TOUCH_LOG_LONG_PRESS_MS = 620;
   const TOUCH_LOG_MOVE_TOLERANCE = 12;
   const LOG_FOLLOW_THRESHOLD = 24;
+  const WHEEL_STEP_THRESHOLD = 36;
+  const NATIVE_SCROLL_DEDUPE_MS = 75;
   const onNextFrame = window.requestAnimationFrame
     ? window.requestAnimationFrame.bind(window)
     : function(callback) { return setTimeout(callback, 16); };
   const debugMode = new URLSearchParams(window.location.search || '').get('debug') === '1';
+  const probeMode = window.location.hash.includes('probe') || debugMode;
   let renderScheduled = false;
   let logRefreshScheduled = false;
+  let opsRefreshScheduled = false;
   let pendingLogRefreshOptions = {};
+  let pendingOpsDetail = null;
   let logPinnedToBottom = true;
   let dataCacheVersion = 0;
   let cachedMemoryVersion = -1;
@@ -94,6 +99,13 @@
   let cachedVoiceEntries = { version: -1, projectId: '', value: [] };
   let cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
   let fpsMeterEl = null;
+  let wheelDeltaAccumulator = 0;
+  let lastNativeScrollAt = 0;
+  let lastNativeScrollDirection = 0;
+  let lastRenderDurationMs = 0;
+  let lastScrollAt = 0;
+  let scrollEventsInWindow = 0;
+  let scrollWindowStartedAt = performance.now();
 
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
@@ -118,13 +130,22 @@
       frames += 1;
       if (now - last >= 500) {
         const fps = Math.round((frames * 1000) / (now - last));
-        fpsMeterEl.textContent = 'fps ' + fps;
+        const scrollAge = lastScrollAt ? Math.max(0, Math.round(performance.now() - lastScrollAt)) : 0;
+        const scrollRate = Math.round((scrollEventsInWindow * 1000) / Math.max(1, now - scrollWindowStartedAt));
+        fpsMeterEl.textContent = 'fps ' + fps + ' · r' + Math.round(lastRenderDurationMs) + 'ms · s' + scrollRate + ' · ' + scrollAge + 'ms';
         frames = 0;
         last = now;
+        scrollEventsInWindow = 0;
+        scrollWindowStartedAt = now;
       }
       onNextFrame(tick);
     }
     onNextFrame(tick);
+  }
+
+  function markScrollActivity() {
+    lastScrollAt = performance.now();
+    scrollEventsInWindow += 1;
   }
 
   function recordingActive() {
@@ -656,6 +677,10 @@
     cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
   }
 
+  function invalidateUICaches() {
+    cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
+  }
+
   function scheduleRender() {
     if (renderScheduled) return;
     renderScheduled = true;
@@ -681,6 +706,18 @@
       const refreshOptions = pendingLogRefreshOptions;
       pendingLogRefreshOptions = {};
       refreshLogFromMemory(refreshOptions);
+    });
+  }
+
+  function scheduleOpsRefresh(detail) {
+    if (detail) pendingOpsDetail = { ...(pendingOpsDetail || {}), ...detail };
+    if (opsRefreshScheduled) return;
+    opsRefreshScheduled = true;
+    onNextFrame(function() {
+      opsRefreshScheduled = false;
+      const nextDetail = pendingOpsDetail || {};
+      pendingOpsDetail = null;
+      updateLogOps(nextDetail);
     });
   }
 
@@ -772,7 +809,7 @@
     stateEnterHandlers[newState]?.(stateData);
 
     // Render
-    renderNow();
+    scheduleRender();
   }
 
   // === Log management ===
@@ -3712,6 +3749,7 @@
 
   // === Main render ===
   function renderNow() {
+    const renderStartedAt = performance.now();
     renderScheduled = false;
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     drawWordmark();
@@ -3740,6 +3778,7 @@
 
     const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
+    lastRenderDurationMs = performance.now() - renderStartedAt;
   }
 
   function render() {
@@ -3878,6 +3917,21 @@
       default:
         break;
     }
+  }
+
+  function dispatchScrollStep(direction, source = 'native') {
+    if (!direction) return;
+    const normalized = direction > 0 ? 1 : -1;
+    if (source === 'native') {
+      const now = performance.now();
+      if (normalized === lastNativeScrollDirection && now - lastNativeScrollAt < NATIVE_SCROLL_DEDUPE_MS) {
+        return;
+      }
+      lastNativeScrollAt = now;
+      lastNativeScrollDirection = normalized;
+    }
+    markScrollActivity();
+    handleScrollDirection(normalized);
   }
 
   function supportsDoubleSideClick() {
@@ -4355,7 +4409,11 @@
 
   function onWheel(event) {
     event.preventDefault();
-    handleScrollDirection(event.deltaY > 0 ? 1 : -1);
+    wheelDeltaAccumulator += event.deltaY || 0;
+    if (Math.abs(wheelDeltaAccumulator) < WHEEL_STEP_THRESHOLD) return;
+    const direction = wheelDeltaAccumulator > 0 ? 1 : -1;
+    wheelDeltaAccumulator = 0;
+    dispatchScrollStep(direction, 'wheel');
   }
 
   function onTouchDebugPointerDown(event) {
@@ -4510,13 +4568,18 @@
   window.addEventListener('structa-memory-updated', () => {
     invalidateDataCaches();
     scheduleLogRefresh();
-    updateLogOps();
-    render();
+    scheduleOpsRefresh();
+    scheduleRender();
     maybeStartHeartbeat();
     if (!onboardingActive() && !chainStarted && projectHasMeaningfulContent() && window.StructaImpactChain && !window.StructaImpactChain.active) {
       chainStarted = true;
       window.StructaImpactChain.start(2);
     }
+  });
+  window.addEventListener('structa-ui-state-updated', () => {
+    invalidateUICaches();
+    scheduleRender();
+    scheduleOpsRefresh();
   });
   window.addEventListener('structa-thread-comment-appended', function(event) {
     const detail = event?.detail || {};
@@ -4534,13 +4597,13 @@
   });
   window.addEventListener('structa-log-updated', () => {
     scheduleLogRefresh();
-    updateLogOps();
+    scheduleOpsRefresh();
   });
   ['structa-queue-enqueued', 'structa-queue-started', 'structa-queue-progress', 'structa-queue-resolved', 'structa-queue-rejected', 'structa-queue-blocked'].forEach(function(name) {
     window.addEventListener(name, function() {
       syncQueueBlockers();
       scheduleLogRefresh();
-      updateLogOps();
+      scheduleOpsRefresh();
       scheduleRender();
     });
   });
@@ -4616,7 +4679,7 @@
   });
 
   window.addEventListener('structa-probe-event', () => { scheduleLogRefresh(); });
-  window.addEventListener('structa-impact-phase', event => { updateLogOps(event?.detail || {}); });
+  window.addEventListener('structa-impact-phase', event => { scheduleOpsRefresh(event?.detail || {}); });
   window.addEventListener('structa-capture-failed', () => {
     if (currentState === STATES.CAMERA_CAPTURE || currentState === STATES.CAMERA_OPEN) {
       transition(STATES.CAMERA_OPEN);
@@ -4625,8 +4688,8 @@
   });
 
   // Hardware inputs
-  window.addEventListener('scrollUp', event => { event.preventDefault?.(); handleScrollDirection(1); });
-  window.addEventListener('scrollDown', event => { event.preventDefault?.(); handleScrollDirection(-1); });
+  window.addEventListener('scrollUp', event => { event.preventDefault?.(); dispatchScrollStep(1, 'native'); });
+  window.addEventListener('scrollDown', event => { event.preventDefault?.(); dispatchScrollStep(-1, 'native'); });
   window.addEventListener('sideClick', event => { event.preventDefault?.(); triggerSideClick(); });
   window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
   window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
@@ -4910,25 +4973,27 @@
   });
 
   // === BPM control: detect rapid scroll ticks (HOME and LOG_OPEN only) ===
-  let rapidScrollCount = 0;
-  let rapidScrollTimer = null;
-  function onRapidScrollTick(direction) {
-    if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
-    rapidScrollCount++;
-    clearTimeout(rapidScrollTimer);
-    rapidScrollTimer = setTimeout(function() {
-      if (rapidScrollCount >= 3 && window.StructaImpactChain) {
-        var chain = window.StructaImpactChain;
-        var newBpm = direction > 0 ? Math.min(20, chain.bpm + 2) : Math.max(1, chain.bpm - 2);
-        chain.bpm = newBpm;
-        if (window.StructaAudio) window.StructaAudio.play(direction > 0 ? 'bpmUp' : 'bpmDown');
-        pushLog('chain speed: ' + newBpm + 'bpm', 'system');
-      }
-      rapidScrollCount = 0;
-    }, 600);
+  if (probeMode) {
+    let rapidScrollCount = 0;
+    let rapidScrollTimer = null;
+    function onRapidScrollTick(direction) {
+      if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
+      rapidScrollCount++;
+      clearTimeout(rapidScrollTimer);
+      rapidScrollTimer = setTimeout(function() {
+        if (rapidScrollCount >= 3 && window.StructaImpactChain) {
+          var chain = window.StructaImpactChain;
+          var newBpm = direction > 0 ? Math.min(20, chain.bpm + 2) : Math.max(1, chain.bpm - 2);
+          chain.bpm = newBpm;
+          if (window.StructaAudio) window.StructaAudio.play(direction > 0 ? 'bpmUp' : 'bpmDown');
+          pushLog('chain speed: ' + newBpm + 'bpm', 'system');
+        }
+        rapidScrollCount = 0;
+      }, 600);
+    }
+    window.addEventListener('scrollDown', function() { onRapidScrollTick(-1); });
+    window.addEventListener('scrollUp', function() { onRapidScrollTick(1); });
   }
-  window.addEventListener('scrollDown', function() { onRapidScrollTick(-1); });
-  window.addEventListener('scrollUp', function() { onRapidScrollTick(1); });
 
   // === Public API ===
   window.StructaPanel = Object.freeze({

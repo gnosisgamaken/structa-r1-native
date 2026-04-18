@@ -267,6 +267,7 @@
         runtimeCaps: currentCaps(),
         appVersion: APP_BUILD_SHA
       },
+      manual_voice_check: state.manualVoiceCheck || null,
       summary: summary,
       results: results,
       traceTail: getTraceEvents().slice(-100)
@@ -1006,6 +1007,12 @@
     }
     if (Date.now() - state.lastStartedAt < RUN_RATE_LIMIT_MS) {
       return { ok: false, error: 'diagnostics rate limited' };
+    }
+    if ((queue?.snapshot?.() || []).length > 0) {
+      return { ok: false, error: 'wait for queue to drain' };
+    }
+    if (native?.getActiveFocus?.()) {
+      return { ok: false, error: 'wait for chain focus to clear' };
     }
     if (!(currentCaps().hasBridge || new URLSearchParams(window.location.search || '').get('debug') === '1')) {
       return { ok: false, error: 'diagnostics require device bridge or debug mode' };

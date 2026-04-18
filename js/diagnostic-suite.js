@@ -497,7 +497,9 @@
 
   function getSummaryRows() {
     var rows = [];
-    var queueBusy = (queue?.snapshot?.() || []).length > 0;
+    var queueBusy = (queue?.snapshot?.() || []).some(function(job) {
+      return job && job.status !== 'blocked';
+    });
     var activeFocus = native?.getActiveFocus?.();
     var disabledReason = queueBusy ? 'wait for queue to drain' : (activeFocus ? 'wait for chain focus to clear' : '');
     rows.push({
@@ -1008,7 +1010,9 @@
     if (Date.now() - state.lastStartedAt < RUN_RATE_LIMIT_MS) {
       return { ok: false, error: 'diagnostics rate limited' };
     }
-    if ((queue?.snapshot?.() || []).length > 0) {
+    if ((queue?.snapshot?.() || []).some(function(job) {
+      return job && job.status !== 'blocked';
+    })) {
       return { ok: false, error: 'wait for queue to drain' };
     }
     if (native?.getActiveFocus?.()) {

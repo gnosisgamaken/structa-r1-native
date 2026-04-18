@@ -13,11 +13,14 @@ Rules:
 - back from the triangle overlay returns to the armed slot
 - shake during the overlay clears triangle and returns home
 - triangle persists across navigation and project switching
+- `armed` and `synthesizing` state both persist through app close
+- if a queued synthesis was still active on close, the overlay rehydrates on boot
 
 Outputs:
 - one derived `signal` lands in KNOW with `source: triangle`
 - optional follow-up question is added as an open ask
 - triangulated signals are marked with `▼` in KNOW
+- triangle resolve also fires the non-voice resolve tone, while milestone speech remains gated by the voice doctrine
 
 Design intent:
 - two points plus one angle produce one new signal

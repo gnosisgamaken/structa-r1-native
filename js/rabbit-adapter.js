@@ -30,6 +30,12 @@
     return `r1-${(hash >>> 0).toString(16)}`;
   }
 
+  function compact(text = '', limit = 72) {
+    var value = String(text || '').trim().replace(/\s+/g, ' ');
+    if (value.length <= limit) return value;
+    return value.slice(0, Math.max(0, limit - 1)).trimEnd() + '…';
+  }
+
   function detectDeviceId() {
     const candidates = [
       window.__RABBIT_DEVICE_ID__,
@@ -240,6 +246,80 @@
     return updated;
   }
 
+  function cloneThread(thread) {
+    return Array.isArray(thread) ? thread.map(function(entry) {
+      return {
+        id: entry.id || contracts.makeEntryId('thread'),
+        kind: entry.kind || 'comment',
+        body: String(entry.body || '').trim(),
+        summary: String(entry.summary || entry.body || '').trim(),
+        at: entry.at || new Date().toISOString(),
+        origin: entry.origin || 'ptt'
+      };
+    }) : [];
+  }
+
+  function appendThreadComment(nodeId, text, kind, origin) {
+    var bodyText = String(text || '').trim();
+    if (!nodeId || bodyText.length < 3) return null;
+    var created = null;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry.node_id === nodeId && entry.status !== 'archived';
+      });
+      if (!node) return;
+      node.meta = { ...(node.meta || {}) };
+      node.meta.thread = cloneThread(node.meta.thread);
+      var comment = {
+        id: contracts.makeEntryId('thread'),
+        kind: kind || 'comment',
+        body: bodyText,
+        summary: compact(bodyText, 72),
+        at: new Date().toISOString(),
+        origin: origin || 'ptt'
+      };
+      node.meta.thread.push(comment);
+      node.meta.thread_summary = compact(bodyText, 72);
+      node.meta.thread_updated_at = comment.at;
+      created = {
+        nodeId: node.node_id,
+        comment: { ...comment },
+        depth: node.meta.thread.length
+      };
+    });
+    return created;
+  }
+
+  function setThreadCommentSummary(nodeId, commentId, summary) {
+    var value = String(summary || '').trim();
+    if (!nodeId || !commentId || !value) return null;
+    var updated = null;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry.node_id === nodeId && entry.status !== 'archived';
+      });
+      if (!node || !node.meta) return;
+      node.meta.thread = cloneThread(node.meta.thread);
+      var comment = node.meta.thread.find(function(entry) { return entry.id === commentId; });
+      if (!comment) return;
+      comment.summary = compact(value, 72);
+      node.meta.thread_summary = comment.summary;
+      updated = {
+        nodeId: node.node_id,
+        comment: { ...comment },
+        depth: node.meta.thread.length
+      };
+    });
+    return updated;
+  }
+
+  function getNodeThread(nodeId) {
+    var node = (memory.projectMemory?.nodes || []).find(function(entry) {
+      return entry.node_id === nodeId;
+    });
+    return cloneThread(node?.meta?.thread);
+  }
+
   function resolveNode(nodeId, resolution) {
     var node = memory.projectMemory.nodes.find(function(n) { return n.node_id === nodeId; });
     if (!node) return null;
@@ -287,40 +367,53 @@
 
     pm.backlog = nodes.filter(function(n) { return n.type === 'task' && n.status === 'open'; })
       .map(function(n) {
+        var thread = cloneThread(n.meta?.thread);
         return {
           title: n.title,
           body: n.body,
           created_at: n.created_at,
           state: 'open',
           node_id: n.node_id,
-          links: Array.isArray(n.links) ? n.links.slice() : []
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
 
     pm.decisions = nodes.filter(function(n) { return n.type === 'decision' && n.status === 'resolved'; })
       .map(function(n) {
+        var thread = cloneThread(n.meta?.thread);
         return {
           text: n.title, body: n.body, reason: n.body,
           options: n.decision_options, selected_option: n.selected_option,
           selected_option_index: n.decision_options.indexOf(n.selected_option),
           source: n.source + ' → approved',
           created_at: n.created_at, approved_at: n.resolved_at, node_id: n.node_id,
-          links: Array.isArray(n.links) ? n.links.slice() : []
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
 
     pm.pending_decisions = nodes.filter(function(n) { return n.type === 'decision' && n.status === 'open'; })
       .map(function(n) {
+        var thread = cloneThread(n.meta?.thread);
         return {
           text: n.title, options: n.decision_options, source: n.source,
           insight_body: n.body, created_at: n.created_at, node_id: n.node_id,
-          links: Array.isArray(n.links) ? n.links.slice() : []
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
 
     pm.captures = nodes.filter(function(n) { return n.type === 'capture'; })
       .map(function(n) {
         var meta = n.meta || {};
+        var thread = cloneThread(meta.thread);
         return {
           id: n.node_id,
           entry_id: meta.bundle_id || n.capture_image || n.node_id,
@@ -344,24 +437,46 @@
             analysis_status: meta.analysis_status || '',
             preview_data: meta.preview_data || ''
           },
-          links: Array.isArray(n.links) ? n.links.slice() : []
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: meta.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
 
     pm.insights = nodes.filter(function(n) { return n.type === 'insight'; })
       .map(function(n) {
+        var thread = cloneThread(n.meta?.thread);
         return {
           title: n.title, body: n.body, next: n.next_action,
           confidence: n.confidence, created_at: n.created_at, node_id: n.node_id,
           source: n.source || '',
           triangulated: !!(n.meta && n.meta.triangulated),
           meta: n.meta || {},
-          links: Array.isArray(n.links) ? n.links.slice() : []
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
 
     pm.open_questions = nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; })
       .map(function(n) { return n.body || n.title; });
+    pm.open_question_nodes = nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; })
+      .map(function(n) {
+        var thread = cloneThread(n.meta?.thread);
+        return {
+          node_id: n.node_id,
+          title: n.title,
+          body: n.body || n.title,
+          created_at: n.created_at,
+          source: n.source || 'question',
+          links: Array.isArray(n.links) ? n.links.slice() : [],
+          thread: thread,
+          thread_depth: thread.length,
+          thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
+        };
+      });
 
     pm.clarity_score = computeClarityScore();
 
@@ -781,6 +896,7 @@
       window.localStorage?.removeItem(cacheKey + '_emergency');
       window.localStorage?.removeItem('structa.queue.v1');
     } catch (_) {}
+    memory.triangleSlot = null;
 
     var clearPromise = window.StructaStorage?.clear
       ? window.StructaStorage.clear().catch(function() { return []; })
@@ -1443,7 +1559,14 @@
   persist();
 
   window.StructaNative = Object.freeze({
-    getCapabilities: () => ({ hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), hasCamera: !!navigator.mediaDevices?.getUserMedia, hasPTT: true, hasScrollHardware: true, probeMode }),
+    getCapabilities: () => ({
+      hasSpeech: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+      hasCamera: !!navigator.mediaDevices?.getUserMedia,
+      hasPTT: true,
+      hasScrollHardware: true,
+      probeMode,
+      ...(window.__structaCaps || {})
+    }),
     getContext: () => router?.getContext?.() || null,
     routeAction: raw => router?.routeAction?.(raw) || { ok: false },
     setActiveVerb: (verb, target) => router?.setActiveVerb?.(verb, target),
@@ -1488,6 +1611,10 @@
     setProjectType,
     setUserRole,
     getActiveProject,
+    appendThreadComment,
+    setThreadCommentSummary,
+    getNodeThread,
+    getOpenQuestionNodes: function() { return JSON.parse(JSON.stringify(memory.projectMemory?.open_question_nodes || [])); },
     addVoiceEntry,
     appendToVoiceEntry,
     addNode,

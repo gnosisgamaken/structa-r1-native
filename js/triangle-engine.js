@@ -33,9 +33,21 @@
     if (!native?.setTriangleSlot) return;
     if (mode === 'armed' && armed) {
       native.setTriangleSlot({
+        mode: 'armed',
         armed: true,
         item: clone(armed),
         armedAt: armed.armedAt || nowIso()
+      });
+      return;
+    }
+    if (mode === 'synthesizing' && pair?.a && pair?.b) {
+      native.setTriangleSlot({
+        mode: 'synthesizing',
+        armed: false,
+        item: clone(pair.a),
+        pair: clone(pair),
+        jobId: queuedJobId || '',
+        status: status || 'synthesizing'
       });
       return;
     }
@@ -362,6 +374,7 @@
       timeoutMs: 8000
     });
     queuedJobId = jobId;
+    persistArmed();
     return Promise.resolve({ ok: true, queued: true, jobId: jobId });
   }
 
@@ -474,6 +487,7 @@
       updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
       const origin = clone(localPair.origin || {});
       clearRuntimeState();
+      window.StructaAudio?.cue?.('resolve');
       window.StructaLLM?.speakMilestone?.('triangle');
       emit('structa-triangle-result', {
         signal: signalArtifact.body,
@@ -522,7 +536,25 @@
 
   function init() {
     const slot = native?.getTriangleSlot?.();
-    if (slot && slot.armed && slot.item) {
+    if (slot?.mode === 'synthesizing' && slot?.pair?.a && slot?.pair?.b) {
+      const existingJob = queue?.snapshot?.().find(function(job) { return job.id === slot.jobId; });
+      if (existingJob) {
+        mode = 'synthesizing';
+        armed = clone(slot.item || slot.pair.a);
+        pair = clone(slot.pair);
+        status = slot.status || 'synthesizing';
+        lastError = '';
+        queuedJobId = slot.jobId || '';
+      } else if (slot.item) {
+        mode = 'armed';
+        armed = clone(slot.item);
+        pair = null;
+        status = 'armed';
+        lastError = '';
+      } else {
+        clearRuntimeState();
+      }
+    } else if (slot && slot.armed && slot.item) {
       mode = 'armed';
       armed = clone(slot.item);
       pair = null;

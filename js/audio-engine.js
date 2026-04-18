@@ -31,6 +31,12 @@
     bpmDown:   { freq: 600,  dur: 60,  gain: 0.08, sweep: 400 }
   };
 
+  const TONES = {
+    capture: { freq: 880, dur: 40, gain: 0.10 },
+    resolve: { freq: 660, dur: 30, gain: 0.09 },
+    blocker: { freq: 220, dur: 80, gain: 0.10 }
+  };
+
   function init() {
     if (initialized) return;
     try {
@@ -40,6 +46,7 @@
   }
 
   function tone(freq, duration, gainVal, startTime) {
+    init();
     if (!ctx || muted || !enabled) return;
     var now = startTime || ctx.currentTime;
     var osc = ctx.createOscillator();
@@ -54,6 +61,7 @@
   }
 
   function sweep(startFreq, endFreq, duration, gainVal) {
+    init();
     if (!ctx || muted || !enabled) return;
     var now = ctx.currentTime;
     var osc = ctx.createOscillator();
@@ -69,6 +77,7 @@
   }
 
   function heartbeat(phase) {
+    init();
     if (!ctx || muted || !enabled) return;
     var cfg = HEARTBEAT[phase];
     if (!cfg) return;
@@ -79,8 +88,8 @@
   }
 
   function play(soundName) {
-    if (!ctx || muted || !enabled) return;
     init();
+    if (!ctx || muted || !enabled) return;
     var cfg = SOUNDS[soundName];
     if (!cfg) return;
 
@@ -96,10 +105,22 @@
     }
   }
 
+  function playTone(freq, duration, gainVal) {
+    tone(freq, duration, typeof gainVal === 'number' ? gainVal : 0.10);
+  }
+
+  function cue(name) {
+    var cfg = TONES[name];
+    if (!cfg) return;
+    playTone(cfg.freq, cfg.dur, cfg.gain);
+  }
+
   window.StructaAudio = Object.freeze({
     init: init,
     heartbeat: heartbeat,
     play: play,
+    playTone: playTone,
+    cue: cue,
     mute: function() { muted = true; },
     unmute: function() { muted = false; },
     setEnabled: function(val) { enabled = !!val; },

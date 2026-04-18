@@ -95,11 +95,18 @@
     return run('/v1/project/title', envelope, executeLLM);
   }
 
+  function refineThread(payload, executeLLM) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
+    return run('/v1/thread/refine', envelope, executeLLM);
+  }
+
   window.StructaOrchestrator = Object.freeze({
     interpretVoice: interpretVoice,
     analyzeImage: analyzeImage,
     runChainStep: runChainStep,
     synthesizeTriangle: synthesizeTriangle,
-    titleProject: titleProject
+    titleProject: titleProject,
+    refineThread: refineThread
   });
 })();

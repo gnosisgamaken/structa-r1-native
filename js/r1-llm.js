@@ -31,6 +31,68 @@
   var dispatchTimer = null;
   var lastMilestoneSpeechAt = 0;
   var MILESTONE_COOLDOWN_MS = 6000;
+  var runtimeCaps = window.__structaCaps || {
+    hasBridge: typeof PluginMessageHandler !== 'undefined',
+    hasVoiceBridge: typeof CreationVoiceHandler !== 'undefined',
+    hasNativeCamera: false,
+    hasTone: !!window.StructaAudio?.playTone
+  };
+
+  function commitRuntimeCaps(next) {
+    runtimeCaps = Object.assign({}, runtimeCaps, next || {});
+    window.__structaCaps = Object.freeze(Object.assign({}, runtimeCaps));
+    return window.__structaCaps;
+  }
+
+  function probeCapabilities() {
+    var base = {
+      hasBridge: typeof PluginMessageHandler !== 'undefined',
+      hasVoiceBridge: typeof CreationVoiceHandler !== 'undefined',
+      hasNativeCamera: !!(window.r1?.camera?.capturePhoto),
+      hasTone: !!window.StructaAudio?.playTone,
+      nativeCapturePreferred: false
+    };
+    try {
+      var capabilityResponse = window.r1?.messaging?.getRuntimeCapabilities?.();
+      if (capabilityResponse && typeof capabilityResponse.then === 'function') {
+        capabilityResponse.then(function(value) {
+          var caps = Object.assign({}, base, value || {});
+          caps.nativeCapturePreferred = !!(caps.hasNativeCamera || caps.cameraCapture || window.r1?.camera?.capturePhoto);
+          commitRuntimeCaps(caps);
+        }).catch(function() {
+          commitRuntimeCaps(base);
+        });
+      } else if (capabilityResponse && typeof capabilityResponse === 'object') {
+        base = Object.assign(base, capabilityResponse);
+        base.nativeCapturePreferred = !!(base.hasNativeCamera || base.cameraCapture || window.r1?.camera?.capturePhoto);
+      }
+    } catch (_) {}
+    return commitRuntimeCaps(base);
+  }
+
+  function withTimeout(promise, timeoutMs, label) {
+    var settled = false;
+    return new Promise(function(resolve, reject) {
+      var timer = setTimeout(function() {
+        if (settled) return;
+        settled = true;
+        reject(new Error((label || 'request') + ' timed out'));
+      }, timeoutMs);
+      Promise.resolve(promise).then(function(value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      }).catch(function(error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
+  probeCapabilities();
 
   function getNextId() {
     requestId++;
@@ -46,7 +108,7 @@
       project_live: 'project live'
     };
     var text = STRINGS[kind];
-    if (!text || typeof PluginMessageHandler === 'undefined') return false;
+    if (!text || !runtimeCaps.hasBridge || typeof PluginMessageHandler === 'undefined') return false;
     var now = Date.now();
     if (now - lastMilestoneSpeechAt < MILESTONE_COOLDOWN_MS) return false;
     lastMilestoneSpeechAt = now;
@@ -476,6 +538,26 @@
     }, executePreparedLLM);
   }
 
+  function refineThreadComment(payload) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.refineThread) {
+      return Promise.resolve({ ok: false, summary: '' });
+    }
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = {
+      priority: 'low',
+      allowSearch: false,
+      allowSpeech: false
+    };
+    return withTimeout(
+      orchestrator.refineThread(envelope, executePreparedLLM),
+      12000,
+      'thread refine'
+    ).catch(function() {
+      return { ok: false, summary: '' };
+    });
+  }
+
   function query(question) {
     var context = buildProjectContext();
     var parts = context ? [context, '', question] : [question];
@@ -764,6 +846,7 @@
     executePreparedLLM: executePreparedLLM,
     processVoice: processVoice,
     processImage: processImage,
+    refineThreadComment: refineThreadComment,
     query: query,
     storeAsInsight: storeAsInsight,
     linkNode: linkNode,
@@ -771,6 +854,8 @@
     generateExport: generateExport,
     titleProject: titleProject,
     speakMilestone: speakMilestone,
+    probeCapabilities: probeCapabilities,
+    getCapabilities: function() { return window.__structaCaps || runtimeCaps; },
     resetHistory: resetHistory,
     get pendingCount() { return requestQueue.length + (activeRequest ? 1 : 0); },
     get pendingHighPriorityCount() {

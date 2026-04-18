@@ -34,6 +34,10 @@
   let analysisQueueTimer = null;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+  function getCaps() {
+    return window.__structaCaps || {};
+  }
+
   function lower(text) {
     return String(text || '').toLowerCase();
   }
@@ -280,6 +284,7 @@
         if (result && result.ok && result.clean) {
           const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture');
           applyAnalysisReady(payload, result, insightNode);
+          window.StructaAudio?.cue?.('resolve');
           native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell insight ready' : 'visual insight ready' });
           if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -390,6 +395,14 @@
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      if (getCaps().nativeCapturePreferred && window.r1?.camera?.capturePhoto) {
+        facingMode = target;
+        native?.setCameraFacing?.(facingMode);
+        setStatus('side click shoots');
+        showOverlay();
+        showOverlayReady();
+        return;
+      }
       setStatus('camera unavailable');
       return;
     }
@@ -573,21 +586,35 @@
   });
 
   async function capture() {
-    if (!preview || !stream) return null;
-    const w = preview.videoWidth || 720;
-    const h = preview.videoHeight || 720;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(preview, 0, 0, w, h);
     let dataUrl = '';
-    try {
-      dataUrl = canvas.toDataURL('image/png');
-    } catch (_) {
-      dataUrl = '';
+    let w = preview?.videoWidth || 720;
+    let h = preview?.videoHeight || 720;
+    if (preview && stream) {
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(preview, 0, 0, w, h);
+      try {
+        dataUrl = canvas.toDataURL('image/png');
+      } catch (_) {
+        dataUrl = '';
+      }
+    } else if (getCaps().nativeCapturePreferred && window.r1?.camera?.capturePhoto) {
+      try {
+        const nativeResult = await window.r1.camera.capturePhoto(240, 282);
+        const raw = typeof nativeResult === 'string'
+          ? nativeResult
+          : (nativeResult?.dataUrl || nativeResult?.imageBase64 || nativeResult?.base64 || '');
+        dataUrl = raw && raw.indexOf('data:image') === 0 ? raw : (raw ? ('data:image/png;base64,' + raw) : '');
+        w = nativeResult?.width || 240;
+        h = nativeResult?.height || 282;
+      } catch (_) {
+        dataUrl = '';
+      }
     }
     if (!dataUrl) {
       native?.appendLogEntry?.({ kind: 'camera', message: 'frame capture failed — try again' });
+      window.StructaAudio?.cue?.('blocker');
       window.StructaAudio?.play?.('error');
       window.dispatchEvent(new CustomEvent('structa-capture-failed'));
       return null;
@@ -604,7 +631,7 @@
     // Play capture sound
     if (window.StructaAudio) {
       window.StructaAudio.init();
-      window.StructaAudio.play('capture');
+      window.StructaAudio.cue?.('capture');
     }
 
     const imageAsset = {

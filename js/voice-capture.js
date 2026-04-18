@@ -35,6 +35,16 @@
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
   let activeTriangleContext = null; // { label }
+  const COMMAND_PRIORITY = {
+    'delete-project': 0,
+    'archive-project': 1,
+    'switch-project': 2,
+    'new-project': 3,
+    'set-type': 4,
+    'set-role': 5,
+    'export': 6,
+    'research': 7
+  };
 
   function lower(text) {
     return String(text || '').toLowerCase();
@@ -103,15 +113,20 @@
   ];
 
   function tryVoiceCommand(text) {
-    var lower = text.toLowerCase().trim();
-    for (var i = 0; i < VOICE_COMMANDS.length; i++) {
-      var cmd = VOICE_COMMANDS[i];
-      var match = lower.match(cmd.pattern);
-      if (!match) continue;
-      var arg = (match[1] || '').trim();
+    var spoken = text.toLowerCase().trim();
+    var matched = VOICE_COMMANDS.map(function(cmd) {
+      return { cmd: cmd, match: spoken.match(cmd.pattern) };
+    }).filter(function(entry) { return !!entry.match; })
+      .sort(function(a, b) {
+        return (COMMAND_PRIORITY[a.cmd.type] ?? 99) - (COMMAND_PRIORITY[b.cmd.type] ?? 99);
+      })[0];
+    if (!matched) return false;
+    var cmd = matched.cmd;
+    var match = matched.match;
+    var arg = (match[1] || '').trim();
 
-      switch (cmd.type) {
-        case 'research':
+    switch (cmd.type) {
+      case 'research':
           native?.appendLogEntry?.({ kind: 'voice', message: 'researching: ' + arg.slice(0, 40) });
           if (window.StructaLLM && window.StructaLLM.research) {
             window.StructaLLM.research(arg).then(function(result) {
@@ -127,7 +142,7 @@
           }));
           return true;
 
-        case 'export':
+      case 'export':
           native?.appendLogEntry?.({ kind: 'voice', message: 'exporting ' + arg });
           if (window.StructaLLM && window.StructaLLM.generateExport) {
             window.StructaLLM.generateExport(arg).then(function(result) {
@@ -139,7 +154,7 @@
           }
           return true;
 
-        case 'new-project':
+      case 'new-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'new project: ' + arg.slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'new-project', name: arg }
@@ -149,7 +164,7 @@
           }));
           return true;
 
-        case 'switch-project':
+      case 'switch-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'switch to: ' + arg.slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'switch-project', name: arg }
@@ -159,7 +174,7 @@
           }));
           return true;
 
-        case 'archive-project':
+      case 'archive-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'archive project: ' + (arg || 'active').slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'archive-project', name: arg }
@@ -169,7 +184,7 @@
           }));
           return true;
 
-        case 'delete-project':
+      case 'delete-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'delete project: ' + (arg || 'active').slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
             detail: { command: 'delete-project', name: arg }
@@ -179,18 +194,17 @@
           }));
           return true;
 
-        case 'set-type':
+      case 'set-type':
           if (native?.setProjectType) native.setProjectType(arg);
           native?.appendLogEntry?.({ kind: 'voice', message: 'project type: ' + arg });
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           return true;
 
-        case 'set-role':
+      case 'set-role':
           if (native?.setUserRole) native.setUserRole(arg);
           native?.appendLogEntry?.({ kind: 'voice', message: 'role set: ' + arg.slice(0, 30) });
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           return true;
-      }
     }
     return false;
   }
@@ -252,6 +266,20 @@
         itemId: project.project_id || project.id || ''
       },
       timeoutMs: 3000
+    });
+  }
+
+  function enqueueThreadRefine(payload) {
+    if (!queue || !payload?.nodeId || !payload?.commentId) return;
+    queue.enqueue({
+      kind: 'thread-refine',
+      priority: 'P2',
+      payload: payload,
+      origin: {
+        screen: payload.surface || 'know',
+        itemId: payload.nodeId
+      },
+      timeoutMs: 12000
     });
   }
 
@@ -343,6 +371,32 @@
         }
         window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         throw err;
+      });
+    });
+
+    queue.registerHandler('thread-refine', function(job) {
+      const payload = job.payload || {};
+      if (!payload.nodeId || !payload.commentId || !window.StructaLLM?.refineThreadComment) {
+        return { ok: false, stale: true };
+      }
+      return window.StructaLLM.refineThreadComment({
+        project: {
+          id: payload.projectId || '',
+          name: payload.projectName || 'untitled project',
+          type: payload.projectType || 'general',
+          brief: payload.projectBrief || '',
+          topQuestions: payload.topQuestions || [],
+          selectedSurface: payload.surface || 'know',
+          summary: payload.projectSummary || ''
+        },
+        selection: payload.selection || null,
+        input: {
+          transcript: payload.commentText || ''
+        }
+      }).then(function(result) {
+        const summary = (result && result.summary) || '';
+        if (summary) native?.setThreadCommentSummary?.(payload.nodeId, payload.commentId, summary);
+        return { ok: !!summary, summary: summary || payload.commentText || '' };
       });
     });
   }
@@ -451,6 +505,48 @@
         detail: { source: 'log-note' }
       }));
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      return;
+    }
+
+    if (buildContext && buildContext.kind === 'thread-comment') {
+      voiceTarget = null;
+      if (text.length < 3) return;
+      const appended = native?.appendThreadComment?.(
+        buildContext.nodeId,
+        text,
+        buildContext.commentKind || 'comment',
+        'ptt'
+      );
+      if (!appended || !appended.comment) return;
+      window.StructaAudio?.cue?.('resolve');
+      window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
+        detail: {
+          nodeId: buildContext.nodeId,
+          commentId: appended.comment.id,
+          comment: appended.comment,
+          surface: buildContext.surface || 'know'
+        }
+      }));
+      enqueueThreadRefine({
+        nodeId: buildContext.nodeId,
+        commentId: appended.comment.id,
+        commentText: text,
+        surface: buildContext.surface || 'know',
+        selection: {
+          kind: buildContext.surface || 'know',
+          id: buildContext.nodeId,
+          title: buildContext.title || '',
+          summary: buildContext.text || '',
+          status: 'open',
+          createdAt: buildContext.createdAt || ''
+        },
+        projectId: native?.getProjectMemory?.()?.project_id || '',
+        projectName: native?.getProjectMemory?.()?.name || 'untitled project',
+        projectType: native?.getProjectMemory?.()?.type || 'general',
+        projectBrief: native?.getProjectMemory?.()?.brief || '',
+        topQuestions: (native?.getProjectMemory?.()?.open_questions || []).slice(0, 3),
+        projectSummary: buildContext.projectSummary || ''
+      });
       return;
     }
 
@@ -633,7 +729,11 @@
       kind: context.kind || 'context',
       nodeId: context.nodeId || '',
       text: String(context.text || '').trim(),
-      surface: context.surface || 'tell'
+      surface: context.surface || 'tell',
+      title: context.title || '',
+      createdAt: context.createdAt || '',
+      commentKind: context.commentKind || 'comment',
+      projectSummary: context.projectSummary || ''
     } : null;
     if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
   }
@@ -681,6 +781,8 @@
       setStatus('answer mode');
     } else if (activeTriangleContext) {
       setStatus('triangle angle');
+    } else if (activeBuildContext && activeBuildContext.kind === 'thread-comment') {
+      setStatus('commenting');
     } else if (activeBuildContext && activeBuildContext.text) {
       setStatus('building ' + (activeBuildContext.surface || 'context'));
     }

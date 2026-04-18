@@ -80,6 +80,7 @@
   const onNextFrame = window.requestAnimationFrame
     ? window.requestAnimationFrame.bind(window)
     : function(callback) { return setTimeout(callback, 16); };
+  const debugMode = new URLSearchParams(window.location.search || '').get('debug') === '1';
   let renderScheduled = false;
   let logRefreshScheduled = false;
   let pendingLogRefreshOptions = {};
@@ -92,6 +93,39 @@
   let cachedCaptureList = { version: -1, projectId: '', value: [] };
   let cachedVoiceEntries = { version: -1, projectId: '', value: [] };
   let cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
+  let fpsMeterEl = null;
+
+  function startDebugFPSMeter() {
+    if (!debugMode || fpsMeterEl) return;
+    fpsMeterEl = document.createElement('div');
+    fpsMeterEl.setAttribute('aria-hidden', 'true');
+    fpsMeterEl.style.position = 'fixed';
+    fpsMeterEl.style.right = '8px';
+    fpsMeterEl.style.bottom = '8px';
+    fpsMeterEl.style.zIndex = '40';
+    fpsMeterEl.style.padding = '2px 6px';
+    fpsMeterEl.style.borderRadius = '8px';
+    fpsMeterEl.style.background = 'rgba(8,8,8,0.78)';
+    fpsMeterEl.style.color = '#f4efe4';
+    fpsMeterEl.style.fontFamily = 'PowerGrotesk-Regular, sans-serif';
+    fpsMeterEl.style.fontSize = '10px';
+    fpsMeterEl.style.letterSpacing = '0.02em';
+    fpsMeterEl.textContent = 'fps --';
+    document.body.appendChild(fpsMeterEl);
+    let last = performance.now();
+    let frames = 0;
+    function tick(now) {
+      frames += 1;
+      if (now - last >= 500) {
+        const fps = Math.round((frames * 1000) / (now - last));
+        fpsMeterEl.textContent = 'fps ' + fps;
+        frames = 0;
+        last = now;
+      }
+      onNextFrame(tick);
+    }
+    onNextFrame(tick);
+  }
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
@@ -196,6 +230,29 @@
       minute: '2-digit',
       hour12: false
     });
+  }
+
+  function cloneThread(thread) {
+    return Array.isArray(thread) ? thread.map(function(entry) {
+      return {
+        id: entry.id || '',
+        kind: entry.kind || 'comment',
+        body: String(entry.body || '').trim(),
+        summary: String(entry.summary || entry.body || '').trim(),
+        at: entry.at || '',
+        origin: entry.origin || 'ptt'
+      };
+    }) : [];
+  }
+
+  function threadDepth(thread) {
+    return cloneThread(thread).length;
+  }
+
+  function threadBars(depth) {
+    if (depth >= 3) return 3;
+    if (depth >= 1) return 2;
+    return 1;
   }
 
   function allowStagingFlush() {
@@ -534,6 +591,7 @@
       'image-analyze': 'analyzing frame',
       'project-title': 'titling project',
       'voice-interpret': 'interpreting voice',
+      'thread-refine': 'refining comment',
       'chain-step': 'running chain'
     }[job.kind] || lower(job.kind || 'queued work');
     const prefix = job.status === 'running' ? '▸ ' : '  ';
@@ -995,7 +1053,9 @@
 
   // --- KNOW_DETAIL ---
   stateEnterHandlers[STATES.KNOW_DETAIL] = function(data) {
-    stateData.knowItemIndex = data.itemIndex || 0;
+    stateData.knowItemIndex = typeof data?.itemIndex === 'number' ? data.itemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
+    stateData.knowBodyScrollTop = 0;
+    stateData.knowBodyMaxScroll = 0;
   };
 
   // --- KNOW_ANSWER ---
@@ -1102,8 +1162,9 @@
 
   function openNowNextMove() {
     const project = getProjectMemory();
-    const openQuestions = (project?.open_questions || []).map(function(question) {
-      return softenGuidedAsk(question);
+    const openQuestionNodes = project?.open_question_nodes || [];
+    const openQuestions = openQuestionNodes.map(function(question) {
+      return softenGuidedAsk(question?.body || question);
     });
     if (openQuestions.length) {
       voiceReturnState = STATES.NOW_BROWSE;
@@ -1389,6 +1450,10 @@
     const storedImpacts = project?.impact_chain || [];
     const blockerQuestion = queueBlocker?.body || projectCapNotice || openQuestions[0] || '';
     const blockerCount = pendingDecisions.length + openQuestions.length + (queueBlocker ? 1 : 0) + (projectCapNotice ? 1 : 0);
+    const activePendingDecision = pendingDecisions.length ? (pendingDecisions[decIdx] || pendingDecisions[0]) : null;
+    const activeQuestionNode = openQuestionNodes[0] || null;
+    const activeThread = activePendingDecision?.thread || activeQuestionNode?.thread || [];
+    const activeThreadSummary = activePendingDecision?.thread_summary || activeQuestionNode?.thread_summary || '';
 
     return {
       title: project?.name || 'new project',
@@ -1404,6 +1469,10 @@
       pendingDecisionText: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? pendingDecisions[0] : pendingDecisions[0].text) : null,
       pendingDecisionIndex: decIdx,
       pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
+      activePendingDecision: activePendingDecision,
+      activeQuestionNode: activeQuestionNode,
+      activeThreadSummary: activeThreadSummary,
+      activeThreadDepth: threadDepth(activeThread),
       blockerCount,
       blockerQuestion,
       queueBlocker,
@@ -1561,7 +1630,7 @@
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false }) => classify({
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth = 0, threadSummary = '' }) => classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
       body: lower(normalizeTinyText(body || '')),
@@ -1572,7 +1641,10 @@
       questionIndex,
       node_id: node_id || '',
       links: Array.isArray(links) ? links.slice() : [],
-      triangulated: !!triangulated
+      triangulated: !!triangulated,
+      thread: cloneThread(thread),
+      threadDepth: Math.max(0, Number(threadDepth || cloneThread(thread).length || 0)),
+      threadSummary: lower(normalizeTinyText(threadSummary || ''))
     });
 
     const questions = [];
@@ -1584,15 +1656,17 @@
     const captures = project?.captures || [];
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
-    const openQuestions = project?.open_questions || [];
+    const openQuestions = project?.open_question_nodes || [];
 
     // Questions lane
     openQuestions.slice(0, 5).forEach((question, index) => {
-      const guidedAsk = softenGuidedAsk(question);
+      const guidedAsk = softenGuidedAsk(question?.body || question);
+      const questionThread = cloneThread(question?.thread);
       questions.push(makeItem({
         lane: 'questions', title: index === 0 ? 'guided ask' : `guided ask ${index + 1}`, body: guidedAsk,
-        next: '', created_at: new Date().toISOString(),
-        source: 'question', chips: ['asks'], questionIndex: index
+        next: '', created_at: question?.created_at || new Date().toISOString(),
+        source: 'question', chips: ['asks'], questionIndex: index, node_id: question?.node_id || '', links: question?.links || [],
+        thread: questionThread, threadDepth: questionThread.length, threadSummary: question?.thread_summary || (questionThread[questionThread.length - 1]?.summary || '')
       }));
     });
 
@@ -1615,24 +1689,28 @@
     }
 
     insights.slice(0, 4).forEach((insight, index) => {
+      const insightThread = cloneThread(insight.thread);
       signals.push(makeItem({
         lane: 'signals', title: insight.title || `signal ${index + 1}`,
         body: insight.body || 'extracted',
         next: backlog[0]?.title || '',
         created_at: insight.created_at, source: insight.source || 'insight', chips: index < 2 ? ['latest'] : [],
         triangulated: !!insight.triangulated || lower(insight.source || '') === 'triangle',
-        node_id: insight.node_id, links: insight.links
+        node_id: insight.node_id, links: insight.links, thread: insightThread, threadDepth: insightThread.length,
+        threadSummary: insight.thread_summary || (insightThread[insightThread.length - 1]?.summary || '')
       }));
     });
 
     captures.slice(-4).reverse().forEach((capture, index) => {
+      const captureThread = cloneThread(capture.thread);
       signals.push(makeItem({
         lane: 'signals', title: capture.type === 'image' ? 'visual note' : 'capture',
         body: capture.summary || 'stored',
         next: backlog[0]?.title || '',
         created_at: capture.created_at,
         source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : [],
-        node_id: capture.node_id, links: capture.links
+        node_id: capture.node_id, links: capture.links, thread: captureThread, threadDepth: captureThread.length,
+        threadSummary: capture.thread_summary || (captureThread[captureThread.length - 1]?.summary || '')
       }));
     });
 
@@ -1640,11 +1718,13 @@
     decisions.slice(0, 5).forEach((decision, index) => {
       const decisionTitle = typeof decision === 'string' ? decision : (decision.title || `decision ${index + 1}`);
       const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'locked');
+      const decisionThread = cloneThread(decision.thread);
       decisionsLane.push(makeItem({
         lane: 'decisions', title: decisionTitle, body: decisionBody,
         next: backlog[0]?.title || '',
         created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : [],
-        node_id: decision.node_id, links: decision.links
+        node_id: decision.node_id, links: decision.links, thread: decisionThread, threadDepth: decisionThread.length,
+        threadSummary: decision.thread_summary || (decisionThread[decisionThread.length - 1]?.summary || '')
       }));
     });
 
@@ -1659,11 +1739,14 @@
 
     // Loops
     backlog.slice(0, 5).forEach((item, index) => {
+      const backlogThread = cloneThread(item.thread);
       loops.push(makeItem({
         lane: 'open loops', title: item.title || `task ${index + 1}`,
         body: item.body || item.state || 'open',
         next: item.title || '',
-        created_at: item.created_at, source: 'backlog', chips: ['branch']
+        created_at: item.created_at, source: 'backlog', chips: ['branch'], node_id: item.node_id || '', links: item.links || [],
+        thread: backlogThread, threadDepth: backlogThread.length,
+        threadSummary: item.thread_summary || (backlogThread[backlogThread.length - 1]?.summary || '')
       }));
     });
 
@@ -1871,13 +1954,90 @@
       mk('circle', {
         cx: x + (index * 8),
         cy: y,
-        r: 2,
-        fill: index === currentIndex ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.24)'
+        r: index === currentIndex ? 2 : 1.5,
+        fill: index === currentIndex ? 'rgba(8,8,8,0.88)' : 'transparent',
+        stroke: index === currentIndex ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.30)',
+        'stroke-width': index === currentIndex ? 0 : 1
       });
     }
   }
 
-  function drawKnowScrollFrame(textValue, frame, key) {
+  function escapeHtml(text) {
+    return String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function drawKnowDepthGlyph(depth, x, y, parent = svg) {
+    const bars = depth > 0 ? threadBars(depth) : 0;
+    const group = mk('g', {}, parent);
+    for (let index = 0; index < 3; index += 1) {
+      const active = index < bars;
+      mk('rect', {
+        x: x + (index * 5),
+        y: y + (6 - index * 2),
+        width: 3,
+        height: 6 + (index * 2),
+        rx: 1,
+        ry: 1,
+        fill: active ? 'rgba(248,193,93,0.88)' : 'rgba(8,8,8,0.14)',
+        opacity: depth > 0 ? '1' : '0.22',
+        stroke: active ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.10)',
+        'stroke-width': active ? 0.4 : 0
+      }, group);
+    }
+    return group;
+  }
+
+  function buildKnowFrameMarkup(item, detailMode) {
+    const thread = cloneThread(item?.thread);
+    const comments = detailMode ? thread : thread.slice(-1);
+    const kindLabel = item?.source === 'question' ? 'guided ask'
+      : item?.source === 'capture-image' ? 'visual note'
+      : item?.source === 'backlog' ? 'task'
+      : item?.source === 'decision' ? 'decision'
+      : item?.source === 'triangle' ? 'triangle signal'
+      : 'signal';
+    const body = escapeHtml(item?.body || 'no content yet').replace(/\n/g, '<br />');
+    const commentRows = comments.map(function(comment) {
+      return [
+        '<div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(8,8,8,0.10);">',
+        '<div style="font-size:10px; color:rgba(8,8,8,0.46); margin-bottom:4px;">',
+        escapeHtml(comment.kind || 'comment'),
+        ' · ',
+        escapeHtml(recentTimeLabel(comment.at)),
+        '</div>',
+        '<div style="font-size:12px; line-height:1.45; color:rgba(42,37,31,0.92);">',
+        escapeHtml(comment.body || comment.summary || '').replace(/\n/g, '<br />'),
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('');
+    const olderCount = detailMode && thread.length > 3 ? thread.length - 3 : 0;
+    return [
+      '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:8px;">',
+      '<div style="font-size:10px; color:rgba(138,132,122,1);">',
+      escapeHtml(kindLabel),
+      '</div>',
+      '<div style="font-size:10px; color:rgba(138,132,122,1); text-align:right; white-space:nowrap;">',
+      escapeHtml(formatTimeLabel(item?.created_at)),
+      '</div>',
+      '</div>',
+      '<div style="font-size:15px; line-height:1.2; font-weight:600; color:rgba(26,22,18,1); margin-bottom:8px;">',
+      escapeHtml(item?.title || 'untitled'),
+      '</div>',
+      '<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
+      body,
+      '</div>',
+      commentRows,
+      olderCount > 0 ? '<div style="margin-top:8px; font-size:10px; color:rgba(8,8,8,0.42);">+ ' + olderCount + ' older</div>' : ''
+    ].join('');
+  }
+
+  function drawKnowScrollFrame(content, frame, key) {
     const frameGroup = mk('g');
     mk('rect', {
       x: frame.x,
@@ -1906,16 +2066,18 @@
     const scroller = document.createElement('div');
     scroller.style.height = '100%';
     scroller.style.overflowY = 'auto';
-    scroller.style.padding = '0 14px 24px 0';
+    scroller.style.padding = '12px 12px 24px 12px';
     scroller.style.color = 'rgba(8,8,8,0.88)';
     scroller.style.fontFamily = 'PowerGrotesk-Regular, sans-serif';
-    scroller.style.fontSize = '12px';
+    scroller.style.fontSize = '13px';
     scroller.style.lineHeight = '1.45';
     scroller.style.textTransform = 'lowercase';
-    scroller.style.whiteSpace = 'pre-wrap';
+    scroller.style.whiteSpace = 'normal';
     scroller.style.wordBreak = 'normal';
     scroller.style.overflowWrap = 'anywhere';
-    scroller.textContent = lower(textValue || 'no content yet');
+    scroller.innerHTML = typeof content === 'string'
+      ? ('<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94);">' + escapeHtml(lower(content || 'no content yet')).replace(/\n/g, '<br />') + '</div>')
+      : (content?.html || '<div>no content yet</div>');
 
     const track = document.createElement('div');
     track.style.position = 'absolute';
@@ -1941,13 +2103,14 @@
     fade.style.left = '0';
     fade.style.right = '6px';
     fade.style.bottom = '0';
-    fade.style.height = '8px';
-    fade.style.background = 'linear-gradient(to bottom, rgba(248,193,93,0), rgba(248,193,93,0.96))';
+    fade.style.height = '6px';
+    fade.style.background = 'linear-gradient(to bottom, rgba(244,239,228,0), rgba(244,239,228,1))';
     fade.style.pointerEvents = 'none';
     fade.style.display = 'none';
 
     function updateIndicators() {
       const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      stateData.knowBodyMaxScroll = maxScroll;
       const needsOverflow = maxScroll > 6;
       track.style.display = needsOverflow ? 'block' : 'none';
       fade.style.display = needsOverflow && scroller.scrollTop < maxScroll - 2 ? 'block' : 'none';
@@ -2271,7 +2434,7 @@
     });
   }
 
-  function drawSurfaceHeader(card) {
+  function drawSurfaceHeader(card, options = {}) {
     const project = getProjectMemory();
     if (recordingActive() && activeSurface() !== 'home') {
       recordingDot(23, 26, 10, svg);
@@ -2285,11 +2448,13 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '32', 'letter-spacing': '0.0em'
     });
-    text(14, 58, compactProjectName(projectDisplayName(project)), {
-      fill: 'rgba(8,8,8,0.52)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '12'
-    });
+    if (!options.hideSubtitle) {
+      text(14, 58, compactProjectName(projectDisplayName(project)), {
+        fill: 'rgba(8,8,8,0.52)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+    }
   }
 
   function drawCard(card, index) {
@@ -2521,7 +2686,10 @@
       analysisReady: current ? captureAnalysisReady(current) : false,
       analysisState: lower(current?.meta?.analysis_status || ''),
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null,
-      pendingQueueCount: getPendingCaptureQueueCount()
+      pendingQueueCount: getPendingCaptureQueueCount(),
+      thread: cloneThread(current?.thread),
+      threadDepth: current?.thread_depth || threadDepth(current?.thread),
+      threadSummary: current?.thread_summary || ''
     };
   }
 
@@ -2576,6 +2744,10 @@
         'font-size': '10'
       });
       wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : 'processing visual note', 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      if (model.threadSummary) {
+        wrapTextBlock(undefined, 'comment · ' + lower(model.threadSummary).slice(0, 42), 22, 204, 172, 10, 'rgba(244,239,228,0.78)', '9', 1);
+        drawKnowDepthGlyph(model.threadDepth || 0, 204, 202);
+      }
       if (!model.analysisReady) {
         text(210, 129, 'processing', {
           fill: 'rgba(244,239,228,0.88)',
@@ -2665,7 +2837,7 @@
 
     const showFooter = model.pendingQueueCount > 0
       ? `${model.pendingQueueCount} queued · keep open`
-      : (model.captures.length ? (model.analysisReady ? 'queue clear' : 'processing latest frame') : 'ready to capture');
+      : (model.captures.length ? 'hold ptt · comment' : 'ready to capture');
     text(226, 276, showFooter, {
       fill: 'rgba(8,8,8,0.38)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2687,7 +2859,10 @@
       currentIndex: safeIndex,
       insights: (project?.insights || []).length,
       questions: (project?.open_questions || []).length,
-      status: stateData.tellStatus || (entries.length ? 'ready' : 'empty')
+      status: stateData.tellStatus || (entries.length ? 'ready' : 'empty'),
+      thread: cloneThread(current?.meta?.thread || current?.thread),
+      threadDepth: current?.meta?.thread?.length || current?.thread_depth || threadDepth(current?.thread),
+      threadSummary: current?.meta?.thread_summary || current?.thread_summary || ''
     };
   }
 
@@ -2752,6 +2927,87 @@
       text: data.blockerQuestion || data.next || '',
       surface: 'now'
     };
+  }
+
+  function buildTellCommentContext() {
+    const entries = getVoiceEntries();
+    const idx = Math.max(0, Math.min(stateData.tellEntryIndex || 0, Math.max(entries.length - 1, 0)));
+    const entry = entries[idx];
+    if (!entry?.node_id) return null;
+    return {
+      kind: 'thread-comment',
+      nodeId: entry.node_id,
+      title: entry.title || 'voice note',
+      text: entry.body || entry.title || '',
+      surface: 'tell',
+      createdAt: entry.created_at || '',
+      commentKind: 'comment',
+      projectSummary: buildNowSummary().next || ''
+    };
+  }
+
+  function buildShowCommentContext() {
+    const summary = buildShowSummary();
+    const capture = summary.current;
+    if (!capture?.node_id) return null;
+    return {
+      kind: 'thread-comment',
+      nodeId: capture.node_id,
+      title: capture.summary || 'visual note',
+      text: [capture.summary || '', capture.voice_annotation || ''].filter(Boolean).join(' · '),
+      surface: 'show',
+      createdAt: capture.created_at || capture.captured_at || '',
+      commentKind: 'comment',
+      projectSummary: buildNowSummary().next || ''
+    };
+  }
+
+  function buildKnowCommentContext() {
+    const model = buildKnowModel();
+    const items = getKnowVisibleItems(model);
+    const idx = Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)));
+    const item = items[idx];
+    if (!item?.node_id) return null;
+    return {
+      kind: 'thread-comment',
+      nodeId: item.node_id,
+      title: item.title || item.source || 'know item',
+      text: [item.title || '', item.body || ''].join(' ').trim(),
+      surface: 'know',
+      createdAt: item.created_at || '',
+      commentKind: item.source === 'question' ? 'clarification' : 'comment',
+      projectSummary: buildNowSummary().next || ''
+    };
+  }
+
+  function buildNowCommentContext() {
+    const data = buildNowSummary();
+    const currentDecision = data.activePendingDecision;
+    if (currentDecision?.node_id) {
+      return {
+        kind: 'thread-comment',
+        nodeId: currentDecision.node_id,
+        title: currentDecision.text || 'decision',
+        text: ((currentDecision.text || '') + ' ' + (currentDecision.insight_body || '')).trim(),
+        surface: 'now',
+        createdAt: currentDecision.created_at || '',
+        commentKind: 'decision_note',
+        projectSummary: data.next || ''
+      };
+    }
+    if (data.activeQuestionNode?.node_id) {
+      return {
+        kind: 'thread-comment',
+        nodeId: data.activeQuestionNode.node_id,
+        title: 'guided ask',
+        text: data.activeQuestionNode.body || '',
+        surface: 'now',
+        createdAt: data.activeQuestionNode.created_at || '',
+        commentKind: 'clarification',
+        projectSummary: data.next || ''
+      };
+    }
+    return null;
   }
 
   function buildShowTriangleItem() {
@@ -2963,6 +3219,14 @@
         'text-anchor': 'end'
       });
       wrapTextBlock(undefined, lower(model.current.body || model.current.title || 'voice saved').slice(0, 180), 20, 110, 186, 13, 'rgba(8,8,8,0.96)', '13', 4);
+      if (model.threadSummary) {
+        text(20, 158, 'comment · ' + lower(model.threadSummary).slice(0, 30), {
+          fill: 'rgba(8,8,8,0.48)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+        drawKnowDepthGlyph(model.threadDepth || 0, 206, 150);
+      }
     } else {
       const project = getProjectMemory();
       const openQ = (project?.open_questions || [])[0] || '';
@@ -3024,7 +3288,7 @@
         render();
       });
     });
-    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt builds' : 'hold ptt builds', {
+    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt comments' : 'hold ptt comments', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -3126,9 +3390,17 @@
 
       const displayText = String(pdText || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const titleRows = wrapTextBlock(undefined, lower(displayText.slice(0, 118)), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 5);
+      if (data.activeThreadSummary) {
+        text(18, boxY + 26 + (titleRows * 13) + 6, 'comment · ' + lower(data.activeThreadSummary).slice(0, 34), {
+          fill: 'rgba(8,8,8,0.44)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+        drawKnowDepthGlyph(data.activeThreadDepth || 0, 204, boxY + 20 + (titleRows * 13));
+      }
 
       if (pdOptions.length >= 2) {
-        const slabY = boxY + 26 + (titleRows * 13) + 10;
+        const slabY = boxY + 26 + (titleRows * 13) + (data.activeThreadSummary ? 20 : 10);
         pdOptions.slice(0, 3).forEach((opt, i) => {
           const slabTop = slabY + (i * 22);
           const isSelected = stateData.selectedOption === i;
@@ -3188,7 +3460,15 @@
       mk('rect', { x: 14, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
-      const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + 16);
+      if (data.activeThreadSummary) {
+        text(20, boxY + 46 + blockerRows * 14, 'comment · ' + lower(data.activeThreadSummary).slice(0, 36), {
+          fill: 'rgba(8,8,8,0.44)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+        drawKnowDepthGlyph(data.activeThreadDepth || 0, 204, boxY + 38 + blockerRows * 14);
+      }
+      const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + (data.activeThreadSummary ? 28 : 16));
       if (!data.projectCapNotice) {
         mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
         text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
@@ -3260,7 +3540,7 @@
     const item = items[safeItemIdx] || lane.items[0];
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
-    drawSurfaceHeader(knowCard);
+    drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
     if (onboardingActive() && getOnboardingStep() === 4) {
       mk('rect', { x: 10, y: 84, width: 220, height: 152, rx: 12, fill: 'rgba(8,8,8,0.12)' });
@@ -3283,142 +3563,130 @@
       });
       return;
     }
-
-    // Touchable lane tabs
+    const LAYOUT = { top: 74, tabsH: 22, branchH: 20, dotsH: 12, footerH: 18, gap: 8 };
+    const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [
-      { id: 'questions', label: 'asks', width: 44 },
-      { id: 'signals', label: 'signals', width: 52 },
-      { id: 'decisions', label: 'decisions', width: 62 },
-      { id: 'open loops', label: 'tasks', width: 42 }
+      { id: 'questions', label: 'asks', width: 42 },
+      { id: 'signals', label: 'signals', width: 48 },
+      { id: 'decisions', label: 'decided', width: 54 },
+      { id: 'open loops', label: 'loops', width: 42 }
     ];
     let tabX = 14;
     laneTabs.forEach((tab, i) => {
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: 82, width: tab.width, height: 22, rx: 6, ry: 6,
+        x: tabX, y: LAYOUT.top, width: tab.width, height: LAYOUT.tabsH, rx: 6, ry: 6,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: 82 + 22 / 2 + 4,
+        x: tabX + tab.width / 2, y: LAYOUT.top + 15,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '12', 'text-anchor': 'middle'
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11', 'text-anchor': 'middle'
       }, pillGroup);
       tabText.textContent = lower(tab.label);
-
       pillGroup.addEventListener('pointerup', (e) => {
         e.preventDefault();
         e.stopPropagation();
         stateData.knowLaneIndex = i;
         stateData.knowItemIndex = 0;
+        stateData.knowBodyScrollTop = 0;
         const newLane = model.lanes[i];
         const activeChip = model.chips[stateData.knowChipIndex]?.id;
-        const hasChipItems = newLane?.items?.some(item => item.chips.includes(activeChip));
+        const hasChipItems = newLane?.items?.some(function(entry) { return entry.chips.includes(activeChip); });
         if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
         render();
       });
-
-      tabX += tab.width + 4;
+      tabX += tab.width + 6;
     });
 
-    // Filter chips row - touchable
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
     const showChipRow = lane.id === 'signals' && activeChips.length > 1;
-    const chipY = 112;
+    let contentCursorY = LAYOUT.top + LAYOUT.tabsH + LAYOUT.gap;
     if (showChipRow) {
       let chipX = 14;
       activeChips.forEach((c) => {
         const realIndex = model.chips.indexOf(c);
         const isActive = realIndex === safeChipIdx;
-        const chipWidth = Math.max(40, c.label.length * 7 + 16);
+        const chipWidth = Math.max(38, c.label.length * 6 + 16);
         const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
         mk('rect', {
-          x: chipX, y: chipY, width: chipWidth, height: 18, rx: 5, ry: 5,
-          fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.12)',
+          x: chipX, y: contentCursorY, width: chipWidth, height: LAYOUT.branchH, rx: 6, ry: 6,
+          fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.10)',
           stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
         }, chipGroup);
         const chipText = mk('text', {
-          x: chipX + chipWidth / 2, y: chipY + 13,
+          x: chipX + chipWidth / 2, y: contentCursorY + 13,
           fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
         }, chipGroup);
         chipText.textContent = lower(c.label);
-
         chipGroup.addEventListener('pointerup', (e) => {
           e.preventDefault();
           e.stopPropagation();
           stateData.knowChipIndex = realIndex;
           stateData.knowItemIndex = 0;
+          stateData.knowBodyScrollTop = 0;
           render();
         });
-
-        chipX += chipWidth + 4;
+        chipX += chipWidth + 6;
       });
+      contentCursorY += LAYOUT.branchH + LAYOUT.gap;
     }
 
-    const detailMode = currentState === STATES.KNOW_DETAIL;
-    const contentY = showChipRow ? 120 : 104;
-    const titleText = normalizeTinyText(item.title || lane.label || 'untitled');
-    const contextLabel = item.source === 'question' ? 'guided ask'
-      : item.source === 'insight' ? 'signal'
-      : item.source === 'triangle' ? 'triangle signal'
-      : item.source === 'capture-image' ? 'visual note'
-      : item.source === 'decision' ? 'decision'
-      : item.source === 'backlog' ? 'task'
-      : lane.label;
-    const titleWidth = items.length > 1 ? 150 : 176;
-    const titleRows = wrapTextBlock(undefined, lower(titleText), 14, contentY, titleWidth, 16, 'rgba(8,8,8,0.96)', '16', 2);
     const dotsCount = Math.min(Math.max(1, items.length || 1), 6);
     const dotsIndex = Math.min(safeItemIdx, dotsCount - 1);
     const dotsWidth = dotsCount > 1 ? ((dotsCount - 1) * 8) : 0;
     if (dotsCount > 1) {
-      drawKnowItemDots(dotsCount, dotsIndex, 226 - dotsWidth - 4, contentY + 4);
+      drawKnowItemDots(dotsCount, dotsIndex, 226 - dotsWidth - 6, contentCursorY + 4);
     }
-    text(226, contentY + 22, formatTimeLabel(item.created_at), {
-      fill: 'rgba(8,8,8,0.42)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'end'
-    });
-    if (item.triangulated) {
-      text(188, contentY + 22, '▼', {
+    contentCursorY += LAYOUT.dotsH + LAYOUT.gap;
+
+    const frame = {
+      x: 14,
+      y: contentCursorY,
+      width: 212,
+      height: Math.max(84, 282 - contentCursorY - LAYOUT.footerH - LAYOUT.gap)
+    };
+
+    const nextText = lower(String(item?.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+    const html = buildKnowFrameMarkup({
+      ...item,
+      body: detailMode && nextText && nextText !== 'review this'
+        ? ((item?.body || 'no content yet') + '\n\nnext move\n' + nextText)
+        : (item?.body || 'no content yet')
+    }, detailMode);
+    drawKnowScrollFrame({ html: html }, frame, `${currentState}:${lane.id}:${safeChipIdx}:${safeItemIdx}:${item?.node_id || item?.created_at || ''}:${item?.threadDepth || 0}`);
+
+    if (item?.triangulated) {
+      text(frame.x + frame.width - 38, contentCursorY - 2, '▼', {
         fill: 'rgba(8,8,8,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
     }
-
-    const metaY = contentY + (titleRows * 16) + 4;
-    drawSectionLabel(undefined, 14, metaY, contextLabel);
-
-    const nextText = lower(String(item.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    let bodyText = normalizeTinyText(item.body || 'no content yet');
-    if (detailMode && nextText && nextText !== 'review this') {
-      bodyText = `${bodyText}\n\nnext move\n${nextText}`;
+    drawKnowDepthGlyph(item?.threadDepth || 0, frame.x + frame.width - 22, frame.y + frame.height - 16);
+    if (!(item?.threadDepth > 0) && !getUIState().depth_chevron_seen) {
+      const chevron = text(frame.x + frame.width - 16, frame.y + frame.height - 30, '⌄', {
+        fill: 'rgba(8,8,8,0.28)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      mk('animateTransform', {
+        attributeName: 'transform',
+        type: 'translate',
+        values: '0 0;0 3;0 0',
+        dur: '0.52s',
+        repeatCount: '1'
+      }, chevron);
     }
 
-    const frameY = metaY + 14;
-    const frameBottom = detailMode ? 252 : 248;
-    const frame = {
-      x: 14,
-      y: frameY,
-      width: 212,
-      height: Math.max(76, frameBottom - frameY)
-    };
-    drawKnowScrollFrame(bodyText, frame, `${currentState}:${lane.id}:${safeChipIdx}:${safeItemIdx}:${item.node_id || item.created_at || ''}`);
-
     if (!detailMode) {
-      const titleTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', {
-        x: 10,
-        y: contentY - 10,
-        width: 220,
-        height: Math.max(38, metaY - contentY + 16),
-        fill: 'transparent'
-      }, titleTap);
-      titleTap.addEventListener('pointerup', function(e) {
+      const frameTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x: frame.x, y: frame.y, width: frame.width, height: frame.height, rx: 10, ry: 10, fill: 'transparent' }, frameTap);
+      frameTap.addEventListener('pointerup', function(e) {
         e.preventDefault();
         e.stopPropagation();
         transition(STATES.KNOW_DETAIL);
@@ -3428,9 +3696,7 @@
     const footerLeft = `${Math.min(safeItemIdx + 1, Math.max(items.length, 1))} of ${Math.max(items.length, 1)}`;
     const footerRight = onboardingActive() && getOnboardingStep() === 3
       ? 'scroll once'
-      : (!detailMode
-          ? 'click · detail'
-          : (item.source === 'question' ? 'hold ptt · answer' : 'hold ptt · reflect'));
+      : (!detailMode ? 'click · detail' : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · comment'));
     text(14, 276, footerLeft, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3557,7 +3823,19 @@
         const model = buildKnowModel();
         const items = getKnowVisibleItems(model);
         if (!items.length) break;
+        const maxScroll = Math.max(0, Number(stateData.knowBodyMaxScroll || 0));
+        const currentScroll = Math.max(0, Number(stateData.knowBodyScrollTop || 0));
+        if (maxScroll > 6) {
+          const nextScroll = Math.max(0, Math.min(maxScroll, currentScroll + (direction > 0 ? 36 : -36)));
+          if (nextScroll !== currentScroll) {
+            stateData.knowBodyScrollTop = nextScroll;
+            render();
+            break;
+          }
+        }
         stateData.knowItemIndex = (stateData.knowItemIndex + (direction > 0 ? 1 : -1) + items.length) % items.length;
+        stateData.knowBodyScrollTop = 0;
+        stateData.knowBodyMaxScroll = 0;
         render();
         break;
       }
@@ -3830,27 +4108,26 @@
       }
 
       case STATES.TELL_BROWSE:
+        if (!buildTellCommentContext()) break;
         voiceReturnState = STATES.TELL_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'listening',
+          tellStatus: 'commenting',
           inlinePTTSurface: 'tell',
-          buildContext: buildTellVoiceContext()
+          buildContext: buildTellCommentContext()
         });
         break;
 
       case STATES.SHOW_BROWSE:
-        if (!captureAnalysisReady(buildShowSummary().current)) {
-          pushLog('wait for visual note', 'camera');
-          window.StructaAudio?.play?.('error');
+        if (!buildShowCommentContext()) {
           break;
         }
         voiceReturnState = STATES.SHOW_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'reprompt frame',
+          tellStatus: 'commenting',
           inlinePTTSurface: 'show',
-          buildContext: buildShowVoiceContext()
+          buildContext: buildShowCommentContext()
         });
         break;
 
@@ -3877,6 +4154,13 @@
             answeringQuestion: { index: 0, text: openQuestions[0] },
             fromPTT: true,
             inlinePTTSurface: 'project'
+          });
+        } else if (buildNowCommentContext()) {
+          transition(STATES.VOICE_OPEN, {
+            fromPTT: true,
+            tellStatus: 'commenting',
+            inlinePTTSurface: 'project',
+            buildContext: buildNowCommentContext()
           });
         } else {
           transition(STATES.VOICE_OPEN, {
@@ -3910,12 +4194,13 @@
         break;
 
       case STATES.KNOW_BROWSE:
+        if (!buildKnowCommentContext()) break;
         voiceReturnState = STATES.KNOW_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'ask know',
+          tellStatus: 'commenting',
           inlinePTTSurface: 'insight',
-          buildContext: buildKnowVoiceContext()
+          buildContext: buildKnowCommentContext()
         });
         break;
 
@@ -3926,12 +4211,13 @@
         if (item && item.source === 'question' && item.questionIndex !== undefined) {
           transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
         } else {
+          if (!buildKnowCommentContext()) break;
           voiceReturnState = STATES.KNOW_DETAIL;
           transition(STATES.VOICE_OPEN, {
             fromPTT: true,
-            tellStatus: 'ask know',
+            tellStatus: 'commenting',
             inlinePTTSurface: 'insight',
-            buildContext: buildKnowVoiceContext()
+            buildContext: buildKnowCommentContext()
           });
         }
         break;
@@ -4232,6 +4518,20 @@
       window.StructaImpactChain.start(2);
     }
   });
+  window.addEventListener('structa-thread-comment-appended', function(event) {
+    const detail = event?.detail || {};
+    const count = Number(getUIState().depth_comment_count || 0) + 1;
+    native?.updateUIState?.({
+      depth_comment_count: count,
+      depth_chevron_seen: count >= 3
+    });
+    if ((currentState === STATES.KNOW_BROWSE || currentState === STATES.KNOW_DETAIL) && detail.nodeId) {
+      stateData.knowBodyScrollTop = 99999;
+      render();
+    } else {
+      scheduleRender();
+    }
+  });
   window.addEventListener('structa-log-updated', () => {
     scheduleLogRefresh();
     updateLogOps();
@@ -4243,6 +4543,15 @@
       updateLogOps();
       scheduleRender();
     });
+  });
+  window.addEventListener('structa-queue-resolved', function(event) {
+    const kind = event?.detail?.job?.kind || '';
+    if (kind === 'triangle-synthesize' || kind === 'image-analyze') {
+      window.StructaAudio?.cue?.('resolve');
+    }
+  });
+  window.addEventListener('structa-queue-blocked', function() {
+    window.StructaAudio?.cue?.('blocker');
   });
 
   window.addEventListener('structa-triangle-copied', function(event) {
@@ -4401,6 +4710,7 @@
   syncQueueBlockers();
   refreshLogFromMemory();
   updateLogOps();
+  startDebugFPSMeter();
   renderNow();
   maybeStartHeartbeat();
 

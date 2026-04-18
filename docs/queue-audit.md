@@ -1,36 +1,46 @@
 # structa queue audit
 
-This audit captures every user-facing async orchestration path before the queued-processing refactor.
+This audit reflects the current post-refactor state.
 
-## current async entry points
+## queued async entry points
 
-| file | call | current trigger | current behavior | target tier |
+| file | call | trigger | tier | instant write before queue |
 | --- | --- | --- | --- | --- |
-| `js/voice-capture.js` | `window.StructaLLM.processVoice()` | `stopListening()` after `hold ptt` release | transcript is stored immediately, then voice interpretation starts in the same feature path | `P1` |
-| `js/voice-capture.js` | `window.StructaLLM.titleProject()` | onboarding answer / first meaningful voice note | project naming runs as a follow-up async request | `P2` |
-| `js/camera-capture.js` | `window.StructaLLM.processImage()` | capture stored, then local drain loop | preview lands instantly, analysis is backgrounded by a local retry scheduler | `P1` |
-| `js/triangle-engine.js` | `window.StructaOrchestrator.synthesizeTriangle(..., executePreparedLLM)` | triangle angle submitted | overlay waits on direct synthesis promise | `P0` |
-| `js/impact-chain-engine.js` | `window.StructaOrchestrator.runChainStep(..., executePreparedLLM)` | autonomous beat / discovery / clarify / evaluate | chain calls run directly from beat callbacks | `P3` |
-| `js/r1-llm.js` | `speakMilestone()` | milestone events | direct tts side-channel, already cooled down | bypass |
+| `js/voice-capture.js` | `/v1/voice/interpret` via `voice-interpret` job | `hold ptt` release on normal voice input | `P1` | yes — transcript stored as voice entry first |
+| `js/voice-capture.js` | `/v1/project/title` via `project-title` job | onboarding answer / first naming pass | `P2` | yes — project exists immediately, title follows |
+| `js/voice-capture.js` | `/v1/thread/refine` via `thread-refine` job | content comment appended | `P2` | yes — raw comment appended to thread first |
+| `js/camera-capture.js` | `/v1/image/analyze` via `image-analyze` job | capture stored / queue drain | `P1` | yes — frame + preview stored first |
+| `js/triangle-engine.js` | `/v1/triangle/synthesize` via `triangle-synthesize` job | triangle angle release | `P0` | yes — overlay state updates first |
+| `js/impact-chain-engine.js` | `/v1/chain/step` via `chain-step` job | autonomous beat | `P3` | yes — chain state advances without blocking gesture paths |
+| `js/r1-llm.js` | `speakMilestone()` | milestone events | bypass | n/a |
 
-## current bottlenecks
+## gesture-path result
 
-- feature modules each schedule their own async work
-- image analysis uses a local drain loop separate from voice and chain
-- chain work only yields to `StructaLLM.pendingHighPriorityCount`, not to other feature queues
-- log ops cannot show a true serialized work queue because there is no shared queue snapshot
-- app restart can preserve pending capture state, but not one shared orchestrator queue
+There are no intentional synchronous LLM / vision calls on these user gesture paths:
 
-## refactor goal
+- `sideClick`
+- `double-side`
+- `longPressStart`
+- `longPressEnd`
+- `scrollUp`
+- `scrollDown`
+- `devicemotion`
+- `visibilitychange`
 
-Move all LLM / vision / synthesis feature work onto one persisted queue:
+Every one of those paths now favors:
 
-- instant layer:
-  - capture / transcript / navigation / animation finish in one frame
-  - memory gets the raw artifact immediately
-- queued layer:
-  - one serialized worker
-  - persisted pending jobs
-  - visible queue state
-  - blocked jobs surface back into `now`
+1. immediate UI feedback
+2. immediate local memory write when applicable
+3. queued async enrichment after the frame returns
 
+## persistence / recovery
+
+- queue state persists to `structa.queue.v1`
+- pending jobs restore on boot
+- stale `inFlight` jobs become `blocked`
+- blocked jobs surface into `now` as retry / skip blockers
+
+## known limits
+
+- device verification is still required for final publish confidence
+- queue persistence is local-first; there is no server-side retry ledger

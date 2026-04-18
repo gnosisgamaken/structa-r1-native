@@ -459,6 +459,67 @@ def triangle_normalize(payload):
     }
 
 
+def thread_refine_prepare(payload):
+    project = payload.get("project") or {}
+    selection = payload.get("selection") or {}
+    input_data = payload.get("input") or {}
+    transcript = compact(input_data.get("transcript") or "", 240)
+
+    lines = [
+        "You are Structa, condensing one project comment.",
+        "Return only one lowercase summary line.",
+        "Keep the user's intent. No punctuation unless necessary.",
+        "",
+        "PROJECT",
+    ] + build_project_lines(project)
+
+    selection_lines = build_selection_lines(selection)
+    if selection_lines:
+        lines.extend(["", "ITEM"] + selection_lines)
+
+    lines.extend([
+        "",
+        "COMMENT",
+        transcript,
+        "",
+        "Return exactly:",
+        "SUMMARY: <one line, max 8 words>",
+    ])
+
+    return {
+        "ok": True,
+        "llm": {
+            "prompt": "\n".join(lines),
+            "timeout": 12000,
+            "priority": payload.get("policy", {}).get("priority", "low"),
+        },
+        "ui": {
+            "summary": "comment refining",
+            "logLine": "comment refining",
+        },
+        "meta": {
+            "kind": "thread-refine",
+        },
+    }
+
+
+def thread_refine_normalize(payload):
+    raw = compact(payload.get("rawResponse") or "", 72).lower()
+    parsed = parse_labeled_lines(raw)
+    summary = compact(parsed.get("SUMMARY") or raw or "", 72)
+    return {
+        "ok": True,
+        "summary": summary,
+        "ui": {
+            "summary": summary,
+            "logLine": "comment refined",
+        },
+        "meta": {
+            "kind": "thread-refine",
+        },
+    }
+
+
 def project_title_prepare(payload):
     transcript = compact(payload.get("transcript") or ((payload.get("input") or {}).get("transcript")) or "", 240)
     project = payload.get("project") or {}
@@ -539,6 +600,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             "/v1/image/analyze": (image_prepare, image_normalize),
             "/v1/chain/step": (chain_prepare, chain_normalize),
             "/v1/triangle/synthesize": (triangle_prepare, triangle_normalize),
+            "/v1/thread/refine": (thread_refine_prepare, thread_refine_normalize),
             "/v1/project/title": (project_title_prepare, project_title_normalize),
         }
         handler = handlers.get(parsed.path)

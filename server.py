@@ -293,6 +293,7 @@ def image_prepare(payload):
     input_data = payload.get("input") or {}
     annotation = compact(input_data.get("transcript") or "", 220)
     image_base64 = input_data.get("imageBase64") or ""
+    image_id = compact(input_data.get("imageId") or ((payload.get("meta") or {}).get("imageId")) or "", 80)
     image_ref = input_data.get("imageRef") or ""
     meta = payload.get("meta") or {}
 
@@ -307,6 +308,7 @@ def image_prepare(payload):
         "",
         "CAPTURE",
         f"camera: {meta.get('facingMode', 'environment')}",
+        f"image id: {image_id or 'unknown'}",
         f"image ref: {image_ref or 'inline capture'}",
     ])
     if annotation:
@@ -351,7 +353,7 @@ def image_normalize(payload):
     claims = extract_simple_claims(
         [signal or summary, facts],
         "image",
-        source_ref={"imageRef": compact(((payload.get("input") or {}).get("imageRef") or ""), 80)},
+        source_ref={"imageId": compact(((payload.get("input") or {}).get("imageId") or ((payload.get("meta") or {}).get("imageId")) or ""), 80)},
     )
     return {
         "ok": True,
@@ -773,13 +775,15 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
         if payload is None:
             self.send_json(400, {"ok": False, "error": "invalid json body"})
             return
+        if parsed.path == "/v1/thread/refine":
+            self.send_json(410, {"ok": False, "error": "thread refine retired", "redirect": "/v1/thread/extract"})
+            return
 
         handlers = {
             "/v1/voice/interpret": (voice_prepare, voice_normalize),
             "/v1/image/analyze": (image_prepare, image_normalize),
             "/v1/chain/step": (chain_prepare, chain_normalize),
             "/v1/triangle/synthesize": (triangle_prepare, triangle_normalize),
-            "/v1/thread/refine": (thread_refine_prepare, thread_refine_normalize),
             "/v1/thread/extract": (thread_refine_prepare, thread_refine_normalize),
             "/v1/claims/backfill": (claims_backfill_prepare, claims_backfill_normalize),
             "/v1/project/title": (project_title_prepare, project_title_normalize),

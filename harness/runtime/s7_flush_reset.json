@@ -1,0 +1,20 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T12:07:00.000Z", "flow": "queue", "from": "pending", "to": "blocked", "ctx": { "jobId": "job-7" } },
+      { "t": "2026-04-18T12:07:02.000Z", "flow": "answer", "from": "stored", "to": "enriched", "ctx": { "answerId": "a-9", "claimCount": 1 } },
+      { "t": "2026-04-18T12:07:05.000Z", "flow": "system", "from": "flush", "to": "complete", "ctx": { "projectId": "prj-structa-r1" } }
+    ],
+    "voiceCalls": {
+      "total": 0,
+      "violations": 0,
+      "byKind": {}
+    }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "open_question_nodes": [],
+    "nodes": []
+  }
+}

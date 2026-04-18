@@ -573,6 +573,7 @@
       selection: null,
       input: {
         transcript: meta && meta.voiceAnnotation ? meta.voiceAnnotation : '',
+        imageId: meta && meta.imageId ? meta.imageId : '',
         imageRef: description || 'camera capture',
         imageBase64: rawBase64
       },

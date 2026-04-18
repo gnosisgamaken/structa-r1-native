@@ -17,6 +17,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 DEFAULT_SCENARIOS = ROOT / "scenarios" / "batch_v1.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs"
 DEFAULT_LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
+DEFAULT_TRACE_RUNTIME_DIR = ROOT / "runtime"
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -272,8 +273,68 @@ def match_trace_event(actual: dict, expected: dict) -> bool:
     return all(trace_match_value(actual.get(key), value) for key, value in expected.items())
 
 
-def run_trace_scenario(scenario: dict) -> dict:
-    tail = scenario.get("trace_tail") or []
+def load_runtime_dump(runtime_dir: pathlib.Path, scenario: dict) -> tuple[dict, pathlib.Path | None]:
+    ref = scenario.get("runtime_dump")
+    candidate = None
+    if ref:
+        candidate = pathlib.Path(ref)
+        if not candidate.is_absolute():
+            candidate = (ROOT / ref).resolve()
+    else:
+        scenario_id = scenario.get("id", "").strip()
+        if scenario_id:
+            candidate = (runtime_dir / f"{scenario_id}.json").resolve()
+    if not candidate or not candidate.exists():
+        return {}, None
+    return json.loads(candidate.read_text()), candidate
+
+
+def build_model_summary(snapshot: dict) -> dict:
+    project = snapshot.get("project") or {}
+    nodes = project.get("nodes") or []
+    open_question_nodes = project.get("open_question_nodes")
+    if isinstance(open_question_nodes, list):
+        questions_open = len(open_question_nodes)
+    else:
+        questions_open = sum(1 for node in nodes if node.get("type") == "question" and node.get("status") == "open")
+    claims = project.get("claims") or []
+    return {
+        "questions_open": questions_open,
+        "answers_count": len(project.get("answers") or []),
+        "claims_count": len(claims),
+        "disputed_claims": sum(1 for claim in claims if claim.get("status") == "disputed"),
+        "blockers_live": questions_open,
+    }
+
+
+def match_expect_claims(snapshot: dict, expected_claims: list[dict]) -> list[dict]:
+    project = snapshot.get("project") or {}
+    claims = project.get("claims") or []
+    mismatches = []
+    for index, expected in enumerate(expected_claims):
+        source = expected.get("source")
+        status = expected.get("status")
+        branch_id = expected.get("branchId")
+        matches = [
+            claim for claim in claims
+            if (not source or claim.get("source") == source)
+            and (not status or claim.get("status") == status)
+            and (not branch_id or claim.get("branchId") == branch_id)
+        ]
+        min_count = int(expected.get("minCount", 0) or 0)
+        if len(matches) < min_count:
+            mismatches.append({
+                "index": index,
+                "expected": expected,
+                "actualCount": len(matches),
+            })
+    return mismatches
+
+
+def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
+    snapshot, snapshot_path = load_runtime_dump(runtime_dir, scenario)
+    trace_store = snapshot.get("trace") or {}
+    tail = trace_store.get("events") or scenario.get("trace_tail") or []
     expected = scenario.get("expect_tail") or []
     matched = []
     mismatches = []
@@ -300,7 +361,7 @@ def run_trace_scenario(scenario: dict) -> dict:
     voice_calls = scenario.get("voice_calls") or {}
     voice_ok = True
     if voice_calls:
-        observed = scenario.get("observed_voice_calls") or voice_calls
+        observed = trace_store.get("voiceCalls") or scenario.get("observed_voice_calls") or {}
         voice_ok = match_trace_event(observed, voice_calls)
         if not voice_ok:
             mismatches.append({
@@ -308,15 +369,30 @@ def run_trace_scenario(scenario: dict) -> dict:
                 "expected": voice_calls,
                 "actual": observed,
             })
+    model_expect = scenario.get("expect_model") or {}
+    model_observed = build_model_summary(snapshot) if snapshot else {}
+    model_ok = True
+    if model_expect:
+        model_ok = match_trace_event(model_observed, model_expect)
+        if not model_ok:
+            mismatches.append({
+                "index": "model",
+                "expected": model_expect,
+                "actual": model_observed,
+            })
+    claim_expect = scenario.get("expect_claims") or []
+    claim_mismatches = match_expect_claims(snapshot, claim_expect) if claim_expect else []
+    mismatches.extend([{"index": f"claims:{item['index']}", "expected": item["expected"], "actual": {"count": item["actualCount"]}} for item in claim_mismatches])
     return {
         "id": scenario.get("id", "unknown"),
         "title": scenario.get("title", scenario.get("id", "trace scenario")),
         "kind": "trace",
-        "valid": bool(expected) and all(matched) and voice_ok,
+        "valid": bool(expected) and all(matched) and voice_ok and model_ok and not claim_mismatches,
         "expected_count": len(expected),
         "actual_count": len(tail),
         "matched": matched,
         "mismatches": mismatches,
+        "runtime_dump": str(snapshot_path) if snapshot_path else "",
     }
 
 
@@ -403,6 +479,7 @@ def main() -> int:
     parser.add_argument("--provider", choices=["mock", "openai", "lmstudio"], default="mock")
     parser.add_argument("--model", default="auto")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--runtime-dir", default=str(DEFAULT_TRACE_RUNTIME_DIR))
     parser.add_argument("--lmstudio-base-url", default=DEFAULT_LMSTUDIO_BASE)
     parser.add_argument("--lmstudio-timeout", type=int, default=300)
     parser.add_argument("--offset", type=int, default=0)
@@ -411,7 +488,7 @@ def main() -> int:
 
     if args.suite == "trace":
         scenarios = load_trace_scenarios(pathlib.Path(args.scenarios))
-        results = [run_trace_scenario(scenario) for scenario in scenarios]
+        results = [run_trace_scenario(scenario, pathlib.Path(args.runtime_dir)) for scenario in scenarios]
         json_path, md_path = write_trace_outputs(results, pathlib.Path(args.output_dir))
         summary = {
             "total": len(results),

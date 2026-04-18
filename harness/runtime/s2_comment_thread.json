@@ -1,0 +1,25 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T12:02:00.000Z", "flow": "thread", "from": "captured", "to": "append-request", "ctx": { "nodeId": "ins-1", "surface": "know" } },
+      { "t": "2026-04-18T12:02:00.010Z", "flow": "thread", "from": "append-request", "to": "comment-added", "ctx": { "nodeId": "ins-1", "commentId": "thread-1", "depth": 0 } },
+      { "t": "2026-04-18T12:02:00.020Z", "flow": "claim", "from": "pending", "to": "stored", "ctx": { "count": 1, "source": "comment" } },
+      { "t": "2026-04-18T12:02:00.030Z", "flow": "thread", "from": "refine-pending", "to": "extracted", "ctx": { "nodeId": "ins-1", "commentId": "thread-1", "claimCount": 1 } }
+    ],
+    "voiceCalls": {
+      "total": 0,
+      "violations": 0,
+      "byKind": {}
+    }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-comment-01", "source": "comment", "status": "active", "branchId": "main" }
+    ],
+    "answers": [],
+    "open_question_nodes": [],
+    "nodes": [
+      { "node_id": "ins-1", "type": "insight", "status": "open" }
+    ]
+  }
+}

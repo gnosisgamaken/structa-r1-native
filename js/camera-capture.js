@@ -294,6 +294,7 @@
 
       return Promise.race([
         window.StructaLLM.processImage(rawBase64, desc, {
+          imageId: payload.entryId,
           facingMode: payload.facingMode,
           voiceAnnotation: payload.annotation,
           priority: 'low'

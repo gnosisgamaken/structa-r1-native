@@ -1,0 +1,25 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T12:03:00.000Z", "flow": "triangle", "from": "empty", "to": "armed", "ctx": { "a": "cap-1" } },
+      { "t": "2026-04-18T12:03:00.010Z", "flow": "triangle", "from": "armed", "to": "synthesizing", "ctx": { "a": "cap-1", "b": "ins-2" } },
+      { "t": "2026-04-18T12:03:00.020Z", "flow": "claim", "from": "pending", "to": "stored", "ctx": { "count": 1, "source": "triangle" } },
+      { "t": "2026-04-18T12:03:00.030Z", "flow": "triangle", "from": "synthesizing", "to": "resolved", "ctx": { "signalId": "ins-9" } }
+    ],
+    "voiceCalls": {
+      "total": 1,
+      "violations": 0,
+      "byKind": { "triangle_captured": 1 }
+    }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-triangle-01", "source": "triangle", "status": "active", "branchId": "main" }
+    ],
+    "answers": [],
+    "open_question_nodes": [],
+    "nodes": [
+      { "node_id": "ins-9", "type": "insight", "status": "open" }
+    ]
+  }
+}

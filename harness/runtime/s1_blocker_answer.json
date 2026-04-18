@@ -1,0 +1,31 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T12:01:00.000Z", "flow": "voice", "from": "captured", "to": "question-answer", "ctx": { "nodeId": "q-1" } },
+      { "t": "2026-04-18T12:01:00.010Z", "flow": "answer", "from": "captured", "to": "stored", "ctx": { "questionId": "q-1", "answerId": "a-1" } },
+      { "t": "2026-04-18T12:01:00.020Z", "flow": "blocker", "from": "open", "to": "answer-received", "ctx": { "nodeId": "q-1", "answerId": "a-1" } },
+      { "t": "2026-04-18T12:01:00.030Z", "flow": "voice", "from": "queued", "to": "interpreting", "ctx": { "jobId": "job-answer-1", "mode": "question", "nodeId": "q-1" } },
+      { "t": "2026-04-18T12:01:00.040Z", "flow": "claim", "from": "pending", "to": "stored", "ctx": { "count": 1, "source": "answer" } },
+      { "t": "2026-04-18T12:01:00.050Z", "flow": "answer", "from": "stored", "to": "enriched", "ctx": { "answerId": "a-1", "claimCount": 1 } },
+      { "t": "2026-04-18T12:01:00.060Z", "flow": "blocker", "from": "answered", "to": "insight-created", "ctx": { "jobId": "job-answer-1", "nodeId": "q-1" } }
+    ],
+    "voiceCalls": {
+      "total": 1,
+      "violations": 0,
+      "byKind": { "signal_captured": 1 }
+    }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-answer-01", "source": "answer", "status": "active", "branchId": "main" }
+    ],
+    "answers": [
+      { "id": "a-1", "questionId": "q-1", "claims": ["claim-answer-01"] }
+    ],
+    "open_question_nodes": [],
+    "nodes": [
+      { "node_id": "q-1", "type": "question", "status": "resolved" },
+      { "node_id": "ins-1", "type": "insight", "status": "open" }
+    ]
+  }
+}

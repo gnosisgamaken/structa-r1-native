@@ -1,14 +1,17 @@
 {
   "id": "s6_force_close",
   "title": "force close leaves restorable trace for triangle recovery",
-  "trace_tail": [
-    { "t": "2026-04-18T12:06:00.000Z", "flow": "triangle", "from": "armed", "to": "synthesizing", "ctx": { "a": "cap-2", "b": "ins-4" } },
-    { "t": "2026-04-18T12:06:04.000Z", "flow": "triangle", "from": "synthesizing", "to": "boot-rehydrate", "ctx": { "jobId": "job-tri-2" } },
-    { "t": "2026-04-18T12:06:06.000Z", "flow": "triangle", "from": "synthesizing", "to": "resolved", "ctx": { "signalId": "ins-10" } }
-  ],
+  "runtime_dump": "runtime/s6_force_close.json",
   "expect_tail": [
     { "flow": "triangle", "from": "armed", "to": "synthesizing" },
     { "flow": "triangle", "from": "synthesizing", "to": "boot-rehydrate" },
     { "flow": "triangle", "from": "synthesizing", "to": "resolved" }
-  ]
+  ],
+  "expect_claims": [
+    { "source": "triangle", "minCount": 1 }
+  ],
+  "expect_model": {
+    "questions_open": 0,
+    "claims_count": 1
+  }
 }

@@ -1,14 +1,19 @@
 {
   "id": "s2_comment_thread",
   "title": "comment capture writes instantly and refines in background",
-  "trace_tail": [
-    { "t": "2026-04-18T12:02:00.000Z", "flow": "thread", "from": "captured", "to": "append-request", "ctx": { "nodeId": "ins-1", "surface": "know" } },
-    { "t": "2026-04-18T12:02:00.010Z", "flow": "thread", "from": "append-request", "to": "comment-added", "ctx": { "nodeId": "ins-1", "commentId": "thread-1", "depth": 1 } },
-    { "t": "2026-04-18T12:02:00.020Z", "flow": "thread", "from": "refine-pending", "to": "summary-set", "ctx": { "nodeId": "ins-1", "commentId": "thread-1", "depth": 1 } }
-  ],
+  "runtime_dump": "runtime/s2_comment_thread.json",
   "expect_tail": [
     { "flow": "thread", "from": "captured", "to": "append-request" },
     { "flow": "thread", "from": "append-request", "to": "comment-added" },
-    { "flow": "thread", "from": "refine-pending", "to": "summary-set" }
-  ]
+    { "flow": "claim", "from": "pending", "to": "stored", "ctx": { "source": "comment" } },
+    { "flow": "thread", "from": "refine-pending", "to": "extracted" }
+  ],
+  "expect_claims": [
+    { "source": "comment", "minCount": 1 }
+  ],
+  "expect_model": {
+    "questions_open": 0,
+    "answers_count": 0,
+    "claims_count": 1
+  }
 }

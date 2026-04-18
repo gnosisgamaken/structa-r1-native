@@ -1,0 +1,27 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T12:04:00.000Z", "flow": "image", "from": "captured", "to": "stored", "ctx": { "entryId": "img-1" } },
+      { "t": "2026-04-18T12:04:00.010Z", "flow": "image", "from": "pending", "to": "queued", "ctx": { "entryId": "img-1", "jobId": "job-img-1" } },
+      { "t": "2026-04-18T12:04:00.020Z", "flow": "image", "from": "queued", "to": "analyzing", "ctx": { "entryId": "img-1", "jobId": "job-img-1" } },
+      { "t": "2026-04-18T12:04:00.030Z", "flow": "claim", "from": "pending", "to": "stored", "ctx": { "count": 2, "source": "capture" } },
+      { "t": "2026-04-18T12:04:00.040Z", "flow": "image", "from": "analyzing", "to": "analyzed", "ctx": { "entryId": "img-1", "nodeId": "cap-1" } }
+    ],
+    "voiceCalls": {
+      "total": 1,
+      "violations": 0,
+      "byKind": { "frame_ready": 1 }
+    }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-image-01", "source": "capture", "status": "active", "branchId": "main", "sourceRef": { "imageId": "img-1" } },
+      { "id": "claim-image-02", "source": "capture", "status": "active", "branchId": "main", "sourceRef": { "imageId": "img-1" } }
+    ],
+    "answers": [],
+    "open_question_nodes": [],
+    "nodes": [
+      { "node_id": "cap-1", "type": "capture", "status": "open" }
+    ]
+  }
+}

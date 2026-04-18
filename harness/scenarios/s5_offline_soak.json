@@ -1,14 +1,14 @@
 {
   "id": "s5_offline_soak",
   "title": "offline soak records blocked work without losing trace continuity",
-  "trace_tail": [
-    { "t": "2026-04-18T12:05:00.000Z", "flow": "image", "from": "pending", "to": "queued", "ctx": { "entryId": "img-offline-1" } },
-    { "t": "2026-04-18T12:05:05.000Z", "flow": "image", "from": "analyzing", "to": "blocked", "ctx": { "entryId": "img-offline-1", "reason": "timeout" } },
-    { "t": "2026-04-18T12:05:06.000Z", "flow": "triangle", "from": "synthesizing", "to": "failed", "ctx": { "reason": "exception" } }
-  ],
+  "runtime_dump": "runtime/s5_offline_soak.json",
   "expect_tail": [
     { "flow": "image", "from": "pending", "to": "queued" },
     { "flow": "image", "from": "analyzing", "to": "blocked" },
     { "flow": "triangle", "from": "synthesizing", "to": "failed" }
-  ]
+  ],
+  "expect_model": {
+    "questions_open": 0,
+    "claims_count": 0
+  }
 }

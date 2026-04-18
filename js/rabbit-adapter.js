@@ -102,6 +102,27 @@
     return cloneValue(ensureTraceStore());
   }
 
+  function snapshotState() {
+    ensureProjectRegistry();
+    var project = cloneValue(memory.projectMemory || {});
+    var queue = cloneValue(window.StructaProcessingQueue?.snapshot?.() || []);
+    var openQuestions = Array.isArray(project?.open_question_nodes)
+      ? project.open_question_nodes.length
+      : ((project?.nodes || []).filter(function(node) { return node.type === 'question' && node.status === 'open'; }).length);
+    return {
+      memory: cloneValue(memory),
+      project: project,
+      queue: queue,
+      trace: getTrace(),
+      model: {
+        questions_open: openQuestions,
+        answers_count: Array.isArray(project?.answers) ? project.answers.length : 0,
+        claims_count: Array.isArray(project?.claims) ? project.claims.length : 0,
+        disputed_claims: Array.isArray(project?.claims) ? project.claims.filter(function(claim) { return claim?.status === 'disputed'; }).length : 0
+      }
+    };
+  }
+
   function emitModelChange(detail) {
     try {
       window.dispatchEvent(new CustomEvent('structa-model-change', {
@@ -188,7 +209,7 @@
       byStatus: {}
     };
     project.chainHistory = Array.isArray(input.chainHistory) ? input.chainHistory : [];
-    project.schema_version = input.schema_version || 4;
+    project.schema_version = input.schema_version || 5;
     return project;
   }
 
@@ -232,6 +253,37 @@
       });
     }
     return base;
+  }
+
+  function migrateClaimRefs(project) {
+    ensureProjectKnowledge(project);
+    var captures = Array.isArray(project.captures) ? project.captures : [];
+    var captureKeys = new Set();
+    captures.forEach(function(capture) {
+      [capture?.entry_id, capture?.id, capture?.node_id, capture?.capture_image].forEach(function(value) {
+        if (value) captureKeys.add(String(value));
+      });
+    });
+    (project.nodes || []).forEach(function(node) {
+      if (node?.type !== 'capture') return;
+      [node?.node_id, node?.capture_image, node?.meta?.bundle_id].forEach(function(value) {
+        if (value) captureKeys.add(String(value));
+      });
+    });
+    (project.claims || []).forEach(function(claim) {
+      if (!claim || !claim.sourceRef || typeof claim.sourceRef !== 'object') return;
+      var imageRef = String(claim.sourceRef.imageRef || '').trim();
+      if (imageRef && !claim.sourceRef.imageId) {
+        if (captureKeys.has(imageRef)) {
+          claim.sourceRef.imageId = imageRef;
+        } else if (claim.sourceRef.itemId && captureKeys.has(String(claim.sourceRef.itemId))) {
+          claim.sourceRef.imageId = String(claim.sourceRef.itemId);
+        }
+      }
+      if ('imageRef' in claim.sourceRef) {
+        delete claim.sourceRef.imageRef;
+      }
+    });
   }
 
   function rebuildClaimIndex(project) {
@@ -319,6 +371,42 @@
     });
     rebuildClaimIndex(project);
     return added;
+  }
+
+  function setClaimStatusOnProject(project, claimId, nextStatus, options) {
+    if (!project || !claimId || !nextStatus) return null;
+    ensureProjectKnowledge(project);
+    var claim = findClaimById(project, claimId);
+    if (!claim) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var previous = String(claim.status || 'active');
+    claim.status = nextStatus;
+    if (opts.supersededBy) claim.supersededBy = opts.supersededBy;
+    rebuildClaimIndex(project);
+    return {
+      id: claim.id,
+      previousStatus: previous,
+      status: claim.status,
+      supersededBy: claim.supersededBy || '',
+      reason: opts.reason || ''
+    };
+  }
+
+  function setClaimStatus(claimId, nextStatus, options) {
+    if (!claimId || !nextStatus) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var updated = null;
+    touchProjectMemory(function(project) {
+      updated = setClaimStatusOnProject(project, claimId, nextStatus, opts);
+    });
+    if (updated) {
+      traceEvent('claim', updated.previousStatus, updated.status, {
+        claimId: updated.id,
+        supersededBy: updated.supersededBy,
+        reason: opts.reason || ''
+      });
+    }
+    return updated;
   }
 
   function buildInitialMemory() {
@@ -412,8 +500,9 @@
       if (!hydrated.device_scope_key) hydrated.device_scope_key = deviceScopeKey;
       if (!hydrated.schema_version || hydrated.schema_version < 3) migrateV2toV3(hydrated);
       ensureProjectKnowledge(hydrated);
+      migrateClaimRefs(hydrated);
       rebuildClaimIndex(hydrated);
-      if (!hydrated.schema_version || hydrated.schema_version < 4) hydrated.schema_version = 4;
+      if (!hydrated.schema_version || hydrated.schema_version < 5) hydrated.schema_version = 5;
       return hydrated;
     });
 
@@ -695,8 +784,12 @@
 
       var contradictedClaim = comment.contradicts ? findClaimById(project, comment.contradicts) : null;
       var reconciliationQuestion = null;
+      var claimStatusUpdate = null;
       if (contradictedClaim && storedClaims.length) {
-        contradictedClaim.status = 'disputed';
+        claimStatusUpdate = setClaimStatusOnProject(project, contradictedClaim.id, 'disputed', {
+          reason: 'comment-contradiction'
+        });
+        contradictedClaim = findClaimById(project, contradictedClaim.id) || contradictedClaim;
         contradictedClaim.disputedBy = Array.isArray(contradictedClaim.disputedBy) ? contradictedClaim.disputedBy : [];
         storedClaimIds.forEach(function(claimId) {
           if (contradictedClaim.disputedBy.indexOf(claimId) === -1) {
@@ -714,10 +807,18 @@
         clarificationId: clarifiedClaim?.id || '',
         contradictionId: contradictedClaim?.id || '',
         reconciliationQuestionId: reconciliationQuestion?.node_id || '',
+        claimStatusUpdate: claimStatusUpdate,
         depth: countDistinctThreadClaims(node.meta.thread)
       };
     });
     if (updated) {
+      if (updated.claims.length) {
+        traceEvent('claim', 'pending', 'stored', {
+          count: updated.claims.length,
+          ids: updated.claims.map(function(entry) { return entry.id; }).slice(0, 6),
+          source: 'comment'
+        });
+      }
       traceEvent('thread', 'refine-pending', 'extracted', {
         nodeId: updated.nodeId,
         commentId: updated.comment.id,
@@ -727,10 +828,11 @@
         questionId: updated.reconciliationQuestionId
       });
       if (updated.contradictionId) {
-        traceEvent('claim', 'active', 'disputed', {
+        traceEvent('claim', updated.claimStatusUpdate?.previousStatus || 'active', updated.claimStatusUpdate?.status || 'disputed', {
           claimId: updated.contradictionId,
           commentId: updated.comment.id,
-          questionId: updated.reconciliationQuestionId
+          questionId: updated.reconciliationQuestionId,
+          reason: updated.claimStatusUpdate?.reason || 'comment-contradiction'
         });
       }
       emitModelChange({ scope: updated.reconciliationQuestionId ? 'now' : 'item', itemId: updated.nodeId, commentId: updated.comment.id });
@@ -2247,6 +2349,7 @@
     appendProbeEvent,
     traceEvent,
     getTrace,
+    snapshotState,
     recordVoiceCall,
     emitModelChange,
     returnHome,
@@ -2277,8 +2380,13 @@
     archiveNode,
     getNodesByType,
     getNodesByStatus,
+    setClaimStatus,
     deviceId,
     deviceScopeKey,
     probeMode
+  });
+
+  window.__structa = Object.freeze({
+    snapshot: snapshotState
   });
 })();

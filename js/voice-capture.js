@@ -567,13 +567,27 @@
           summary: payload.projectSummary || ''
         },
         selection: payload.selection || null,
+        sourceRef: {
+          itemId: payload.nodeId || '',
+          threadEntryId: payload.commentId || ''
+        },
         input: {
           transcript: payload.commentText || ''
         }
       }).then(function(result) {
-        const summary = (result && result.summary) || '';
-        if (summary) native?.setThreadCommentSummary?.(payload.nodeId, payload.commentId, summary);
-        return { ok: !!summary, summary: summary || payload.commentText || '' };
+        const applied = native?.applyThreadExtraction?.(payload.nodeId, payload.commentId, {
+          summary: (result && result.summary) || payload.commentText || '',
+          claims: Array.isArray(result?.claims) ? result.claims : [],
+          clarifies: result?.clarifies || '',
+          contradicts: result?.contradicts || ''
+        }, {
+          sttConfidence: typeof result?.sttConfidence === 'number' ? result.sttConfidence : null
+        });
+        return {
+          ok: !!applied,
+          summary: applied?.comment?.summary || (result && result.summary) || payload.commentText || '',
+          claims: applied?.claims || []
+        };
       });
     });
   }
@@ -743,7 +757,8 @@
           title: buildContext.title || '',
           summary: buildContext.text || '',
           status: 'open',
-          createdAt: buildContext.createdAt || ''
+          createdAt: buildContext.createdAt || '',
+          claims: native?.getClaimsForItem?.(buildContext.nodeId) || []
         },
         projectId: native?.getProjectMemory?.()?.project_id || '',
         projectName: native?.getProjectMemory?.()?.name || 'untitled project',

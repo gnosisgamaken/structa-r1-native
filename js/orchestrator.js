@@ -98,7 +98,7 @@
   function refineThread(payload, executeLLM) {
     var envelope = Object.assign({}, payload || {});
     envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
-    return run('/v1/thread/refine', envelope, executeLLM);
+    return run('/v1/thread/extract', envelope, executeLLM);
   }
 
   function backfillClaims(payload, executeLLM) {

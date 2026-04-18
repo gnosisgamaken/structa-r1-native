@@ -270,13 +270,22 @@
         body: String(entry.body || '').trim(),
         summary: String(entry.summary || entry.body || '').trim(),
         at: entry.at || '',
-        origin: entry.origin || 'ptt'
+        origin: entry.origin || 'ptt',
+        claim_ids: Array.isArray(entry.claim_ids) ? entry.claim_ids.filter(Boolean) : [],
+        clarifies: entry.clarifies || '',
+        contradicts: entry.contradicts || ''
       };
     }) : [];
   }
 
   function threadDepth(thread) {
-    return cloneThread(thread).length;
+    const ids = new Set();
+    cloneThread(thread).forEach(function(entry) {
+      (entry.claim_ids || []).forEach(function(claimId) {
+        if (claimId) ids.add(String(claimId));
+      });
+    });
+    return ids.size;
   }
 
   function threadBars(depth) {
@@ -309,6 +318,16 @@
 
   function getProjects() {
     return native?.getProjects?.() || [];
+  }
+
+  function getClaimsForRefs(refs) {
+    const claimMap = new Map();
+    (Array.isArray(refs) ? refs : [refs]).filter(Boolean).forEach(function(ref) {
+      (native?.getClaimsForItem?.(ref) || []).forEach(function(claim) {
+        if (claim?.id && !claimMap.has(claim.id)) claimMap.set(claim.id, claim);
+      });
+    });
+    return Array.from(claimMap.values());
   }
 
   function getActiveProjectId() {
@@ -1751,7 +1770,7 @@
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth = 0, threadSummary = '' }) => classify({
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '' }) => classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
       body: lower(normalizeTinyText(body || '')),
@@ -1764,7 +1783,7 @@
       links: Array.isArray(links) ? links.slice() : [],
       triangulated: !!triangulated,
       thread: cloneThread(thread),
-      threadDepth: Math.max(0, Number(threadDepth || cloneThread(thread).length || 0)),
+      threadDepth: Math.max(0, Number(providedThreadDepth !== null ? providedThreadDepth : threadDepth(thread))),
       threadSummary: lower(normalizeTinyText(threadSummary || ''))
     });
 
@@ -1787,7 +1806,7 @@
         lane: 'questions', title: index === 0 ? 'guided ask' : `guided ask ${index + 1}`, body: guidedAsk,
         next: '', created_at: question?.created_at || new Date().toISOString(),
         source: 'question', chips: ['asks'], questionIndex: index, node_id: question?.node_id || '', links: question?.links || [],
-        thread: questionThread, threadDepth: questionThread.length, threadSummary: question?.thread_summary || (questionThread[questionThread.length - 1]?.summary || '')
+        thread: questionThread, threadDepth: threadDepth(questionThread), threadSummary: question?.thread_summary || (questionThread[questionThread.length - 1]?.summary || '')
       }));
     });
 
@@ -1817,7 +1836,7 @@
         next: backlog[0]?.title || '',
         created_at: insight.created_at, source: insight.source || 'insight', chips: index < 2 ? ['latest'] : [],
         triangulated: !!insight.triangulated || lower(insight.source || '') === 'triangle',
-        node_id: insight.node_id, links: insight.links, thread: insightThread, threadDepth: insightThread.length,
+        node_id: insight.node_id, links: insight.links, thread: insightThread, threadDepth: threadDepth(insightThread),
         threadSummary: insight.thread_summary || (insightThread[insightThread.length - 1]?.summary || '')
       }));
     });
@@ -1830,7 +1849,7 @@
         next: backlog[0]?.title || '',
         created_at: capture.created_at,
         source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : [],
-        node_id: capture.node_id, links: capture.links, thread: captureThread, threadDepth: captureThread.length,
+        node_id: capture.node_id, links: capture.links, thread: captureThread, threadDepth: threadDepth(captureThread),
         threadSummary: capture.thread_summary || (captureThread[captureThread.length - 1]?.summary || '')
       }));
     });
@@ -1844,7 +1863,7 @@
         lane: 'decisions', title: decisionTitle, body: decisionBody,
         next: backlog[0]?.title || '',
         created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : [],
-        node_id: decision.node_id, links: decision.links, thread: decisionThread, threadDepth: decisionThread.length,
+        node_id: decision.node_id, links: decision.links, thread: decisionThread, threadDepth: threadDepth(decisionThread),
         threadSummary: decision.thread_summary || (decisionThread[decisionThread.length - 1]?.summary || '')
       }));
     });
@@ -1866,7 +1885,7 @@
         body: item.body || item.state || 'open',
         next: item.title || '',
         created_at: item.created_at, source: 'backlog', chips: ['branch'], node_id: item.node_id || '', links: item.links || [],
-        thread: backlogThread, threadDepth: backlogThread.length,
+        thread: backlogThread, threadDepth: threadDepth(backlogThread),
         threadSummary: item.thread_summary || (backlogThread[backlogThread.length - 1]?.summary || '')
       }));
     });
@@ -2792,6 +2811,7 @@
       : 0;
     stateData.showCaptureIndex = safeIndex;
     const current = captures[safeIndex] || null;
+    const currentClaims = current ? getClaimsForRefs([current?.node_id || '', current?.entry_id || '', current?.id || '']) : [];
     if (!current) {
       return {
         title: project?.name || 'new project',
@@ -2804,7 +2824,10 @@
         imageHref: '',
         analysisReady: false,
         analysisState: '',
-        createdAt: null
+        createdAt: null,
+        claims: [],
+        claimCount: 0,
+        claimSummary: ''
       };
     }
     return {
@@ -2821,8 +2844,11 @@
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null,
       pendingQueueCount: getPendingCaptureQueueCount(),
       thread: cloneThread(current?.thread),
-      threadDepth: current?.thread_depth || threadDepth(current?.thread),
-      threadSummary: current?.thread_summary || ''
+      threadDepth: typeof current?.thread_depth === 'number' ? current.thread_depth : threadDepth(current?.thread),
+      threadSummary: current?.thread_summary || '',
+      claims: currentClaims,
+      claimCount: currentClaims.length,
+      claimSummary: lower(normalizeTinyText(currentClaims[0]?.text || ''))
     };
   }
 
@@ -2877,9 +2903,12 @@
         'font-size': '10'
       });
       wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : 'processing visual note', 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      if (model.claimSummary) {
+        wrapTextBlock(undefined, 'claim · ' + model.claimSummary.slice(0, 42), 22, 204, 172, 10, 'rgba(244,239,228,0.84)', '9', 1);
+      }
       if (model.threadSummary) {
-        wrapTextBlock(undefined, 'comment · ' + lower(model.threadSummary).slice(0, 42), 22, 204, 172, 10, 'rgba(244,239,228,0.78)', '9', 1);
-        drawKnowDepthGlyph(model.threadDepth || 0, 204, 202);
+        wrapTextBlock(undefined, 'comment · ' + lower(model.threadSummary).slice(0, 42), 22, model.claimSummary ? 216 : 204, 172, 10, 'rgba(244,239,228,0.78)', '9', 1);
+        drawKnowDepthGlyph(model.threadDepth || 0, 204, model.claimSummary ? 214 : 202);
       }
       if (!model.analysisReady) {
         text(210, 129, 'processing', {
@@ -2971,7 +3000,7 @@
 
     const showFooter = model.pendingQueueCount > 0
       ? `${model.pendingQueueCount} queued · keep open`
-      : (model.captures.length ? 'hold ptt · comment' : 'ready to capture');
+      : (model.captures.length ? (model.claimCount > 0 ? `${model.claimCount} claims · hold ptt · comment` : 'hold ptt · comment') : 'ready to capture');
     text(226, 276, showFooter, {
       fill: 'rgba(8,8,8,0.38)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2995,7 +3024,7 @@
       questions: (project?.open_questions || []).length,
       status: stateData.tellStatus || (entries.length ? 'ready' : 'empty'),
       thread: cloneThread(current?.meta?.thread || current?.thread),
-      threadDepth: current?.meta?.thread?.length || current?.thread_depth || threadDepth(current?.thread),
+      threadDepth: typeof current?.thread_depth === 'number' ? current.thread_depth : threadDepth(current?.meta?.thread || current?.thread),
       threadSummary: current?.meta?.thread_summary || current?.thread_summary || ''
     };
   }

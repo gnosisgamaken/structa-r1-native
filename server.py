@@ -44,6 +44,11 @@ def build_selection_lines(selection):
         lines.append("selection: " + summary)
     if selection.get("status"):
         lines.append(f"selection status: {selection['status']}")
+    claims = selection.get("claims") or []
+    if claims:
+        for claim_entry in claims[:4]:
+            if isinstance(claim_entry, dict) and claim_entry.get("id") and claim_entry.get("text"):
+                lines.append(f"claim {claim_entry['id']}: {compact(claim_entry['text'], 90)}")
     return lines
 
 
@@ -562,9 +567,9 @@ def thread_refine_prepare(payload):
     transcript = compact(input_data.get("transcript") or "", 240)
 
     lines = [
-        "You are Structa, condensing one project comment.",
-        "Return only one lowercase summary line.",
-        "Keep the user's intent. No punctuation unless necessary.",
+        "You are Structa, extracting knowledge from one project comment.",
+        "Return labeled lines only. No prose outside the labels.",
+        "Keep the user's intent grounded in the current item.",
         "",
         "PROJECT",
     ] + build_project_lines(project)
@@ -580,6 +585,11 @@ def thread_refine_prepare(payload):
         "",
         "Return exactly:",
         "SUMMARY: <one line, max 8 words>",
+        "CLAIM1: <claim or omit>",
+        "CLAIM2: <claim or omit>",
+        "CLAIM3: <claim or omit>",
+        "CLARIFIES: <claim id or omit>",
+        "CONTRADICTS: <claim id or omit>",
     ])
 
     return {
@@ -600,13 +610,26 @@ def thread_refine_prepare(payload):
 
 
 def thread_refine_normalize(payload):
-    raw = compact(payload.get("rawResponse") or "", 72).lower()
-    parsed = parse_labeled_lines(raw)
+    raw_text = payload.get("rawResponse") or ""
+    raw = compact(raw_text, 160).lower()
+    parsed = parse_labeled_lines(raw_text)
     summary = compact(parsed.get("SUMMARY") or raw or "", 72)
+    selection = payload.get("selection") or {}
+    source_ref = payload.get("sourceRef") or {"itemId": selection.get("id") or ""}
+    claims = extract_simple_claims(
+        [parsed.get("CLAIM1", ""), parsed.get("CLAIM2", ""), parsed.get("CLAIM3", "")],
+        "comment",
+        source_ref=source_ref,
+        stt_confidence=estimate_stt_confidence((payload.get("input") or {}).get("transcript") or ""),
+    )
+    clarifies = compact(parsed.get("CLARIFIES") or "", 48)
+    contradicts = compact(parsed.get("CONTRADICTS") or "", 48)
     return {
         "ok": True,
         "summary": summary,
-        "claims": [],
+        "claims": claims,
+        "clarifies": clarifies or "",
+        "contradicts": contradicts or "",
         "ui": {
             "summary": summary,
             "logLine": "comment refined",
@@ -757,6 +780,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             "/v1/chain/step": (chain_prepare, chain_normalize),
             "/v1/triangle/synthesize": (triangle_prepare, triangle_normalize),
             "/v1/thread/refine": (thread_refine_prepare, thread_refine_normalize),
+            "/v1/thread/extract": (thread_refine_prepare, thread_refine_normalize),
             "/v1/claims/backfill": (claims_backfill_prepare, claims_backfill_normalize),
             "/v1/project/title": (project_title_prepare, project_title_normalize),
         }

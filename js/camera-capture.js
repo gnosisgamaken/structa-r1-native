@@ -130,6 +130,8 @@
   }
 
   function applyAnalysisReady(job, result, insightNode) {
+    const claimIds = Array.isArray(result?.claims) ? result.claims.map(function(claim) { return claim?.id; }).filter(Boolean) : [];
+    const linkedClaimIds = Array.isArray(insightNode?.meta?.claim_ids) ? insightNode.meta.claim_ids.filter(Boolean) : claimIds;
     native?.touchProjectMemory?.(function(project) {
       const refs = findCaptureRefs(project, job.entryId, job.nodeId);
       if (refs.capture) {
@@ -142,7 +144,8 @@
           ...(refs.capture.meta || {}),
           analysis_status: 'ready',
           analysis_completed_at: new Date().toISOString(),
-          preview_data: refs.capture.preview_data || job.previewData
+          preview_data: refs.capture.preview_data || job.previewData,
+          claim_ids: linkedClaimIds
         };
       }
       if (refs.node) {
@@ -153,7 +156,8 @@
           ...(refs.node.meta || {}),
           analysis_status: 'ready',
           analysis_completed_at: new Date().toISOString(),
-          preview_data: refs.node.meta?.preview_data || job.previewData
+          preview_data: refs.node.meta?.preview_data || job.previewData,
+          claim_ids: linkedClaimIds
         };
         if (insightNode && insightNode.node_id) {
           refs.node.links = Array.isArray(refs.node.links) ? refs.node.links : [];

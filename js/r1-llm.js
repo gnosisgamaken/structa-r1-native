@@ -491,7 +491,8 @@
       title: buildContext.title || '',
       summary: String(buildContext.text || '').slice(0, 220),
       status: buildContext.status || 'open',
-      createdAt: buildContext.createdAt || ''
+      createdAt: buildContext.createdAt || '',
+      claims: buildContext.nodeId && native?.getClaimsForItem ? native.getClaimsForItem(buildContext.nodeId).slice(0, 6) : []
     };
   }
 
@@ -587,7 +588,7 @@
   function refineThreadComment(payload) {
     var orchestrator = window.StructaOrchestrator;
     if (!orchestrator || !orchestrator.refineThread) {
-      return Promise.resolve({ ok: false, summary: '' });
+      return Promise.resolve({ ok: false, summary: '', claims: [], clarifies: '', contradicts: '' });
     }
     var envelope = Object.assign({}, payload || {});
     envelope.policy = {
@@ -598,9 +599,9 @@
     return withTimeout(
       orchestrator.refineThread(envelope, executePreparedLLM),
       12000,
-      'thread refine'
+      'thread extract'
     ).catch(function() {
-      return { ok: false, summary: '' };
+      return { ok: false, summary: '', claims: [], clarifies: '', contradicts: '' };
     });
   }
 

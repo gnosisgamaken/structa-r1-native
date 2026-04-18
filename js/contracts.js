@@ -133,6 +133,8 @@
       sttConfidence: typeof input.sttConfidence === 'number' ? input.sttConfidence : null,
       status: claimStatuses.includes(input.status) ? input.status : 'active',
       supersededBy: input.supersededBy || null,
+      clarifications: Array.isArray(input.clarifications) ? input.clarifications.filter(Boolean) : [],
+      disputedBy: Array.isArray(input.disputedBy) ? input.disputedBy.filter(Boolean) : [],
       createdAt: input.createdAt || now,
       expiresAt: input.expiresAt || null
     };

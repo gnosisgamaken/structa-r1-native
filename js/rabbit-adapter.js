@@ -301,6 +301,8 @@
         sttConfidence: typeof rawClaim.sttConfidence === 'number' ? rawClaim.sttConfidence : (typeof opts.sttConfidence === 'number' ? opts.sttConfidence : null),
         status: rawClaim.status || 'active',
         supersededBy: rawClaim.supersededBy || null,
+        clarifications: Array.isArray(rawClaim.clarifications) ? rawClaim.clarifications.filter(Boolean) : [],
+        disputedBy: Array.isArray(rawClaim.disputedBy) ? rawClaim.disputedBy.filter(Boolean) : [],
         createdAt: rawClaim.createdAt || new Date().toISOString(),
         expiresAt: rawClaim.expiresAt || null
       });
@@ -513,9 +515,22 @@
         body: String(entry.body || '').trim(),
         summary: String(entry.summary || entry.body || '').trim(),
         at: entry.at || new Date().toISOString(),
-        origin: entry.origin || 'ptt'
+        origin: entry.origin || 'ptt',
+        claim_ids: Array.isArray(entry.claim_ids) ? entry.claim_ids.filter(Boolean) : [],
+        clarifies: entry.clarifies || '',
+        contradicts: entry.contradicts || ''
       };
     }) : [];
+  }
+
+  function countDistinctThreadClaims(thread) {
+    var seen = new Set();
+    cloneThread(thread).forEach(function(entry) {
+      (entry.claim_ids || []).forEach(function(claimId) {
+        if (claimId) seen.add(String(claimId));
+      });
+    });
+    return seen.size;
   }
 
   function appendThreadComment(nodeId, text, kind, origin) {
@@ -535,7 +550,10 @@
         body: bodyText,
         summary: compact(bodyText, 72),
         at: new Date().toISOString(),
-        origin: origin || 'ptt'
+        origin: origin || 'ptt',
+        claim_ids: [],
+        clarifies: '',
+        contradicts: ''
       };
       node.meta.thread.push(comment);
       node.meta.thread_summary = compact(bodyText, 72);
@@ -543,7 +561,7 @@
       created = {
         nodeId: node.node_id,
         comment: { ...comment },
-        depth: node.meta.thread.length
+        depth: countDistinctThreadClaims(node.meta.thread)
       };
     });
     if (created) {
@@ -559,11 +577,54 @@
     return created;
   }
 
-  function setThreadCommentSummary(nodeId, commentId, summary) {
-    var value = String(summary || '').trim();
-    if (!nodeId || !commentId || !value) return null;
+  function findClaimById(project, claimId) {
+    ensureProjectKnowledge(project);
+    return (project.claims || []).find(function(entry) {
+      return entry && entry.id === claimId;
+    }) || null;
+  }
+
+  function buildReconciliationQuestionBody(previousText, nextText) {
+    var prior = compact(previousText || 'that earlier claim', 52).replace(/[.?!]+$/g, '');
+    var next = compact(nextText || 'this newer claim', 52).replace(/[.?!]+$/g, '');
+    return ('you said ' + prior + ' earlier, now ' + next + ' — which holds?').toLowerCase();
+  }
+
+  function ensureReconciliationQuestion(project, contradictedClaim, newClaim, nodeId, commentId) {
+    if (!contradictedClaim || !newClaim) return null;
+    var evidenceClaims = [contradictedClaim.id, newClaim.id].filter(Boolean);
+    var existing = (project.nodes || []).find(function(node) {
+      if (!node || node.type !== 'question' || node.status === 'archived') return false;
+      var refs = Array.isArray(node.meta?.evidence_claims) ? node.meta.evidence_claims : [];
+      return evidenceClaims.every(function(claimId) { return refs.indexOf(claimId) !== -1; });
+    });
+    if (existing) return existing;
+    var question = contracts.createNode({
+      type: 'question',
+      status: 'open',
+      title: 'reconciliation',
+      body: buildReconciliationQuestionBody(contradictedClaim.text, newClaim.text),
+      source: 'comment',
+      links: nodeId ? [nodeId] : [],
+      meta: {
+        contradiction: true,
+        contradiction_thread_entry_id: commentId || '',
+        evidence_claims: evidenceClaims
+      }
+    });
+    project.nodes.unshift(question);
+    if (project.nodes.length > MAX_NODES) {
+      project.nodes = project.nodes.slice(0, MAX_NODES);
+    }
+    return question;
+  }
+
+  function applyThreadExtraction(nodeId, commentId, extraction, options) {
+    if (!nodeId || !commentId || !extraction || typeof extraction !== 'object') return null;
+    var opts = options && typeof options === 'object' ? options : {};
     var updated = null;
     touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
       var node = (project.nodes || []).find(function(entry) {
         return entry.node_id === nodeId && entry.status !== 'archived';
       });
@@ -571,23 +632,116 @@
       node.meta.thread = cloneThread(node.meta.thread);
       var comment = node.meta.thread.find(function(entry) { return entry.id === commentId; });
       if (!comment) return;
-      comment.summary = compact(value, 72);
-      node.meta.thread_summary = comment.summary;
+
+      var extractionClaims = Array.isArray(extraction.claims) ? extraction.claims.slice() : [];
+      if (!extractionClaims.length && extraction.contradicts) {
+        var fallbackText = String(extraction.summary || comment.summary || comment.body || '').trim();
+        if (fallbackText) {
+          extractionClaims = [{
+            text: fallbackText,
+            kind: comment.kind === 'clarification' ? 'fact' : 'preference',
+            source: 'comment',
+            sourceRef: {
+              itemId: nodeId,
+              threadEntryId: commentId
+            }
+          }];
+        }
+      }
+
+      var storedClaims = addClaimsToProject(project, extractionClaims, {
+        source: 'comment',
+        sourceRef: {
+          itemId: nodeId,
+          threadEntryId: commentId
+        },
+        sttConfidence: typeof opts.sttConfidence === 'number' ? opts.sttConfidence : null
+      });
+      var storedClaimIds = storedClaims.map(function(entry) { return entry.id; });
+
+      if (typeof extraction.summary === 'string' && extraction.summary.trim()) {
+        comment.summary = compact(extraction.summary, 72);
+      }
+      if (storedClaimIds.length) {
+        comment.claim_ids = storedClaimIds.slice();
+      } else if (!Array.isArray(comment.claim_ids)) {
+        comment.claim_ids = [];
+      }
+      if (typeof extraction.clarifies === 'string') {
+        comment.clarifies = extraction.clarifies.trim();
+      }
+      if (typeof extraction.contradicts === 'string') {
+        comment.contradicts = extraction.contradicts.trim();
+      }
+
+      node.meta.thread_summary = comment.summary || node.meta.thread_summary || compact(comment.body, 72);
+      node.meta.thread_updated_at = comment.at || new Date().toISOString();
+      node.meta.thread_claim_ids = Array.from(new Set(node.meta.thread.reduce(function(all, entry) {
+        if (Array.isArray(entry.claim_ids)) {
+          return all.concat(entry.claim_ids.filter(Boolean));
+        }
+        return all;
+      }, [])));
+
+      var clarifiedClaim = comment.clarifies ? findClaimById(project, comment.clarifies) : null;
+      if (clarifiedClaim && storedClaimIds.length) {
+        clarifiedClaim.clarifications = Array.isArray(clarifiedClaim.clarifications) ? clarifiedClaim.clarifications : [];
+        storedClaimIds.forEach(function(claimId) {
+          if (clarifiedClaim.clarifications.indexOf(claimId) === -1) {
+            clarifiedClaim.clarifications.push(claimId);
+          }
+        });
+      }
+
+      var contradictedClaim = comment.contradicts ? findClaimById(project, comment.contradicts) : null;
+      var reconciliationQuestion = null;
+      if (contradictedClaim && storedClaims.length) {
+        contradictedClaim.status = 'disputed';
+        contradictedClaim.disputedBy = Array.isArray(contradictedClaim.disputedBy) ? contradictedClaim.disputedBy : [];
+        storedClaimIds.forEach(function(claimId) {
+          if (contradictedClaim.disputedBy.indexOf(claimId) === -1) {
+            contradictedClaim.disputedBy.push(claimId);
+          }
+        });
+        reconciliationQuestion = ensureReconciliationQuestion(project, contradictedClaim, storedClaims[0], nodeId, commentId);
+      }
+
+      rebuildClaimIndex(project);
       updated = {
         nodeId: node.node_id,
         comment: { ...comment },
-        depth: node.meta.thread.length
+        claims: storedClaims.map(function(entry) { return JSON.parse(JSON.stringify(entry)); }),
+        clarificationId: clarifiedClaim?.id || '',
+        contradictionId: contradictedClaim?.id || '',
+        reconciliationQuestionId: reconciliationQuestion?.node_id || '',
+        depth: countDistinctThreadClaims(node.meta.thread)
       };
     });
     if (updated) {
-      traceEvent('thread', 'refine-pending', 'summary-set', {
+      traceEvent('thread', 'refine-pending', 'extracted', {
         nodeId: updated.nodeId,
         commentId: updated.comment.id,
-        depth: updated.depth
+        claimCount: updated.claims.length,
+        clarifies: updated.clarificationId,
+        contradicts: updated.contradictionId,
+        questionId: updated.reconciliationQuestionId
       });
-      emitModelChange({ scope: 'item', itemId: updated.nodeId, commentId: updated.comment.id });
+      if (updated.contradictionId) {
+        traceEvent('claim', 'active', 'disputed', {
+          claimId: updated.contradictionId,
+          commentId: updated.comment.id,
+          questionId: updated.reconciliationQuestionId
+        });
+      }
+      emitModelChange({ scope: updated.reconciliationQuestionId ? 'now' : 'item', itemId: updated.nodeId, commentId: updated.comment.id });
     }
     return updated;
+  }
+
+  function setThreadCommentSummary(nodeId, commentId, summary) {
+    var value = String(summary || '').trim();
+    if (!value) return null;
+    return applyThreadExtraction(nodeId, commentId, { summary: value, claims: [] });
   }
 
   function getNodeThread(nodeId) {
@@ -751,7 +905,7 @@
           node_id: n.node_id,
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -767,7 +921,7 @@
           created_at: n.created_at, approved_at: n.resolved_at, node_id: n.node_id,
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -780,7 +934,7 @@
           insight_body: n.body, created_at: n.created_at, node_id: n.node_id,
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -814,7 +968,7 @@
           },
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: meta.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -830,7 +984,7 @@
           meta: n.meta || {},
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -848,7 +1002,7 @@
           source: n.source || 'question',
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
-          thread_depth: thread.length,
+          thread_depth: countDistinctThreadClaims(thread),
           thread_summary: n.meta?.thread_summary || (thread[thread.length - 1]?.summary || '')
         };
       });
@@ -2109,6 +2263,7 @@
     getActiveProject,
     appendThreadComment,
     setThreadCommentSummary,
+    applyThreadExtraction,
     getNodeThread,
     addAnswerNode,
     enrichAnswerNode,

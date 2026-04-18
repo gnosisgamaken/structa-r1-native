@@ -1,0 +1,12 @@
+{
+  "id": "y5_cleanup_after_crash",
+  "title": "diagnostic suite cleanup after crash",
+  "runtime_dump": "runtime/synthetic/y5_cleanup_after_crash.json",
+  "expect_report": {
+    "total": 35,
+    "passed": 20,
+    "failed": 2,
+    "skipped": 13,
+    "aborted": true
+  }
+}

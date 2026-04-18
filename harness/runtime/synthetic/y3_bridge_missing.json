@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "summary": { "total": 35, "passed": 30, "failed": 0, "skipped": 5 },
+  "results": [
+    { "id": "A1", "status": "skip", "error": { "message": "bridge unavailable" } }
+  ]
+}

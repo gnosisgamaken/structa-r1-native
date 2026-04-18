@@ -648,10 +648,10 @@
     };
     var startedAt = Date.now();
 
-    if (!runtimeCaps.hasBridge) {
+    if (options.forceFallbackServer || !runtimeCaps.hasBridge) {
       native?.traceEvent?.('image.dispatch', 'bridge-unavailable', 'fallback-server', {
         entryId: options.imageId || '',
-        reason: 'bridge unavailable'
+        reason: options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
       });
       if (!orchestrator.analyzeImage) {
         return Promise.resolve({ ok: false, error: 'bridge unavailable' });

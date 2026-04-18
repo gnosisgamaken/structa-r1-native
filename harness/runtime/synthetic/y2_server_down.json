@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "summary": { "total": 35, "passed": 34, "failed": 1, "skipped": 0 },
+  "results": [
+    { "id": "J1", "status": "fail", "error": { "message": "healthz failed" } }
+  ]
+}

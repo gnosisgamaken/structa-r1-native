@@ -13,6 +13,7 @@
   const MAX_ANSWERS = 120;
   const EXPORT_BATCH_SIZE = 33;
   const UI_STATE_PERSIST_DELAY_MS = 120;
+  const DIAGNOSTIC_PROJECT_NAME = '__diagnostic';
 
   function pushLimited(list, item, limit = MAX_MEMORY_ITEMS) {
     list.push(item);
@@ -79,6 +80,11 @@
       ctx: sanitizeTraceValue(ctx || {})
     };
     pushLimited(trace.events, entry, MAX_TRACE_ITEMS);
+    try {
+      window.dispatchEvent(new CustomEvent('structa-trace', {
+        detail: cloneValue(entry)
+      }));
+    } catch (_) {}
     return entry;
   }
 
@@ -116,6 +122,10 @@
       memory: cloneValue(memory),
       project: project,
       queue: queue,
+      queueState: {
+        items: queue,
+        paused: !!window.StructaProcessingQueue?.isPaused?.()
+      },
       trace: getTrace(),
       model: {
         questions_open: openQuestions,
@@ -1701,20 +1711,25 @@
   }
 
   function createProject(name, type) {
+    var options = arguments[2];
     ensureProjectRegistry();
+    var opts = options && typeof options === 'object' ? options : {};
     var rawName = String((name || '').trim() || 'Untitled Project');
     var normalizedName = lower(rawName);
     if (normalizedName === '' || normalizedName === 'untitled project' || normalizedName === 'project') {
       return syncActiveProjectAlias();
     }
-    if (activeProjectCount() >= 3) {
+    if (normalizedName === DIAGNOSTIC_PROJECT_NAME && !opts.internal) {
+      return { ok: false, error: 'reserved project name' };
+    }
+    if (!opts.bypassCap && activeProjectCount() >= 3) {
       updateUIState({
         project_cap_notice: 'three projects active — archive one to start another',
         last_surface: 'home'
       });
       return { ok: false, error: 'project cap reached' };
     }
-    var allowDuplicate = false;
+    var allowDuplicate = !!opts.allowDuplicate;
     var existing = allowDuplicate ? null : memory.projects.find(function(project) { return lower(project.name) === normalizedName; });
     if (existing) return switchProject(existing.project_id);
 
@@ -1736,7 +1751,9 @@
       project_cap_notice: ''
     });
     persist();
-    window.StructaLLM?.speakMilestone?.('project_live');
+    if (!opts.silentMilestone) {
+      window.StructaLLM?.speakMilestone?.('project_live');
+    }
     window.dispatchEvent(new CustomEvent('structa-memory-updated'));
     return project;
   }
@@ -1909,6 +1926,55 @@
       emitModelChange({ scope: 'all' });
       return { ok: true, project_id: memory.active_project_id };
     });
+  }
+
+  function restoreSnapshot(snapshot, options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var parsed = snapshot?.memory || snapshot;
+    if (!parsed || typeof parsed !== 'object') {
+      return Promise.resolve({ ok: false, error: 'invalid snapshot' });
+    }
+    var currentTrace = ensureTraceStore().events.slice();
+    var currentVoiceCalls = cloneValue(ensureTraceStore().voiceCalls);
+    var restored = cloneValue(parsed);
+    var queueItems = snapshot?.queueState?.items || snapshot?.queue || [];
+    var queuePaused = !!snapshot?.queueState?.paused;
+    if (opts.preserveCurrentTrace) {
+      var restoredTrace = restored.__trace && typeof restored.__trace === 'object' ? restored.__trace : {};
+      restoredTrace.events = Array.isArray(restoredTrace.events) ? restoredTrace.events.slice() : [];
+      var traceToAppend = Array.isArray(opts.appendTraceEvents)
+        ? opts.appendTraceEvents
+        : currentTrace;
+      traceToAppend.forEach(function(entry) {
+        restoredTrace.events.push(entry);
+      });
+      if (restoredTrace.events.length > MAX_TRACE_ITEMS) {
+        restoredTrace.events.splice(0, restoredTrace.events.length - MAX_TRACE_ITEMS);
+      }
+      restoredTrace.voiceCalls = opts.preserveCurrentVoiceCalls
+        ? currentVoiceCalls
+        : (restoredTrace.voiceCalls || currentVoiceCalls);
+      restored.__trace = restoredTrace;
+    }
+    Object.keys(memory).forEach(function(key) { delete memory[key]; });
+    Object.assign(memory, restored);
+    ensureProjectRegistry();
+    syncActiveProjectAlias();
+    rebuildLegacyViews();
+    ensureTraceStore();
+    if (window.StructaProcessingQueue?.restore) {
+      try {
+        window.StructaProcessingQueue.restore(queueItems, { paused: queuePaused });
+      } catch (_) {}
+    }
+    persist();
+    traceEvent('system', 'snapshot', 'restored', {
+      queueItems: Array.isArray(queueItems) ? queueItems.length : 0,
+      preservedTrace: !!opts.preserveCurrentTrace
+    });
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    emitModelChange({ scope: 'all' });
+    return Promise.resolve({ ok: true, project_id: memory.active_project_id });
   }
 
   function updateUIState(patch = {}, options = {}) {
@@ -2829,6 +2895,7 @@
     deleteProject,
     flushMemory,
     restoreLastFlushSnapshot,
+    restoreSnapshot,
     getMemory,
     getTriangleSlot,
     setTriangleSlot,

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "aborted": true,
+  "summary": { "total": 35, "passed": 20, "failed": 2, "skipped": 13 },
+  "results": [
+    { "id": "A3", "status": "pass" },
+    { "id": "Y5", "status": "fail", "error": { "message": "cleanup retry needed" } }
+  ]
+}

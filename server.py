@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 CLAIMS_EXTRACT_BUCKETS = {}
 CLAIMS_EXTRACT_PER_MINUTE = 10
+BUILD_SHA = os.environ.get("STRUCTA_BUILD_SHA", "workspace")
+BUILD_AT = os.environ.get("STRUCTA_BUILT_AT", "")
 
 
 def compact(text, limit=220):
@@ -1184,11 +1186,50 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             return None
 
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/healthz":
+            self.send_json(200, {
+                "ok": True,
+                "server_time": int(time.time()),
+            })
+            return
+        if parsed.path == "/buildinfo":
+            self.send_json(200, {
+                "ok": True,
+                "sha": BUILD_SHA,
+                "built_at": BUILD_AT,
+                "endpoints": [
+                    "/healthz",
+                    "/buildinfo",
+                    "/v1/diagnostic/echo",
+                    "/v1/voice/interpret",
+                    "/v1/image/context_prompt",
+                    "/v1/image/analyze",
+                    "/v1/claims/extract_from_text",
+                    "/v1/claims/backfill",
+                    "/v1/chain/digest_preview",
+                    "/v1/chain/step",
+                    "/v1/triangle/synthesize",
+                    "/v1/thread/extract",
+                    "/v1/project/title",
+                ],
+            })
+            return
+        return super().do_GET()
+
     def do_POST(self):
         parsed = urlparse(self.path)
         payload = self.read_json()
         if payload is None:
             self.send_json(400, {"ok": False, "error": "invalid json body"})
+            return
+        if parsed.path == "/v1/diagnostic/echo":
+            self.send_json(200, {
+                "ok": True,
+                "echo": payload,
+                "server_time": int(time.time()),
+            })
             return
         if parsed.path == "/v1/thread/refine":
             self.send_json(410, {"ok": False, "error": "thread refine retired", "redirect": "/v1/thread/extract"})

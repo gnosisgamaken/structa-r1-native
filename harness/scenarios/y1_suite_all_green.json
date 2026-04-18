@@ -1,0 +1,11 @@
+{
+  "id": "y1_suite_all_green",
+  "title": "diagnostic suite all green",
+  "runtime_dump": "runtime/synthetic/y1_suite_all_green.json",
+  "expect_report": {
+    "total": 35,
+    "passed": 35,
+    "failed": 0,
+    "skipped": 0
+  }
+}

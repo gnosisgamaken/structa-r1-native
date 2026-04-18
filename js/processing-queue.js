@@ -359,10 +359,56 @@
         payload: clone(job.payload),
         startedAt: job.startedAt || 0,
         enqueuedAt: job.enqueuedAt || 0,
+        timeoutMs: job.timeoutMs || 0,
         elapsedMs: Math.max(0, now() - (job.startedAt || job.enqueuedAt || now())),
         error: job.error || ''
       };
     });
+  }
+
+  function restore(items, options) {
+    const opts = options || {};
+    const list = Array.isArray(items) ? items : [];
+    if (activeTimer) {
+      clearTimeout(activeTimer);
+      activeTimer = null;
+    }
+    inFlight = null;
+    pending = [];
+    blocked = [];
+    list.forEach(function(job) {
+      if (!job || !job.id) return;
+      const restored = {
+        id: job.id,
+        kind: job.kind,
+        priority: PRIORITY_ORDER.includes(job.priority) ? job.priority : 'P2',
+        payload: clone(job.payload),
+        origin: clone(job.origin),
+        status: job.status === 'blocked' ? 'blocked' : (job.status === 'running' ? 'running' : 'pending'),
+        enqueuedAt: Number(job.enqueuedAt || now()),
+        startedAt: Number(job.startedAt || 0),
+        timeoutMs: Number(job.timeoutMs || 0),
+        error: job.error || ''
+      };
+      if (restored.status === 'blocked') {
+        blocked.push(restored);
+      } else if (restored.status === 'running' && !inFlight) {
+        inFlight = restored;
+      } else {
+        restored.status = 'pending';
+        pending.push(restored);
+      }
+    });
+    paused = !!opts.paused;
+    if (inFlight) {
+      inFlight.status = 'blocked';
+      inFlight.error = inFlight.error || 'restored as blocked';
+      blocked.unshift(inFlight);
+      inFlight = null;
+    }
+    persist();
+    if (!paused) maybeProcess();
+    return snapshot();
   }
 
   function countByPriority(maxPriority) {
@@ -385,6 +431,7 @@
     resume: resume,
     isPaused: isPaused,
     snapshot: snapshot,
+    restore: restore,
     on: on,
     registerHandler: registerHandler,
     countByPriority: countByPriority

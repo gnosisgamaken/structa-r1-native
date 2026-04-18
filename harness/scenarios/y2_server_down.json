@@ -1,0 +1,11 @@
+{
+  "id": "y2_server_down",
+  "title": "diagnostic suite server down",
+  "runtime_dump": "runtime/synthetic/y2_server_down.json",
+  "expect_report": {
+    "total": 35,
+    "passed": 34,
+    "failed": 1,
+    "skipped": 0
+  }
+}

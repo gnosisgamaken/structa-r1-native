@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "summary": { "total": 35, "passed": 34, "failed": 1, "skipped": 0 },
+  "results": [
+    { "id": "B2", "status": "fail", "error": { "message": "violation count unchanged" } }
+  ]
+}

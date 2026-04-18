@@ -1,0 +1,11 @@
+{
+  "id": "y4_doctrine_violation_injected",
+  "title": "diagnostic suite doctrine violation injected",
+  "runtime_dump": "runtime/synthetic/y4_doctrine_violation_injected.json",
+  "expect_report": {
+    "total": 35,
+    "passed": 34,
+    "failed": 1,
+    "skipped": 0
+  }
+}

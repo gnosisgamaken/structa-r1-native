@@ -28,6 +28,7 @@
   const native = window.StructaNative;
   const router = window.StructaActionRouter;
   const processingQueue = window.StructaProcessingQueue;
+  const diagnostics = window.StructaDiagnostics;
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
 
   // === Constants ===
@@ -965,12 +966,18 @@
     entries.forEach(entry => {
       const row = document.createElement('div');
       row.className = 'entry';
+      if (entry?.kind) row.dataset.kind = lower(entry.kind);
+      if (entry?.actionId) row.dataset.action = entry.actionId;
+      if (entry?.disabled) row.setAttribute('aria-disabled', 'true');
       const time = document.createElement('span');
       time.className = 'muted';
-      time.textContent = `[${formatLogTime(entry.created_at)}]`;
+      time.textContent = entry?.actionId
+        ? 'tap'
+        : `[${formatLogTime(entry.created_at || new Date().toISOString())}]`;
       row.appendChild(time);
       const message = document.createElement('span');
-      message.textContent = lower(entry.message || 'event');
+      const detail = entry?.detail ? ' · ' + lower(entry.detail) : '';
+      message.textContent = lower(entry.message || 'event') + detail;
       row.appendChild(message);
       fragment.appendChild(row);
     });
@@ -1026,22 +1033,32 @@
     const previousBottomOffset = Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight));
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
     const traceMode = !!stateData.logTraceMode;
-    const entries = traceMode
-      ? getTraceEntries(logOpen ? 20 : 5)
-      : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
+    const diagnosticRows = logOpen && diagnostics?.getDrawerRows ? diagnostics.getDrawerRows() : null;
+    const entries = diagnosticRows && diagnosticRows.length
+      ? diagnosticRows
+      : (traceMode
+        ? getTraceEntries(logOpen ? 20 : 5)
+        : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
-      logPreview.textContent = traceMode ? 'trace empty' : getQueueLine();
+      logPreview.textContent = traceMode ? 'trace empty' : (diagnosticRows ? 'diagnostics ready' : getQueueLine());
       updateLogOps();
       if (logOpen) logPinnedToBottom = true;
       return;
     }
     renderLogRows(entries);
-    logPreview.textContent = traceMode ? 'trace · ' + entries.length : latestLogText();
+    if (diagnosticRows) {
+      logPreview.textContent = diagnostics?.getState?.()?.running ? 'diagnostics running' : 'diagnostics';
+    } else {
+      logPreview.textContent = traceMode ? 'trace · ' + entries.length : latestLogText();
+    }
     updateLogOps();
     if (logOpen) {
-      if (followLatest) {
+      if (diagnosticRows) {
+        log.scrollTop = 0;
+        logPinnedToBottom = true;
+      } else if (followLatest) {
         log.scrollTop = log.scrollHeight;
         logPinnedToBottom = true;
       } else {
@@ -1069,6 +1086,21 @@
   log?.addEventListener('scroll', function() {
     if (!logOpen) return;
     logPinnedToBottom = isLogNearBottom();
+  });
+
+  log?.addEventListener('pointerup', function(event) {
+    const row = event.target && event.target.closest ? event.target.closest('[data-action]') : null;
+    if (!row || row.getAttribute('aria-disabled') === 'true') return;
+    const actionId = row.dataset.action || '';
+    if (!actionId || !diagnostics?.handleAction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fireFeedback('touch-commit');
+    diagnostics.handleAction(actionId).then(function() {
+      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+    }).catch(function() {
+      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+    });
   });
 
   logDrawer?.addEventListener('pointerup', function(event) {
@@ -5835,6 +5867,11 @@
     )) {
       scheduleRender();
     }
+  });
+
+  window.addEventListener('structa-diagnostics-progress', function() {
+    if (!logOpen) return;
+    refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
   });
 
   // === Voice command handler ===

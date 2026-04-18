@@ -47,7 +47,7 @@ def load_trace_scenarios(path: pathlib.Path):
         scenarios: list[dict] = []
         for candidate in sorted(path.glob("*.json")):
             stem = candidate.stem.lower()
-            if not stem or stem[0] not in {"s", "u", "v", "w", "x"}:
+            if not stem or stem[0] not in {"s", "u", "v", "w", "x", "y"}:
                 continue
             if len(stem) < 2 or not stem[1].isdigit():
                 continue
@@ -423,8 +423,25 @@ def collect_orphan_evidence(snapshot: dict) -> list[dict]:
     return orphans
 
 
+def match_expect_report(report: dict, expected: dict) -> list[dict]:
+    mismatches = []
+    summary = report.get("summary") or {}
+    if "total" in expected and summary.get("total") != expected.get("total"):
+        mismatches.append({"index": "report_total", "expected": expected.get("total"), "actual": summary.get("total")})
+    if "passed" in expected and summary.get("passed") != expected.get("passed"):
+        mismatches.append({"index": "report_passed", "expected": expected.get("passed"), "actual": summary.get("passed")})
+    if "failed" in expected and summary.get("failed") != expected.get("failed"):
+        mismatches.append({"index": "report_failed", "expected": expected.get("failed"), "actual": summary.get("failed")})
+    if "skipped" in expected and summary.get("skipped") != expected.get("skipped"):
+        mismatches.append({"index": "report_skipped", "expected": expected.get("skipped"), "actual": summary.get("skipped")})
+    if "aborted" in expected and bool(report.get("aborted")) != bool(expected.get("aborted")):
+        mismatches.append({"index": "report_aborted", "expected": bool(expected.get("aborted")), "actual": bool(report.get("aborted"))})
+    return mismatches
+
+
 def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
     snapshot, snapshot_path = load_runtime_dump(runtime_dir, scenario)
+    report = snapshot.get("report") if isinstance(snapshot.get("report"), dict) else snapshot
     trace_store = snapshot.get("trace") or {}
     tail = trace_store.get("events") or scenario.get("trace_tail") or []
     expected = scenario.get("expect_tail") or []
@@ -492,15 +509,19 @@ def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
     chain_expect = scenario.get("expect_chain") or {}
     chain_mismatches = match_expect_chain(snapshot, chain_expect) if chain_expect else []
     mismatches.extend(chain_mismatches)
+    report_expect = scenario.get("expect_report") or {}
+    report_mismatches = match_expect_report(report, report_expect) if report_expect else []
+    mismatches.extend(report_mismatches)
     orphan_mismatches = []
     if scenario.get("expect_no_orphan_evidence"):
         orphan_mismatches = collect_orphan_evidence(snapshot)
         mismatches.extend([{"index": "orphan_evidence", "expected": True, "actual": item} for item in orphan_mismatches])
+    tail_ok = (not expected) or all(matched)
     return {
         "id": scenario.get("id", "unknown"),
         "title": scenario.get("title", scenario.get("id", "trace scenario")),
         "kind": "trace",
-        "valid": bool(expected) and all(matched) and voice_ok and model_ok and ui_ok and not claim_mismatches and not question_mismatches and not chain_mismatches and not orphan_mismatches,
+        "valid": tail_ok and voice_ok and model_ok and ui_ok and not claim_mismatches and not question_mismatches and not chain_mismatches and not report_mismatches and not orphan_mismatches,
         "expected_count": len(expected),
         "actual_count": len(tail),
         "matched": matched,

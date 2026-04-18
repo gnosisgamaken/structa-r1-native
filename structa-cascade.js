@@ -84,7 +84,6 @@
   const TUTORIAL_SKIP_MOVE_TOLERANCE = 12;
   const TUTORIAL_STEP2_TIMEOUT_MS = 45000;
   const TUTORIAL_STEP2_START_TIMEOUT_MS = 800;
-  const DOUBLE_SHAKE_WINDOW_MS = 600;
   const FLUSH_CONFIRM_HOLD_MS = 1000;
   const LOG_FOLLOW_THRESHOLD = 24;
   const WHEEL_STEP_THRESHOLD = 36;
@@ -131,8 +130,6 @@
   let tutorialSkipSuppressClickUntil = 0;
   let tutorialStep2HintTimer = null;
   let flushConfirmTimer = null;
-  let lastShakePairAt = 0;
-
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
     fpsMeterEl = document.createElement('div');
@@ -511,7 +508,7 @@
   }
 
   function onboardingPaused() {
-    return !!getUIState().onboarding_paused;
+    return false;
   }
 
   function skippedOnboardingSteps() {
@@ -550,7 +547,7 @@
   }
 
   function tutorialSkipEligible(step = getOnboardingStep()) {
-    if (!onboardingActive() || onboardingPaused()) return false;
+    if (!onboardingActive()) return false;
     return step === 2 || step === 4;
   }
 
@@ -566,12 +563,12 @@
 
   function armTutorialStep2HintTimer() {
     clearTutorialStep2HintTimer();
-    if (!onboardingActive() || onboardingPaused() || getOnboardingStep() !== 2) return;
+    if (!onboardingActive() || getOnboardingStep() !== 2) return;
     const enteredAt = Number(getUIState().tutorial_step_entered_at || Date.now());
     const remaining = Math.max(0, TUTORIAL_STEP2_TIMEOUT_MS - (Date.now() - enteredAt));
     tutorialStep2HintTimer = setTimeout(function() {
       tutorialStep2HintTimer = null;
-      if (!onboardingActive() || onboardingPaused() || getOnboardingStep() !== 2) return;
+      if (!onboardingActive() || getOnboardingStep() !== 2) return;
       traceTutorial('tutorial.step', 'timeout', '2', { step: 2 });
       showTutorialStep2Fallback('timeout');
     }, remaining || 1);
@@ -622,7 +619,7 @@
   }
 
   function onboardingAllowsProjectSwitcher() {
-    return getOnboardingStep() === 1 || onboardingPaused();
+    return getOnboardingStep() === 1;
   }
 
   function setOnboardingStep(step, options = {}) {
@@ -639,6 +636,34 @@
       chainStarted = true;
       window.StructaImpactChain?.start?.(2);
     }
+  }
+
+  function resetTutorialSurfaceState() {
+    clearTutorialStep2HintTimer();
+    stateData.projectFlushConfirm = false;
+    stateData.flushRequestSource = '';
+    stateData.flushConfirmHolding = false;
+    stateData.showCaptureEntryId = '';
+    stateData.showCaptureIndex = 0;
+    stateData.showStatus = '';
+    stateData.tellEntryIndex = 0;
+    stateData.tellStatus = '';
+    stateData.knowLaneIndex = 0;
+    stateData.knowItemIndex = 0;
+    stateData.knowChipIndex = 0;
+    stateData.knowFocusNodeId = '';
+    stateData.knowBodyScrollTop = 0;
+    stateData.knowBodyMaxScroll = 0;
+    stateData.decisionIndex = 0;
+    stateData.selectedOption = 0;
+    stateData.projectListIndex = 0;
+    stateData.inlinePTTSurface = '';
+    stateData.triangleStatus = '';
+    window.__STRUCTA_PTT_TARGET__ = null;
+    window.__STRUCTA_INLINE_PTT__ = false;
+    voiceReturnState = STATES.HOME;
+    cameraReturnState = STATES.HOME;
+    logReturnState = STATES.HOME;
   }
 
   function homeOnboardingSelectionAllowed(cardId) {
@@ -1076,7 +1101,7 @@
     document.body.classList.remove('input-locked');
     if (onboardingActive()) {
       const step = getOnboardingStep();
-      if (!onboardingPaused()) markTutorialStepEntered(step);
+      markTutorialStepEntered(step);
       const allowed = onboardingAllowedCardIds(step);
       const preferredCardId = step === 4 ? 'show' : (step === 3 ? 'know' : allowed[0]);
       if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
@@ -1100,7 +1125,7 @@
     const activeIndex = Math.max(0, projects.findIndex(project => project.project_id === activeId));
     stateData.projectListIndex = typeof data.projectListIndex === 'number' ? data.projectListIndex : activeIndex;
     stateData.projectFlushConfirm = false;
-    if (onboardingActive() && !onboardingPaused()) markTutorialStepEntered(getOnboardingStep());
+    if (onboardingActive()) markTutorialStepEntered(getOnboardingStep());
   };
 
   stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
@@ -1227,13 +1252,16 @@
     const voiceOverlay = document.getElementById('voice-overlay');
     const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision', log: 'to log' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
+    const suppressTutorialVoiceChrome = !!(data.answeringQuestion?.onboarding && onboardingActive() && getOnboardingStep() === 2);
     const contextLabelText = data.triangleMode
       ? 'your angle'
-      : data.answeringQuestion
+      : suppressTutorialVoiceChrome
+        ? ''
+        : data.answeringQuestion
         ? 'answering ask'
         : (surface && surfaceMap[surface] ? surfaceMap[surface] : '');
     if (voiceOverlay) {
-      if (data.answeringQuestion) voiceOverlay.classList.add('answer-mode');
+      if (data.answeringQuestion && !suppressTutorialVoiceChrome) voiceOverlay.classList.add('answer-mode');
       else voiceOverlay.classList.remove('answer-mode');
     }
     window.StructaVoice?.setContextLabel?.(contextLabelText);
@@ -1288,7 +1316,7 @@
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
     stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
-    if (onboardingActive() && !onboardingPaused()) markTutorialStepEntered(getOnboardingStep());
+    if (onboardingActive()) markTutorialStepEntered(getOnboardingStep());
   };
 
   // --- KNOW_DETAIL ---
@@ -1316,7 +1344,7 @@
     setLogDrawer(false);
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
-    if (onboardingActive() && !onboardingPaused()) {
+    if (onboardingActive()) {
       markTutorialStepEntered(getOnboardingStep());
       armTutorialStep2HintTimer();
     } else {
@@ -1562,19 +1590,6 @@
       fireFeedback('blocked');
       return false;
     }
-    if (onboardingPaused()) {
-      const resumedStep = getOnboardingStep();
-      native?.updateUIState?.({ onboarding_paused: false });
-      traceTutorial('tutorial', 'resumed', String(resumedStep), { step: resumedStep });
-      fireFeedback('touch-commit');
-      if (resumedStep >= 4) {
-        selectedIndex = cards.findIndex(function(card) { return card.id === 'know'; });
-        transition(STATES.KNOW_BROWSE);
-      } else {
-        transition(STATES.NOW_BROWSE);
-      }
-      return true;
-    }
     if (onboardingActive() && getOnboardingStep() === 1) {
       fireFeedback('touch-commit');
       setOnboardingStep(2, { via: 'primary' });
@@ -1644,10 +1659,17 @@
     }
     native.flushMemory().then(function() {
       const undoAvailable = Number(native?.getUIState?.()?.flush_undo_available_until || 0) > Date.now();
-      stateData.flushRequestSource = '';
-      stateData.projectFlushConfirm = false;
-      stateData.showCaptureEntryId = '';
-      stateData.showCaptureIndex = 0;
+      resetTutorialSurfaceState();
+      native?.updateUIState?.({
+        selected_card_id: 'now',
+        last_surface: 'home',
+        onboarding_paused: false,
+        tutorial_step2_fallback_visible: false,
+        tutorial_step2_fallback_reason: '',
+        tutorial_step2_fallback_index: 0,
+        tutorial_step2_ptt_attempted: false,
+        tutorial_step4_camera_denied: false
+      });
       if (window.StructaHeartbeat?.stop) {
         try { window.StructaHeartbeat.stop(); } catch (_) {}
       }
@@ -1707,17 +1729,6 @@
         inferredName: ''
       }
     }));
-    return true;
-  }
-
-  function pauseTutorial(reason = 'double-shake') {
-    if (!onboardingActive()) return false;
-    const step = getOnboardingStep();
-    clearTutorialStep2HintTimer();
-    native?.updateUIState?.({ onboarding_paused: true });
-    traceTutorial('tutorial', 'paused', String(step), { step: step, reason: reason });
-    selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
-    transition(STATES.NOW_BROWSE);
     return true;
   }
 
@@ -1889,7 +1900,7 @@
       cooldownRemaining,
       storedImpacts: storedImpacts.slice(0, 5),
       onboardingStep,
-      onboardingPaused: !!ui.onboarding_paused,
+      onboardingPaused: false,
       flushRequested: !!stateData.flushRequestSource,
       flushRequestSource: stateData.flushRequestSource || '',
       tutorialStep2FallbackVisible: !!ui.tutorial_step2_fallback_visible,
@@ -1921,27 +1932,6 @@
         'font-size': '12'
       });
       text(226, 276, 'undo stays for 120s', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
-    if (data.onboardingPaused) {
-      text(18, cardY + 18, 'tutorial paused', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      wrapTextBlock(undefined, 'shake to projects to resume, or use flush below to restart cleanly.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 5);
-      text(18, cardY + 132, 'double-shake paused safely', {
-        fill: 'rgba(8,8,8,0.54)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
-      text(226, 276, 'shake · resume | flush · restart', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4727,10 +4717,6 @@
       case STATES.NOW_BROWSE: {
         if (onboardingActive()) {
           const step = getOnboardingStep();
-          if (onboardingPaused()) {
-            fireFeedback('blocked');
-            return;
-          }
           if (step === 0) {
             fireFeedback('touch-commit');
             setOnboardingStep(1, { via: 'primary' });
@@ -5582,15 +5568,7 @@
       lastShakeAt = now;
       return;
     }
-    if (onboardingActive() && now - lastShakeAt < DOUBLE_SHAKE_WINDOW_MS) {
-      lastShakePairAt = 0;
-      lastShakeAt = now;
-      clearPendingSideClick();
-      pauseTutorial('double-shake');
-      return;
-    }
     if (now - lastShakeAt < 2500) return;
-    lastShakePairAt = now;
     lastShakeAt = now;
     clearPendingSideClick();
     if (currentState === STATES.TRIANGLE_OPEN) {

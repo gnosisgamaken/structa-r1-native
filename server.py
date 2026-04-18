@@ -537,6 +537,66 @@ def validate_chain_response_shape(data):
     return errors
 
 
+def normalize_triangle_parent_ids(payload):
+    parent_ids = []
+    for item_key in ("itemA", "itemB"):
+        item = payload.get(item_key) if isinstance(payload.get(item_key), dict) else {}
+        for claim_id in item.get("claimIds") or []:
+            value = compact(claim_id, 64)
+            if value and value not in parent_ids:
+                parent_ids.append(value)
+    return parent_ids
+
+
+def normalize_triangle_claim_rows(payload):
+    rows = []
+    for label, item_key in (("A", "itemA"), ("B", "itemB")):
+        item = payload.get(item_key) if isinstance(payload.get(item_key), dict) else {}
+        claims = item.get("claims") or []
+        rows.append(
+            {
+                "itemId": compact(item.get("itemId") or "", 64),
+                "label": label,
+                "claims": [
+                    {
+                        "id": compact(claim_entry.get("id") or "", 64),
+                        "text": compact(claim_entry.get("text") or "", 160),
+                        "kind": compact(claim_entry.get("kind") or "fact", 24).lower(),
+                        "status": compact(claim_entry.get("status") or "active", 24).lower(),
+                        "branchId": compact(claim_entry.get("branchId") or "main", 48),
+                    }
+                    for claim_entry in claims
+                    if isinstance(claim_entry, dict) and compact(claim_entry.get("id") or "", 64) and compact(claim_entry.get("text") or "", 160)
+                ],
+            }
+        )
+    return rows
+
+
+def validate_triangle_response_shape(data):
+    status = compact(data.get("status") or "", 24).lower()
+    if status not in {"synthesized", "ambiguous"}:
+        return ["triangle:invalid status"]
+    if compact(data.get("body") or "", 40):
+        return ["triangle:body not allowed"]
+    if status == "synthesized":
+        derived_claims = data.get("derived_claims") or []
+        if not isinstance(derived_claims, list) or not derived_claims:
+            return ["triangle:missing derived_claims"]
+        errors = []
+        for item in derived_claims:
+            if not normalize_chain_evidence(item.get("evidence")):
+                errors.append("triangle:derived claim missing evidence")
+        return errors
+    question = data.get("question") if isinstance(data.get("question"), dict) else {}
+    meta = question.get("meta") if isinstance(question.get("meta"), dict) else {}
+    if not compact(question.get("body") or "", 160):
+        return ["triangle:missing ambiguity question"]
+    if not normalize_chain_evidence(meta.get("evidence_claims")):
+        return ["triangle:ambiguity question missing evidence"]
+    return []
+
+
 def chain_prepare(payload):
     project = payload.get("project") or {}
     focus = normalize_chain_focus(payload.get("focus"))
@@ -599,7 +659,23 @@ def chain_normalize(payload):
         }
     errors = validate_chain_response_shape(parsed)
     if errors:
-        return {"ok": False, "error": "; ".join(errors)}
+        return {
+            "ok": True,
+            "status": "ambiguous",
+            "question": {
+                "body": "which connection matters most here?",
+                "meta": {
+                    "evidence_claims": parent_ids[:2],
+                    "rationale": compact("; ".join(errors), 180),
+                    "priority": "normal",
+                    "branch_id": compact((payload.get("branchContext") or {}).get("id") or "main", 48),
+                    "source": "triangle",
+                },
+            },
+            "step_metadata": {"confidence": 0.0, "latencyMs": 0, "model": ""},
+            "ui": {"summary": "triangle stayed ambiguous", "logLine": "triangle ambiguous"},
+            "meta": {"kind": "triangle"},
+        }
 
     produced = parsed.get("produced") if isinstance(parsed.get("produced"), dict) else {}
     normalized = {
@@ -658,63 +734,152 @@ def chain_normalize(payload):
 
 def triangle_prepare(payload):
     project = payload.get("project") or {}
-    point_a = payload.get("pointA") or {}
-    point_b = payload.get("pointB") or {}
-    angle = compact((payload.get("input") or {}).get("angle") or "", 280)
-    image_data = (point_b.get("imageBase64") or point_a.get("imageBase64") or "")
+    item_a = payload.get("itemA") or {}
+    item_b = payload.get("itemB") or {}
+    angle = payload.get("angle") if isinstance(payload.get("angle"), dict) else {}
+    branch_context = payload.get("branchContext") if isinstance(payload.get("branchContext"), dict) else {}
+    claim_rows = normalize_triangle_claim_rows(payload)
 
     lines = [
-        "You are Structa, a precision tool for extracting derived insight.",
-        "The user has triangulated three inputs and is asking you to synthesize them into one sharp signal.",
+        "You are Structa's constrained triangle reasoner.",
+        "Reason only from the typed claim graph below.",
+        "Every derived claim must cite at least two parent ids from the parent set.",
+        "If the bridge is weak or ambiguous, return an ambiguity question instead of forcing a synthesis.",
+        "Return strict JSON only.",
         "",
-        "PROJECT",
-    ] + build_project_lines(project)
-
-    lines.extend([
+        json.dumps({
+            "project": {
+                "name": project.get("name") or "",
+                "type": project.get("type") or "",
+                "summary": compact(project.get("summary") or "", 240),
+            },
+            "branchContext": {
+                "id": compact(branch_context.get("id") or "main", 48),
+                "name": compact(branch_context.get("name") or "main", 48),
+                "parentBranchId": compact(branch_context.get("parentBranchId") or "", 48),
+            },
+            "itemA": {
+                "itemId": compact(item_a.get("itemId") or "", 64),
+                "claimIds": [claim_entry["id"] for claim_entry in claim_rows[0]["claims"]],
+                "claims": claim_rows[0]["claims"],
+            },
+            "itemB": {
+                "itemId": compact(item_b.get("itemId") or "", 64),
+                "claimIds": [claim_entry["id"] for claim_entry in claim_rows[1]["claims"]],
+                "claims": claim_rows[1]["claims"],
+            },
+            "angle": {
+                "text": compact(angle.get("text") or "", 280),
+                "sttConfidence": float(angle.get("sttConfidence") or 0.0),
+            },
+        }, ensure_ascii=False),
         "",
-        f"POINT A — {point_a.get('type', 'context')} · {point_a.get('time', 'recent')}",
-        compact(point_a.get("body") or "", 220),
-        "",
-        f"POINT B — {point_b.get('type', 'context')} · {point_b.get('time', 'recent')}",
-        compact(point_b.get("body") or "", 220),
-        "",
-        "ANGLE",
-        angle,
-        "",
-        "Return exactly:",
-        "SIGNAL: <one sentence, max 18 words>",
-        "QUESTION: <optional follow-up, max 12 words>",
-    ])
+        "Return JSON with this shape:",
+        "{",
+        '  "status": "synthesized" | "ambiguous",',
+        '  "title": "...",',
+        '  "branchId": "main",',
+        '  "derived_claims": [{ "text": "...", "kind": "fact", "branchId": "main", "evidence": ["claim-id-a","claim-id-b"] }],',
+        '  "unresolved_tensions": [{ "between": ["claim-id-a","claim-id-b"], "note": "..." }],',
+        '  "question": { "body": "...", "meta": { "evidence_claims": ["claim-id-a","claim-id-b"], "rationale": "..." } },',
+        '  "step_metadata": { "confidence": 0.0 }',
+        "}",
+        "When status is ambiguous, derived_claims must be empty and question must be present.",
+        "Do not return any body field or free-form prose summary."
+    ]
 
     return {
         "ok": True,
         "llm": {
             "prompt": "\n".join(lines),
-            "imageBase64": image_data,
             "timeout": 25000,
             "priority": payload.get("policy", {}).get("priority", "high"),
         },
         "ui": {"summary": "triangle ready", "logLine": "triangle synthesizing"},
-        "meta": {"kind": "triangle"},
+        "meta": {"kind": "triangle", "parent_ids": normalize_triangle_parent_ids(payload)},
     }
 
 
 def triangle_normalize(payload):
-    raw = payload.get("rawResponse") or ""
-    parsed = parse_labeled_lines(raw)
-    signal = parsed.get("SIGNAL") or compact(raw, 120)
-    question = parsed.get("QUESTION", "")
-    artifacts = [artifact("signal", signal, title="triangle signal", source="triangle")]
-    if question:
-        artifacts.append(artifact("question", question, title="triangle follow up", source="triangle"))
-    claims = [claim(signal, kind="fact", source="triangle", confidence=0.7)]
-    if question:
-        claims.append(claim(question, kind="question", source="triangle", confidence=0.62))
+    parsed = extract_json_block(payload.get("rawResponse") or "")
+    if not isinstance(parsed, dict) or not parsed:
+        parsed = {}
+    errors = validate_triangle_response_shape(parsed) if parsed else ["triangle:invalid response"]
+    parent_ids = normalize_triangle_parent_ids(payload)
+
+    if errors:
+        return {"ok": False, "error": "; ".join(errors)}
+
+    status = compact(parsed.get("status") or "ambiguous", 24).lower()
+    if status == "synthesized":
+        derived_claims = []
+        for item in parsed.get("derived_claims") or []:
+            evidence = normalize_chain_evidence(item.get("evidence"))
+            if len(evidence) < 2:
+                continue
+            derived_claims.append({
+                "text": compact(item.get("text") or "", 160),
+                "kind": compact(item.get("kind") or "fact", 24).lower(),
+                "branchId": compact(item.get("branchId") or (payload.get("branchContext") or {}).get("id") or "main", 48),
+                "evidence": evidence,
+                "source": "triangle",
+                "confidence": float(item.get("confidence") or 0.72),
+            })
+        if not derived_claims:
+            status = "ambiguous"
+            parsed["question"] = parsed.get("question") or {
+                "body": "which connection matters most here?",
+                "meta": {
+                    "evidence_claims": parent_ids[:2],
+                    "rationale": "triangle lacked enough grounded overlap",
+                }
+            }
+        else:
+            tensions = []
+            for entry in parsed.get("unresolved_tensions") or []:
+                between = normalize_chain_evidence(entry.get("between"))[:2]
+                if len(between) == 2:
+                    tensions.append({
+                        "between": between,
+                        "note": compact(entry.get("note") or "", 120),
+                    })
+            return {
+                "ok": True,
+                "status": "synthesized",
+                "title": compact(parsed.get("title") or "triangle signal", 72),
+                "branchId": compact(parsed.get("branchId") or (payload.get("branchContext") or {}).get("id") or "main", 48),
+                "derived_claims": derived_claims,
+                "unresolved_tensions": tensions,
+                "step_metadata": {
+                    "confidence": float((parsed.get("step_metadata") or {}).get("confidence") or 0.0),
+                    "latencyMs": int((parsed.get("step_metadata") or {}).get("latencyMs") or 0),
+                    "model": compact((parsed.get("step_metadata") or {}).get("model") or "", 64),
+                },
+                "ui": {"summary": compact(parsed.get("title") or "triangle signal", 72), "logLine": "triangle ready"},
+                "meta": {"kind": "triangle"},
+            }
+
+    question = parsed.get("question") if isinstance(parsed.get("question"), dict) else {}
+    meta = question.get("meta") if isinstance(question.get("meta"), dict) else {}
     return {
         "ok": True,
-        "artifacts": artifacts,
-        "claims": claims,
-        "ui": {"summary": signal, "logLine": "triangle ready"},
+        "status": "ambiguous",
+        "question": {
+            "body": compact(question.get("body") or "which connection matters most here?", 160),
+            "meta": {
+                "evidence_claims": normalize_chain_evidence(meta.get("evidence_claims"))[:4] or parent_ids[:2],
+                "rationale": compact(meta.get("rationale") or "triangle stayed ambiguous", 180),
+                "priority": "normal",
+                "branch_id": compact((payload.get("branchContext") or {}).get("id") or "main", 48),
+                "source": "triangle",
+            }
+        },
+        "step_metadata": {
+            "confidence": float((parsed.get("step_metadata") or {}).get("confidence") or 0.0),
+            "latencyMs": int((parsed.get("step_metadata") or {}).get("latencyMs") or 0),
+            "model": compact((parsed.get("step_metadata") or {}).get("model") or "", 64),
+        },
+        "ui": {"summary": compact(question.get("body") or "triangle stayed ambiguous", 72), "logLine": "triangle ambiguous"},
         "meta": {"kind": "triangle"},
     }
 

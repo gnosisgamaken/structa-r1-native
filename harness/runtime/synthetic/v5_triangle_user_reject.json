@@ -1,0 +1,25 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T16:12:00.000Z", "flow": "triangle.synth.resolved", "from": "triangle", "to": "sig-tri-2", "ctx": { "signalId": "sig-tri-2", "derivedClaimCount": 2, "tensionCount": 0 } },
+      { "t": "2026-04-18T16:12:01.000Z", "flow": "triangle.synth.rejected_by_user", "from": "sig-tri-2", "to": "archived", "ctx": { "signalId": "sig-tri-2", "claimCount": 2 } }
+    ],
+    "voiceCalls": { "total": 1, "violations": 0, "byKind": { "triangle_captured": 1 } }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-parent-1", "source": "voice", "kind": "intent", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-parent-2", "source": "voice", "kind": "constraint", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-tri-1", "source": "triangle", "kind": "fact", "status": "superseded", "branchId": "main", "evidence": ["claim-parent-1", "claim-parent-2"] },
+      { "id": "claim-tri-2", "source": "triangle", "kind": "fact", "status": "superseded", "branchId": "main", "evidence": ["claim-parent-1", "claim-parent-2"] }
+    ],
+    "answers": [],
+    "nodes": [
+      { "node_id": "sig-tri-2", "type": "insight", "status": "archived", "meta": { "triangle_format": "claims-v1", "claim_ids": ["claim-tri-1", "claim-tri-2"] } }
+    ],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

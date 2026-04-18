@@ -1792,15 +1792,25 @@
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '' }) => {
-      const claimsForItem = node_id ? (native?.getClaimsForItem?.(node_id) || []) : [];
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '', meta = {} }) => {
+      const claimsForItem = node_id ? (native?.getClaimsForItem?.(node_id) || []).filter(function(claim) {
+        const statusValue = lower(claim?.status || 'active');
+        return statusValue === 'active' || statusValue === 'disputed';
+      }) : [];
       const evidenceStrength = claimsForItem.reduce(function(max, claim) {
         return Math.max(max, Array.isArray(claim?.evidence) ? claim.evidence.length : 0);
       }, 0);
+      const normalizedMeta = meta && typeof meta === 'object' ? JSON.parse(JSON.stringify(meta)) : {};
+      const triangleClaims = triangulated
+        ? claimsForItem.filter(function(claim) { return lower(claim?.source || '') === 'triangle'; })
+        : [];
+      const triangleBody = triangulated && normalizedMeta?.triangle_format === 'claims-v1' && triangleClaims.length
+        ? triangleClaims.slice(0, 3).map(function(claim) { return lower(normalizeTinyText(claim?.text || '')); }).join('\n')
+        : '';
       return classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
-      body: lower(normalizeTinyText(body || '')),
+      body: lower(normalizeTinyText(triangleBody || body || '')),
       next: lower(normalizeTinyText(next || '')),
       created_at: created_at || new Date().toISOString(),
       source: source || lane,
@@ -1809,6 +1819,8 @@
       node_id: node_id || '',
       links: Array.isArray(links) ? links.slice() : [],
       triangulated: !!triangulated,
+      meta: normalizedMeta,
+      claimsForItem: claimsForItem,
       thread: cloneThread(thread),
       threadDepth: Math.max(0, Number(providedThreadDepth !== null ? providedThreadDepth : threadDepth(thread))),
       threadSummary: lower(normalizeTinyText(threadSummary || '')),
@@ -1866,7 +1878,8 @@
         created_at: insight.created_at, source: insight.source || 'insight', chips: index < 2 ? ['latest'] : [],
         triangulated: !!insight.triangulated || lower(insight.source || '') === 'triangle',
         node_id: insight.node_id, links: insight.links, thread: insightThread, threadDepth: threadDepth(insightThread),
-        threadSummary: insight.thread_summary || (insightThread[insightThread.length - 1]?.summary || '')
+        threadSummary: insight.thread_summary || (insightThread[insightThread.length - 1]?.summary || ''),
+        meta: insight.meta || {}
       }));
     });
 
@@ -2181,9 +2194,32 @@
     return group;
   }
 
+  function rejectTriangleSignal(item) {
+    if (!item?.triangulated || !item?.node_id) return false;
+    const derivedClaims = Array.isArray(item?.claimsForItem)
+      ? item.claimsForItem.filter(function(claim) { return lower(claim?.source || '') === 'triangle'; })
+      : [];
+    derivedClaims.forEach(function(claim) {
+      native?.setClaimStatus?.(claim.id, 'superseded', {
+        reason: 'triangle rejected'
+      });
+    });
+    native?.archiveNode?.(item.node_id);
+    native?.traceEvent?.('triangle.synth.rejected_by_user', item.node_id, 'archived', {
+      signalId: item.node_id,
+      claimCount: derivedClaims.length
+    });
+    pushLog('triangle rejected', 'triangle');
+    return true;
+  }
+
   function buildKnowFrameMarkup(item, detailMode) {
     const thread = cloneThread(item?.thread);
     const comments = detailMode ? thread : thread.slice(-1);
+    const triangulatedClaims = Array.isArray(item?.claimsForItem)
+      ? item.claimsForItem.filter(function(claim) { return lower(claim?.source || '') === 'triangle'; })
+      : [];
+    const isClaimTriangle = !!item?.triangulated && item?.meta?.triangle_format === 'claims-v1';
     const kindLabel = item?.source === 'question' ? 'guided ask'
       : item?.source === 'capture-image' ? 'visual note'
       : item?.source === 'backlog' ? 'task'
@@ -2191,6 +2227,28 @@
       : item?.source === 'triangle' ? 'triangle signal'
       : 'signal';
     const body = escapeHtml(item?.body || 'no content yet').replace(/\n/g, '<br />');
+    const claimRows = isClaimTriangle ? triangulatedClaims.slice(0, detailMode ? 4 : 2).map(function(claim) {
+      var sourceCount = Array.isArray(claim?.evidence) ? claim.evidence.length : 0;
+      return [
+        '<div style="margin-top:8px;">',
+        '<div style="font-size:12px; line-height:1.42; color:rgba(42,37,31,0.94);">',
+        escapeHtml(claim?.text || ''),
+        '</div>',
+        '<div style="font-size:10px; color:rgba(8,8,8,0.46); margin-top:3px;">',
+        escapeHtml('· ' + String(sourceCount) + ' source' + (sourceCount === 1 ? '' : 's')),
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('') : '';
+    const tensionRows = isClaimTriangle ? (item?.meta?.triangle_tensions || []).slice(0, 2).map(function(entry) {
+      return [
+        '<div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(8,8,8,0.32);">',
+        '<div style="font-size:10px; color:rgba(8,8,8,0.44);">',
+        escapeHtml(entry?.note || 'unresolved tension'),
+        '</div>',
+        '</div>'
+      ].join('');
+    }).join('') : '';
     const commentRows = comments.map(function(comment) {
       return [
         '<div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(8,8,8,0.10);">',
@@ -2218,9 +2276,9 @@
       '<div style="font-size:15px; line-height:1.2; font-weight:600; color:rgba(26,22,18,1); margin-bottom:8px;">',
       escapeHtml(item?.title || 'untitled'),
       '</div>',
-      '<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
-      body,
-      '</div>',
+      isClaimTriangle
+        ? '<div style="font-size:10px; color:rgba(138,132,122,1); margin-bottom:6px;">derived claims</div>' + claimRows + tensionRows
+        : '<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">' + body + '</div>',
       commentRows,
       olderCount > 0 ? '<div style="margin-top:8px; font-size:10px; color:rgba(8,8,8,0.42);">+ ' + olderCount + ' older</div>' : ''
     ].join('');
@@ -3900,6 +3958,14 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
+      if (item?.meta?.triangle_format !== 'claims-v1') {
+        text(frame.x + frame.width - 18, contentCursorY - 2, 'legacy', {
+          fill: 'rgba(8,8,8,0.42)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '7',
+          'text-anchor': 'end'
+        });
+      }
     }
     drawKnowEvidenceGlyph(item?.evidenceStrength || 0, frame.x + frame.width - 42, frame.y + 10);
     drawKnowDepthGlyph(item?.threadDepth || 0, frame.x + frame.width - 22, frame.y + frame.height - 16);
@@ -3927,12 +3993,23 @@
         fireFeedback('touch-commit');
         transition(STATES.KNOW_DETAIL);
       });
+    } else if (item?.triangulated && item?.meta?.triangle_format === 'claims-v1') {
+      const rejectTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x: frame.x, y: frame.y, width: frame.width, height: frame.height, rx: 10, ry: 10, fill: 'transparent' }, rejectTap);
+      rejectTap.addEventListener('pointerup', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        fireFeedback('blocked');
+        if (rejectTriangleSignal(item)) transition(STATES.KNOW_BROWSE);
+      });
     }
 
     const footerLeft = `${Math.min(safeItemIdx + 1, Math.max(items.length, 1))} of ${Math.max(items.length, 1)}`;
     const footerRight = onboardingActive() && getOnboardingStep() === 3
       ? 'scroll once'
-      : (!detailMode ? 'click · detail' : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · comment'));
+      : (!detailMode ? 'click · detail' : (item?.triangulated && item?.meta?.triangle_format === 'claims-v1'
+        ? 'click · reject'
+        : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · comment')));
     text(14, LAYOUT.footerY, footerLeft, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -4885,9 +4962,24 @@
   });
 
   window.addEventListener('structa-triangle-result', function(event) {
-    const signal = lower(String(event?.detail?.signal || 'triangle signal'));
+    const signal = lower(String(event?.detail?.title || 'triangle signal'));
     pushLog('triangle signal: ' + signal.slice(0, 40), 'triangle');
     notifyCard('know', 'urgent');
+    stateData.triangleStatus = '';
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'triangle' }
+    }));
+    if (currentState === STATES.TRIANGLE_OPEN || stateData.inlinePTTSurface === 'triangle' || voiceReturnState === STATES.TRIANGLE_OPEN) {
+      restoreTriangleOrigin();
+      return;
+    }
+    render();
+  });
+
+  window.addEventListener('structa-triangle-ambiguous', function(event) {
+    const question = lower(String(event?.detail?.question || 'triangle stayed ambiguous'));
+    pushLog('triangle ambiguous: ' + question.slice(0, 40), 'triangle');
+    notifyCard('now', 'urgent');
     stateData.triangleStatus = '';
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'triangle' }

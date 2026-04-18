@@ -47,7 +47,7 @@ def load_trace_scenarios(path: pathlib.Path):
         scenarios: list[dict] = []
         for candidate in sorted(path.glob("*.json")):
             stem = candidate.stem.lower()
-            if not stem or stem[0] not in {"s", "u"}:
+            if not stem or stem[0] not in {"s", "u", "v"}:
                 continue
             if len(stem) < 2 or not stem[1].isdigit():
                 continue

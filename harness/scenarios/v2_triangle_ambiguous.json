@@ -1,0 +1,18 @@
+{
+  "id": "v2_triangle_ambiguous",
+  "title": "triangle ambiguity creates a grounded question instead of a signal",
+  "runtime_dump": "runtime/synthetic/v2_triangle_ambiguous.json",
+  "expect_tail": [
+    { "flow": "triangle.input.built", "ctx": { "claimsACount": 2, "claimsBCount": 2 } },
+    { "flow": "triangle.synth.ambiguous" }
+  ],
+  "expect_claims": [
+    { "source": "triangle", "maxCount": 0 }
+  ],
+  "expect_questions": {
+    "open_min": 1,
+    "open_max": 1,
+    "has_meta_evidence_claims": true
+  },
+  "expect_no_orphan_evidence": true
+}

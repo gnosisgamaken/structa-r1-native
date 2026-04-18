@@ -1,0 +1,17 @@
+{
+  "id": "v3_triangle_empty_side",
+  "title": "triangle refuses to enqueue when one side has no usable claims",
+  "runtime_dump": "runtime/synthetic/v3_triangle_empty_side.json",
+  "expect_tail": [
+    { "flow": "triangle.input.built", "ctx": { "claimsACount": 0, "claimsBCount": 2 } },
+    { "flow": "triangle.input.rejected_empty", "from": "A" }
+  ],
+  "expect_claims": [
+    { "source": "triangle", "maxCount": 0 }
+  ],
+  "expect_questions": {
+    "open_min": 0,
+    "open_max": 0
+  },
+  "expect_no_orphan_evidence": true
+}

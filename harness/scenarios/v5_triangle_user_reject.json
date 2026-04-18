@@ -1,0 +1,18 @@
+{
+  "id": "v5_triangle_user_reject",
+  "title": "user reject archives synthesized signal and preserves parent claims",
+  "runtime_dump": "runtime/synthetic/v5_triangle_user_reject.json",
+  "expect_tail": [
+    { "flow": "triangle.synth.resolved", "ctx": { "derivedClaimCount": 2 } },
+    { "flow": "triangle.synth.rejected_by_user", "ctx": { "claimCount": 2 } }
+  ],
+  "expect_claims": [
+    { "source": "voice", "minCount": 2, "status": "active" },
+    { "source": "triangle", "minCount": 2, "status": "superseded" }
+  ],
+  "expect_questions": {
+    "open_min": 0,
+    "open_max": 0
+  },
+  "expect_no_orphan_evidence": true
+}

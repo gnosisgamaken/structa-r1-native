@@ -1,0 +1,19 @@
+{
+  "id": "v1_triangle_resolved",
+  "title": "triangle resolves into derived claims with grounded evidence",
+  "runtime_dump": "runtime/synthetic/v1_triangle_resolved.json",
+  "expect_tail": [
+    { "flow": "triangle.input.built", "ctx": { "claimsACount": 3, "claimsBCount": 3 } },
+    { "flow": "triangle.synth.resolved", "ctx": { "derivedClaimCount": 2 } }
+  ],
+  "expect_claims": [
+    { "source": "voice", "minCount": 2 },
+    { "source": "image", "minCount": 2 },
+    { "source": "triangle", "minCount": 2, "status": "active" }
+  ],
+  "expect_questions": {
+    "open_min": 0,
+    "open_max": 0
+  },
+  "expect_no_orphan_evidence": true
+}

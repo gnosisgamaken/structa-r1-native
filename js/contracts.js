@@ -353,6 +353,59 @@
     };
   }
 
+  function normalizeTriangleOutput(output = {}) {
+    const stepMetadata = output.step_metadata && typeof output.step_metadata === 'object' ? output.step_metadata : {};
+    const normalizeClaimEntry = function(entry) {
+      if (!entry || !String(entry.text || '').trim()) return null;
+      return {
+        ...entry,
+        text: String(entry.text || '').trim(),
+        kind: String(entry.kind || 'fact').trim().toLowerCase(),
+        branchId: String(entry.branchId || 'main').trim() || 'main',
+        evidence: normalizeChainEvidence(entry.evidence)
+      };
+    };
+    const normalizeQuestionEntry = function(entry) {
+      if (!entry || !String(entry.body || '').trim()) return null;
+      const meta = entry.meta && typeof entry.meta === 'object' ? entry.meta : {};
+      return {
+        ...entry,
+        body: String(entry.body || '').trim(),
+        meta: {
+          ...meta,
+          evidence_claims: normalizeChainEvidence(meta.evidence_claims),
+          rationale: String(meta.rationale || '').trim()
+        }
+      };
+    };
+    return {
+      status: output.status === 'ambiguous' ? 'ambiguous' : 'synthesized',
+      title: String(output.title || '').trim(),
+      branchId: String(output.branchId || 'main').trim() || 'main',
+      derived_claims: Array.isArray(output.derived_claims)
+        ? output.derived_claims.map(normalizeClaimEntry).filter(Boolean)
+        : [],
+      unresolved_tensions: Array.isArray(output.unresolved_tensions)
+        ? output.unresolved_tensions.map(function(entry) {
+            const between = Array.isArray(entry?.between)
+              ? entry.between.map(function(ref) { return String(ref || '').trim(); }).filter(Boolean).slice(0, 2)
+              : [];
+            return {
+              between: between,
+              note: String(entry?.note || '').trim()
+            };
+          }).filter(function(entry) { return entry.between.length === 2; })
+        : [],
+      question: normalizeQuestionEntry(output.question || null),
+      step_metadata: {
+        rationale: String(stepMetadata.rationale || '').trim(),
+        confidence: typeof stepMetadata.confidence === 'number' ? stepMetadata.confidence : 0.0,
+        model: String(stepMetadata.model || '').trim(),
+        latencyMs: Number.isFinite(stepMetadata.latencyMs) ? Number(stepMetadata.latencyMs) : 0
+      }
+    };
+  }
+
   function validateChainOutput(output = {}, context = {}) {
     const normalized = normalizeChainOutput(output);
     const errors = [];
@@ -396,6 +449,88 @@
     validateEvidence(normalized.produced.decisions, function(entry) { return entry.evidence || []; }, 'decision');
     validateEvidence(normalized.produced.tasks, function(entry) { return entry.evidence || []; }, 'task');
     validateEvidence(normalized.produced.questions, function(entry) { return entry.meta?.evidence_claims || []; }, 'question');
+
+    return {
+      ok: errors.length === 0,
+      errors: errors,
+      value: normalized
+    };
+  }
+
+  function validateTriangleOutput(output = {}, context = {}) {
+    const normalized = normalizeTriangleOutput(output);
+    const errors = [];
+    const parentEvidenceIds = Array.isArray(context.parentEvidenceIds)
+      ? context.parentEvidenceIds.map(function(ref) { return String(ref || '').trim(); }).filter(Boolean)
+      : [];
+    const allowedParents = new Set(parentEvidenceIds);
+
+    if (output && typeof output === 'object' && Object.prototype.hasOwnProperty.call(output, 'body') && String(output.body || '').trim()) {
+      errors.push({ code: 'unexpected_body' });
+    }
+
+    const verdict = validateChainOutput({
+      focus: {
+        phase_next: 'observe',
+        state_next: 'active'
+      },
+      produced: {
+        claims: normalized.status === 'synthesized' ? normalized.derived_claims : [],
+        questions: normalized.status === 'ambiguous' && normalized.question ? [normalized.question] : [],
+        decisions: [],
+        tasks: []
+      },
+      step_metadata: normalized.step_metadata
+    }, {
+      project: context.project || {},
+      currentPhase: 'observe',
+      currentState: 'active'
+    });
+
+    if (!verdict.ok) errors.push.apply(errors, verdict.errors || []);
+
+    if (normalized.status === 'synthesized') {
+      if (!normalized.title) errors.push({ code: 'missing_title' });
+      if (!normalized.derived_claims.length) {
+        errors.push({ code: 'no_derived_claims' });
+      }
+      normalized.derived_claims.forEach(function(entry) {
+        const evidence = Array.isArray(entry.evidence) ? entry.evidence : [];
+        if (evidence.length < 2) {
+          errors.push({
+            code: 'weak_evidence',
+            nodeKind: 'claim',
+            nodeId: entry.id || entry.text || ''
+          });
+        }
+        evidence.forEach(function(ref) {
+          if (!allowedParents.has(ref)) {
+            errors.push({
+              code: 'parent_evidence_mismatch',
+              nodeKind: 'claim',
+              nodeId: entry.id || entry.text || '',
+              missingRef: ref
+            });
+          }
+        });
+      });
+    } else {
+      if (!normalized.question) {
+        errors.push({ code: 'missing_question' });
+      } else {
+        const evidenceClaims = normalized.question.meta?.evidence_claims || [];
+        evidenceClaims.forEach(function(ref) {
+          if (!allowedParents.has(ref)) {
+            errors.push({
+              code: 'parent_evidence_mismatch',
+              nodeKind: 'question',
+              nodeId: normalized.question.id || normalized.question.body || '',
+              missingRef: ref
+            });
+          }
+        });
+      }
+    }
 
     return {
       ok: errors.length === 0,
@@ -460,6 +595,7 @@
     getVocabulary,
     legalPhaseTransition,
     legalStateTransition,
-    validateChainOutput
+    validateChainOutput,
+    validateTriangleOutput
   });
 })();

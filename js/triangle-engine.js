@@ -3,6 +3,7 @@
 
   const native = window.StructaNative;
   const queue = window.StructaProcessingQueue;
+  const contracts = window.StructaContracts;
 
   function getLLM() {
     return window.StructaLLM;
@@ -17,7 +18,8 @@
   const LEGAL_TRANSITIONS = Object.freeze({
     empty: ['armed'],
     armed: ['empty', 'synthesizing'],
-    synthesizing: ['empty', 'armed'],
+    synthesizing: ['empty', 'armed', 'resolved', 'ambiguous'],
+    ambiguous: ['empty'],
     resolved: ['empty']
   });
 
@@ -117,6 +119,96 @@
       if (found) return found;
     }
     return native?.getProjectMemory?.() || memory.projectMemory || null;
+  }
+
+  function getClaimsForTriangleItem(item) {
+    if (!item?.id || !native?.getClaimsForItem) return [];
+    return (native.getClaimsForItem(item.id) || []).filter(function(entry) {
+      var statusValue = String(entry?.status || 'active').toLowerCase();
+      return statusValue === 'active' || statusValue === 'disputed';
+    });
+  }
+
+  function deriveTriangleBranchContext(claimsA, claimsB) {
+    var branchIds = []
+      .concat((claimsA || []).map(function(entry) { return String(entry?.branchId || 'main'); }))
+      .concat((claimsB || []).map(function(entry) { return String(entry?.branchId || 'main'); }))
+      .filter(Boolean);
+    var primary = branchIds[0] || 'main';
+    var sameBranch = branchIds.every(function(branchId) { return branchId === primary; });
+    return {
+      id: sameBranch ? primary : 'main',
+      name: sameBranch ? primary : 'spanning',
+      parentBranchId: sameBranch ? '' : 'main'
+    };
+  }
+
+  function buildTriangleInput(localPair, spoken) {
+    var claimsA = getClaimsForTriangleItem(localPair?.a);
+    var claimsB = getClaimsForTriangleItem(localPair?.b);
+    var branchContext = deriveTriangleBranchContext(claimsA, claimsB);
+    var payload = {
+      projectId: activeProjectId(),
+      itemA: {
+        itemId: localPair?.a?.id || '',
+        claimIds: claimsA.map(function(entry) { return entry.id; }),
+        claims: claimsA.map(function(entry) {
+          return {
+            id: entry.id,
+            text: entry.text,
+            kind: entry.kind,
+            status: entry.status,
+            branchId: entry.branchId,
+            confidence: entry.confidence
+          };
+        })
+      },
+      itemB: {
+        itemId: localPair?.b?.id || '',
+        claimIds: claimsB.map(function(entry) { return entry.id; }),
+        claims: claimsB.map(function(entry) {
+          return {
+            id: entry.id,
+            text: entry.text,
+            kind: entry.kind,
+            status: entry.status,
+            branchId: entry.branchId,
+            confidence: entry.confidence
+          };
+        })
+      },
+      angle: {
+        text: spoken,
+        sttConfidence: null
+      },
+      branchContext: branchContext,
+      parentClaimIds: claimsA.map(function(entry) { return entry.id; }).concat(claimsB.map(function(entry) { return entry.id; }))
+    };
+    native?.traceEvent?.('triangle.input.built', 'pair', 'ready', {
+      projectId: payload.projectId,
+      claimsACount: payload.itemA.claimIds.length,
+      claimsBCount: payload.itemB.claimIds.length,
+      angleLength: spoken.length
+    });
+    return payload;
+  }
+
+  function traceTriangleValidationErrors(errors) {
+    (errors || []).forEach(function(error) {
+      if (error?.code === 'no_evidence' || error?.code === 'weak_evidence') {
+        native?.traceEvent?.('triangle.synth.reject.no_evidence', error?.nodeKind || '', error?.nodeId || '', {
+          nodeKind: error?.nodeKind || '',
+          nodeId: error?.nodeId || ''
+        });
+        return;
+      }
+      if (error?.code === 'orphan_evidence' || error?.code === 'inactive_evidence' || error?.code === 'parent_evidence_mismatch') {
+        native?.traceEvent?.('triangle.synth.reject.orphan_evidence', error?.nodeId || '', error?.missingRef || error?.ref || '', {
+          nodeId: error?.nodeId || '',
+          missingRef: error?.missingRef || error?.ref || ''
+        });
+      }
+    });
   }
 
   function getCaptureItem(project, item) {
@@ -268,25 +360,31 @@
   }
 
   function updateLinks(signalNodeId, a, b, questionNodeId) {
-    if (!native?.touchProjectMemory || !signalNodeId) return;
+    if (!native?.touchProjectMemory || (!signalNodeId && !questionNodeId)) return;
     native.touchProjectMemory(function(project) {
       const nodes = Array.isArray(project.nodes) ? project.nodes : [];
-      const signalNode = nodes.find(function(entry) { return entry.node_id === signalNodeId; });
-      if (!signalNode) return;
-      signalNode.links = Array.isArray(signalNode.links) ? signalNode.links : [];
+      const targetNodes = [signalNodeId, questionNodeId].map(function(nodeId) {
+        return nodes.find(function(entry) { return entry.node_id === nodeId; }) || null;
+      }).filter(Boolean);
+      if (!targetNodes.length) return;
       [a, b].forEach(function(item) {
         const nodeId = item?.nodeId || item?.id || '';
         if (!nodeId) return;
         const sourceNode = nodes.find(function(entry) { return entry.node_id === nodeId; });
         if (!sourceNode) return;
         sourceNode.links = Array.isArray(sourceNode.links) ? sourceNode.links : [];
-        if (sourceNode.links.indexOf(signalNode.node_id) === -1) sourceNode.links.push(signalNode.node_id);
-        if (signalNode.links.indexOf(sourceNode.node_id) === -1) signalNode.links.push(sourceNode.node_id);
+        targetNodes.forEach(function(targetNode) {
+          targetNode.links = Array.isArray(targetNode.links) ? targetNode.links : [];
+          if (sourceNode.links.indexOf(targetNode.node_id) === -1) sourceNode.links.push(targetNode.node_id);
+          if (targetNode.links.indexOf(sourceNode.node_id) === -1) targetNode.links.push(sourceNode.node_id);
+        });
       });
-      if (questionNodeId) {
+      if (signalNodeId && questionNodeId) {
+        const signalNode = nodes.find(function(entry) { return entry.node_id === signalNodeId; });
         const questionNode = nodes.find(function(entry) { return entry.node_id === questionNodeId; });
-        if (questionNode) {
+        if (signalNode && questionNode) {
           questionNode.links = Array.isArray(questionNode.links) ? questionNode.links : [];
+          signalNode.links = Array.isArray(signalNode.links) ? signalNode.links : [];
           if (questionNode.links.indexOf(signalNode.node_id) === -1) questionNode.links.push(signalNode.node_id);
           if (signalNode.links.indexOf(questionNode.node_id) === -1) signalNode.links.push(questionNode.node_id);
         }
@@ -404,9 +502,23 @@
       angle: spoken
     });
 
+    const triangleInput = buildTriangleInput(pair, spoken);
+    if (!triangleInput.itemA.claimIds.length || !triangleInput.itemB.claimIds.length) {
+      var side = !triangleInput.itemA.claimIds.length ? 'A' : 'B';
+      lastError = 'not enough to triangulate — capture more first';
+      status = 'retry';
+      native?.traceEvent?.('triangle.input.rejected_empty', side, 'empty', {
+        side: side
+      });
+      emit('structa-triangle-failed', { message: lastError, recoverable: true });
+      window.StructaFeedback?.fire?.('blocked');
+      return Promise.resolve({ ok: false, error: lastError, recoverable: true });
+    }
+
     const payload = {
       pair: clone(pair),
-      angle: spoken
+      angle: spoken,
+      triangleInput: triangleInput
     };
     if (!queue) {
       return runTriangleSynthesis(payload);
@@ -437,12 +549,13 @@
       return Promise.resolve({ ok: false, error: lastError, recoverable: true });
     }
 
-    const pointA = describeForTriangle(localPair.a);
-    const pointB = describeForTriangle(localPair.b);
-    const imageData = pointB.hasImage ? pointB.imageData : (pointA.hasImage ? pointA.imageData : '');
-    const imageBase64 = /^data:image\/\w+;base64,/i.test(imageData)
-      ? imageData.replace(/^data:image\/\w+;base64,/, '')
-      : '';
+    const triangleInput = payload?.triangleInput || buildTriangleInput(localPair, spoken);
+    if (!triangleInput.itemA.claimIds.length || !triangleInput.itemB.claimIds.length) {
+      lastError = 'not enough to triangulate — capture more first';
+      status = 'retry';
+      emit('structa-triangle-failed', { message: lastError, recoverable: true });
+      return Promise.resolve({ ok: false, error: lastError, recoverable: true });
+    }
 
     const llm = getLLM();
     const orchestrator = window.StructaOrchestrator;
@@ -455,75 +568,52 @@
 
     return orchestrator.synthesizeTriangle({
       project: buildProjectEnvelope(),
-      pointA: {
-        id: localPair.a.id,
-        type: pointA.type,
-        time: pointA.time,
-        body: pointA.body,
-        project_id: localPair.a.project_id || '',
-        imageBase64: imageBase64 || ''
-      },
-      pointB: {
-        id: localPair.b.id,
-        type: pointB.type,
-        time: pointB.time,
-        body: pointB.body,
-        project_id: localPair.b.project_id || '',
-        imageBase64: imageBase64 || ''
-      },
-      input: {
-        angle: spoken
-      },
+      itemA: triangleInput.itemA,
+      itemB: triangleInput.itemB,
+      angle: triangleInput.angle,
+      branchContext: triangleInput.branchContext,
       policy: {
         priority: 'high',
         allowSearch: false,
         allowSpeech: false
       }
     }, llm.executePreparedLLM).then(function(result) {
-      if (!result || !result.ok || !result.artifacts || !result.artifacts.length) {
+      if (!result || !result.ok) {
         lastError = 'synthesis failed — try again';
         status = 'retry';
         emit('structa-triangle-failed', { message: lastError, recoverable: true });
         return { ok: false, error: lastError, recoverable: true };
       }
 
-      const signalArtifact = result.artifacts.find(function(entry) { return entry.type === 'signal'; });
-      const questionArtifact = result.artifacts.find(function(entry) { return entry.type === 'question'; });
-      if (!signalArtifact || !signalArtifact.body) {
-        lastError = 'synthesis failed — try again';
-        status = 'retry';
-        emit('structa-triangle-failed', { message: lastError, recoverable: true });
-        return { ok: false, error: lastError, recoverable: true };
+      const triangleVerdict = contracts?.validateTriangleOutput
+        ? contracts.validateTriangleOutput(result, {
+            project: native?.getProjectMemory?.() || {},
+            parentEvidenceIds: triangleInput.parentClaimIds || []
+          })
+        : { ok: true, value: result, errors: [] };
+      if (!triangleVerdict.ok) {
+        traceTriangleValidationErrors(triangleVerdict.errors || []);
+        clearRuntimeState();
+        return { ok: false, error: 'triangle rejected', recoverable: false, silent: true };
       }
 
-      const signalNode = native?.addNode?.({
-        type: 'insight',
-        status: 'open',
-        title: 'triangle signal',
-        body: signalArtifact.body,
-        source: 'triangle',
-        tags: ['triangle'],
-        meta: {
-          triangulated: true,
-          triangle_inputs: {
-            a: { type: localPair.a.type, id: localPair.a.id },
-            b: { type: localPair.b.type, id: localPair.b.id },
-            angle: spoken
-          }
-        }
-      });
+      const validated = triangleVerdict.value || {};
+      const origin = clone(localPair.origin || {});
 
-      let questionNode = null;
-      if (questionArtifact && questionArtifact.body) {
-        questionNode = native?.addNode?.({
+      if (validated.status === 'ambiguous') {
+        const questionNode = native?.addNode?.({
           type: 'question',
           status: 'open',
           title: 'triangle follow up',
-          body: questionArtifact.body,
+          body: validated.question?.body || 'which connection matters most here?',
           source: 'triangle',
           tags: ['triangle'],
           meta: {
             triangulated: true,
+            reasoning_generated: true,
+            evidence_claims: validated.question?.meta?.evidence_claims || [],
+            rationale: validated.question?.meta?.rationale || '',
+            branch_id: validated.question?.meta?.branch_id || triangleInput.branchContext?.id || 'main',
             triangle_inputs: {
               a: { type: localPair.a.type, id: localPair.a.id },
               b: { type: localPair.b.type, id: localPair.b.id },
@@ -531,11 +621,52 @@
             }
           }
         });
+        transitionState('ambiguous', {
+          reason: 'server-ambiguous',
+          questionId: questionNode?.node_id || ''
+        });
+        native?.traceEvent?.('triangle.synth.ambiguous', 'triangle', questionNode?.node_id || '', {
+          questionId: questionNode?.node_id || ''
+        });
+        updateLinks('', localPair.a, localPair.b, questionNode?.node_id || '');
+        clearRuntimeState();
+        emit('structa-triangle-ambiguous', {
+          question: validated.question?.body || '',
+          questionNode: clone(questionNode),
+          origin: origin
+        });
+        return {
+          ok: true,
+          ambiguous: true,
+          questionNode: questionNode,
+          origin: origin
+        };
       }
 
-      if (Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
-        const claimEntries = native.ingestClaims(result.claims, {
+      const signalNode = native?.addNode?.({
+        type: 'insight',
+        status: 'open',
+        title: validated.title || 'triangle signal',
+        body: '',
+        source: 'triangle',
+        tags: ['triangle'],
+        meta: {
+          triangulated: true,
+          triangle_format: 'claims-v1',
+          triangle_inputs: {
+            a: { type: localPair.a.type, id: localPair.a.id },
+            b: { type: localPair.b.type, id: localPair.b.id },
+            angle: spoken
+          },
+          triangle_tensions: Array.isArray(validated.unresolved_tensions) ? clone(validated.unresolved_tensions) : []
+        }
+      });
+
+      let claimEntries = [];
+      if (Array.isArray(validated.derived_claims) && validated.derived_claims.length && native?.ingestClaims) {
+        claimEntries = native.ingestClaims(validated.derived_claims, {
           source: 'triangle',
+          branchId: validated.branchId || triangleInput.branchContext?.id || 'main',
           sourceRef: {
             itemId: signalNode?.node_id || '',
             triangleJobId: payload?.jobId || ''
@@ -545,33 +676,41 @@
           native.touchProjectMemory(function(project) {
             const signal = (project.nodes || []).find(function(entry) { return entry.node_id === signalNode.node_id; });
             if (!signal) return;
-            signal.meta = { ...(signal.meta || {}), claim_ids: claimEntries.map(function(entry) { return entry.id; }) };
+            signal.meta = {
+              ...(signal.meta || {}),
+              claim_ids: claimEntries.map(function(entry) { return entry.id; }),
+              triangle_tensions: Array.isArray(validated.unresolved_tensions) ? clone(validated.unresolved_tensions) : []
+            };
           });
         }
       }
 
-      updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
-      const origin = clone(localPair.origin || {});
-      traceTriangle('synthesizing', 'resolved', {
+      updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, '');
+      transitionState('resolved', {
+        reason: 'server-synthesized',
+        signalId: signalNode?.node_id || ''
+      });
+      native?.traceEvent?.('triangle.synth.resolved', 'triangle', signalNode?.node_id || '', {
         signalId: signalNode?.node_id || '',
-        questionId: questionNode?.node_id || ''
+        derivedClaimCount: claimEntries.length,
+        tensionCount: Array.isArray(validated.unresolved_tensions) ? validated.unresolved_tensions.length : 0
       });
       clearRuntimeState();
       window.StructaFeedback?.fire?.('resolve');
       window.StructaLLM?.speakMilestone?.('triangle_captured');
       emit('structa-triangle-result', {
-        signal: signalArtifact.body,
-        question: (questionArtifact && questionArtifact.body) || '',
+        title: validated.title || 'triangle signal',
         signalNode: clone(signalNode),
-        questionNode: clone(questionNode),
+        derivedClaims: clone(claimEntries),
+        tensions: clone(validated.unresolved_tensions || []),
         origin: origin
       });
       return {
         ok: true,
-        signal: signalArtifact.body,
-        question: (questionArtifact && questionArtifact.body) || '',
+        title: validated.title || 'triangle signal',
         signalNode: signalNode,
-        questionNode: questionNode,
+        derivedClaims: claimEntries,
+        tensions: validated.unresolved_tensions || [],
         origin: origin
       };
     }).catch(function() {
@@ -589,11 +728,14 @@
       return runTriangleSynthesis(Object.assign({}, job.payload || {}, { jobId: job.id || '' })).then(function(result) {
         if (!result || !result.ok) {
           clearRuntimeState();
-          return {
-            ok: false,
-            blocked: true,
-            message: 'synthesis stalled — tap to retry, double side skips'
-          };
+          if (result?.recoverable) {
+            return {
+              ok: false,
+              blocked: true,
+              message: 'synthesis stalled — tap to retry, double side skips'
+            };
+          }
+          return result || { ok: false, error: 'triangle rejected' };
         }
         return result;
       }).catch(function() {

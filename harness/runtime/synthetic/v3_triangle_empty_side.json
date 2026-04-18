@@ -1,0 +1,21 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T16:07:00.000Z", "flow": "triangle.input.built", "from": "pair", "to": "ready", "ctx": { "projectId": "prj-1", "claimsACount": 0, "claimsBCount": 2, "angleLength": 15 } },
+      { "t": "2026-04-18T16:07:00.005Z", "flow": "triangle.input.rejected_empty", "from": "A", "to": "empty", "ctx": { "side": "A" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-b-1", "source": "voice", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-b-2", "source": "image", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

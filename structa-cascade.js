@@ -1232,10 +1232,10 @@
     setTimeout(function() {
       if (stateData.nowFeedback === 'decision queued') {
         stateData.nowFeedback = '';
-        render();
+        scheduleRender();
       }
     }, 520);
-    render();
+    scheduleRender();
     return true;
   }
 
@@ -1248,7 +1248,7 @@
     pushLog('decision skipped', 'decision');
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
-    render();
+    scheduleRender();
     return true;
   }
 
@@ -1258,7 +1258,7 @@
     if (pending.length <= 1) return false;
     stateData.decisionIndex = ((stateData.decisionIndex || 0) + 1) % pending.length;
     stateData.selectedOption = 0;
-    render();
+    scheduleRender();
     return true;
   }
 
@@ -1275,10 +1275,10 @@
     setTimeout(function() {
       if (stateData.nowFeedback === 'retry queued') {
         stateData.nowFeedback = '';
-        render();
+        scheduleRender();
       }
     }, 520);
-    render();
+    scheduleRender();
     return true;
   }
 
@@ -1293,7 +1293,7 @@
       return entry.id !== blocker.id;
     });
     native?.updateUIState?.({ queue_blockers: remaining });
-    render();
+    scheduleRender();
     return true;
   }
 
@@ -4825,7 +4825,7 @@
   // Re-render NOW panel on each impact + notify relevant cards
   window.addEventListener('structa-impact', function(e) {
     updateChainBadge();
-    if (currentState === STATES.NOW_BROWSE) render();
+    if (currentState === STATES.NOW_BROWSE) scheduleRender();
     // Soft notification on home to show app is working
     if (currentState === STATES.HOME) {
       notifyCard('know', 'soft');
@@ -4836,7 +4836,7 @@
   window.addEventListener('structa-decision-created', function(e) {
     updateChainBadge();
     notifyCard('now', 'urgent');
-    if (currentState === STATES.NOW_BROWSE) render();
+    if (currentState === STATES.NOW_BROWSE) scheduleRender();
   });
 
   // Start chain after first user interaction + init audio
@@ -4850,7 +4850,7 @@
       window.StructaImpactChain.start(2); // 2bpm = every 30s
     }
   }
-  ['sideClick', 'pointerup', 'scrollUp', 'scrollDown'].forEach(function(evt) {
+  ['sideClick', 'pointerup', 'longPressStart'].forEach(function(evt) {
     window.addEventListener(evt, startChainOnInteraction);
   });
 
@@ -4902,11 +4902,11 @@
     if (source === 'project-switch') notifyCard('now', 'soft');
     if (currentState === STATES.NOW_BROWSE && source === 'question-answer') {
       stateData.nowFeedback = 'answer queued';
-      render();
+      scheduleRender();
       setTimeout(function() {
         if (stateData.nowFeedback === 'answer queued') {
           stateData.nowFeedback = '';
-          render();
+          scheduleRender();
         }
       }, 1200);
     }
@@ -4918,6 +4918,11 @@
     if (e && e.detail && e.detail.question) {
       pushLog('structa asks: ' + e.detail.question.slice(0, 40), 'chain');
     }
+  });
+
+  window.addEventListener('structa-chain-updated', function() {
+    updateChainBadge();
+    if (currentState === STATES.NOW_BROWSE) scheduleRender();
   });
 
   // === Voice command handler ===

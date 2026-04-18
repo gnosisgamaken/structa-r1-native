@@ -741,7 +741,7 @@
   window.addEventListener('visibilitychange', function() {
     if (document.visibilityState === 'visible') scheduleAnalysisDrain(180);
   });
-  window.addEventListener('structa-memory-updated', function() {
+  window.addEventListener('structa-capture-stored', function() {
     scheduleAnalysisDrain(180);
   });
   setTimeout(function() { scheduleAnalysisDrain(240); }, 320);

@@ -19,7 +19,6 @@
   var native = window.StructaNative;
   var llm = window.StructaLLM;
   var queue = window.StructaProcessingQueue;
-  var panel = window.StructaPanel;
 
   // === Chain state ===
   var chain = {
@@ -58,6 +57,14 @@
   function setPhase(phase) {
     chain.currentPhase = phase;
     emitPhase();
+  }
+
+  function emitUIUpdate(detail) {
+    try {
+      window.dispatchEvent(new CustomEvent('structa-chain-updated', {
+        detail: detail || {}
+      }));
+    } catch (_) {}
   }
 
   function persistPauseState(paused) {
@@ -464,7 +471,7 @@
               detail: { question: questionText }
             }));
 
-            if (panel && panel.render) panel.render();
+            emitUIUpdate({ phase: chain.currentPhase, source: 'discovery-question' });
           }
         });
       return; // Skip normal flow
@@ -481,7 +488,7 @@
             if (result && result.ok && result.ui && result.ui.summary) {
               var impact = storeImpact('observe', 'inspect', context, result.ui.summary);
               setPhase('clarify');
-              panel && panel.render && panel.render();
+              emitUIUpdate({ phase: chain.currentPhase, source: 'observe' });
             }
           });
         break;
@@ -505,7 +512,7 @@
                 if (chain.impacts.length >= chain.maxImpactsPerChain) {
                   setPhase('evaluate');
                 }
-                panel && panel.render && panel.render();
+                emitUIUpdate({ phase: chain.currentPhase, source: 'clarify' });
               }
             });
           break;
@@ -526,7 +533,7 @@
               if (mainArtifact && mainArtifact.type === 'decision') {
                 storeImpact('decision', 'decide', chain.impacts.map(function(i) { return i.output; }).join('; '), mainArtifact.body || mainArtifact.title || 'decision ready');
                 storeDecision(mainArtifact.body || mainArtifact.title || 'decision ready', mainArtifact.options || []);
-                panel && panel.render && panel.render();
+                emitUIUpdate({ phase: chain.currentPhase, source: 'decision' });
               } else if (result.ui && result.ui.summary) {
                 // LLM wants more clarification
                 storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.ui.summary);
@@ -538,7 +545,7 @@
                 }
 
                 setPhase('clarify');
-                panel && panel.render && panel.render();
+                emitUIUpdate({ phase: chain.currentPhase, source: 'evaluate' });
               }
             }
           });

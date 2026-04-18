@@ -6,7 +6,6 @@ import datetime as dt
 import json
 import os
 import pathlib
-import sys
 import textwrap
 import urllib.request
 
@@ -17,6 +16,7 @@ from structa_validator import MODES, validate_response
 ROOT = pathlib.Path(__file__).resolve().parent
 DEFAULT_SCENARIOS = ROOT / "scenarios" / "batch_v1.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs"
+DEFAULT_LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -49,14 +49,16 @@ def expected_slots(mode: str) -> str:
 def build_user_prompt(scenario: dict) -> str:
     allowed_verbs = ", ".join(scenario.get("allowed_verbs", ["build", "patch", "delete", "solve", "inspect", "withdraw"]))
     allowed_sources = ", ".join(scenario.get("allowed_sources", ["local context only"]))
-    return textwrap.dedent(
+    user_intent = scenario.get("user_input") or scenario.get("voice_transcript") or ""
+
+    blocks = [textwrap.dedent(
         f"""
         CARD
         project_name: {scenario.get('project_name', 'unknown')}
         project_domain: {scenario.get('project_domain', 'unknown')}
         project_state: {scenario.get('project_state', 'UNKNOWN')}
         archetype: {scenario.get('archetype', 'unknown')}
-        user_intent: {scenario.get('user_input', '')}
+        user_intent: {user_intent}
         intent_mode: {scenario.get('mode', 'summarize')}
         allowed_verbs: {allowed_verbs}
         allowed_sources: {allowed_sources}
@@ -67,7 +69,49 @@ def build_user_prompt(scenario: dict) -> str:
         RETURN EXACTLY
         {expected_slots(scenario.get('mode', 'summarize'))}
         """
-    ).strip()
+    ).strip()]
+
+    voice_transcript = scenario.get("voice_transcript")
+    if voice_transcript:
+        blocks.append("VOICE_TRANSCRIPT\n" + str(voice_transcript).strip())
+
+    image_descriptions = scenario.get("image_descriptions") or []
+    if image_descriptions:
+        image_lines = ["IMAGE_DESCRIPTIONS"]
+        for index, desc in enumerate(image_descriptions[:6], start=1):
+            image_lines.append(f"{index}. {str(desc).strip()}")
+        blocks.append("\n".join(image_lines))
+
+    asset_comments = scenario.get("asset_comments") or []
+    if asset_comments:
+        comment_lines = ["ASSET_COMMENTS"]
+        for index, comment in enumerate(asset_comments[:8], start=1):
+            comment_lines.append(f"{index}. {str(comment).strip()}")
+        blocks.append("\n".join(comment_lines))
+
+    triangle = scenario.get("triangle") or {}
+    if triangle:
+        tri_lines = ["TRIANGLE"]
+        if triangle.get("point_a"):
+            tri_lines.append("POINT_A: " + str(triangle["point_a"]).strip())
+        if triangle.get("point_b"):
+            tri_lines.append("POINT_B: " + str(triangle["point_b"]).strip())
+        if triangle.get("angle"):
+            tri_lines.append("ANGLE: " + str(triangle["angle"]).strip())
+        blocks.append("\n".join(tri_lines))
+
+    return "\n\n".join(blocks)
+
+
+def _http_json(url: str, payload: dict, headers: dict | None = None, timeout: int = 60) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def call_openai(model: str, system_prompt: str, user_prompt: str) -> str:
@@ -82,24 +126,53 @@ def call_openai(model: str, system_prompt: str, user_prompt: str) -> str:
             {"role": "user", "content": user_prompt},
         ],
     }
-    req = urllib.request.Request(
+    body = _http_json(
         "https://api.openai.com/v1/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+        payload,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=60,
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        body = json.loads(resp.read().decode("utf-8"))
     return body["choices"][0]["message"]["content"].strip()
+
+
+def detect_lmstudio_model(base_url: str) -> str:
+    models_url = base_url.rstrip("/") + "/models"
+    with urllib.request.urlopen(models_url, timeout=10) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    items = body.get("data") or []
+    if not items:
+        raise RuntimeError("No LM Studio models loaded. Load one in LM Studio first.")
+    preferred = [
+        "Qwen3.5-9B-Q4_K_M",
+        "Harmonic-Hermes-9B-Q8_0",
+        "NVIDIA-Nemotron-3-Nano-4B-Q4_K_M",
+    ]
+    ids = [item.get("id", "") for item in items]
+    for pref in preferred:
+        for model_id in ids:
+            if pref.lower() in model_id.lower():
+                return model_id
+    return ids[0]
+
+
+def call_lmstudio(model: str, system_prompt: str, user_prompt: str, base_url: str) -> tuple[str, str]:
+    chosen_model = detect_lmstudio_model(base_url) if model in {"auto", "", None} else model
+    payload = {
+        "model": chosen_model,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    body = _http_json(base_url.rstrip("/") + "/chat/completions", payload, timeout=120)
+    return body["choices"][0]["message"]["content"].strip(), chosen_model
 
 
 def mock_response(scenario: dict) -> str:
     mode = scenario.get("mode", "summarize")
     state = scenario.get("project_state", "UNKNOWN")
-    text = scenario.get("user_input", "")
+    text = scenario.get("user_input") or scenario.get("voice_transcript") or ""
     if mode == "summarize":
         return f"STATE: {state}\nBLOCKER: unclear structure\nNEXT_MOVE: name what matters first\nCONFIDENCE: medium"
     if mode == "clarify":
@@ -117,10 +190,13 @@ def mock_response(scenario: dict) -> str:
     return "STATE: UNKNOWN\nBLOCKER: UNKNOWN\nNEXT_MOVE: stop\nCONFIDENCE: low"
 
 
-def run_scenario(scenario: dict, provider: str, model: str) -> dict:
+def run_scenario(scenario: dict, provider: str, model: str, lmstudio_base_url: str) -> dict:
     prompt = build_user_prompt(scenario)
+    used_model = model
     if provider == "openai":
         raw = call_openai(model=model, system_prompt=SYSTEM_PROMPT, user_prompt=prompt)
+    elif provider == "lmstudio":
+        raw, used_model = call_lmstudio(model=model, system_prompt=SYSTEM_PROMPT, user_prompt=prompt, base_url=lmstudio_base_url)
     else:
         raw = mock_response(scenario)
 
@@ -141,7 +217,7 @@ def run_scenario(scenario: dict, provider: str, model: str) -> dict:
         "id": scenario.get("id"),
         "mode": scenario.get("mode"),
         "provider": provider,
-        "model": model,
+        "model": used_model,
         "raw_output": raw,
         "strict": strict.to_dict(),
         "lenient": lenient.to_dict(),
@@ -189,6 +265,7 @@ def write_outputs(results: list[dict], output_dir: pathlib.Path) -> tuple[pathli
     for item in results:
         lines.extend([
             f"## {item['id']} — {item['mode']}",
+            f"model: {item['model']}",
             f"strict_valid: {item['strict']['valid']}",
             f"lenient_valid: {item['lenient']['valid']}",
             f"semantic_band: {item['semantic']['band']}",
@@ -205,13 +282,17 @@ def write_outputs(results: list[dict], output_dir: pathlib.Path) -> tuple[pathli
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run local text-only Structa harness batches.")
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
-    parser.add_argument("--provider", choices=["mock", "openai"], default="mock")
-    parser.add_argument("--model", default="gpt-4.1-mini")
+    parser.add_argument("--provider", choices=["mock", "openai", "lmstudio"], default="mock")
+    parser.add_argument("--model", default="auto")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--lmstudio-base-url", default=DEFAULT_LMSTUDIO_BASE)
     args = parser.parse_args()
 
     scenarios = load_scenarios(pathlib.Path(args.scenarios))
-    results = [run_scenario(scenario, provider=args.provider, model=args.model) for scenario in scenarios]
+    results = [
+        run_scenario(scenario, provider=args.provider, model=args.model, lmstudio_base_url=args.lmstudio_base_url)
+        for scenario in scenarios
+    ]
     jsonl_path, md_path = write_outputs(results, pathlib.Path(args.output_dir))
     print(json.dumps({
         "ok": True,

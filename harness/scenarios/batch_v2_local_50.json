@@ -1,0 +1,571 @@
+[
+  {
+    "id": "S01",
+    "archetype": "founder-cold-start",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "voice_transcript": "i need this to stop being vague and tell me what matters first",
+    "mode": "summarize"
+  },
+  {
+    "id": "S02",
+    "archetype": "founder-cold-start",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "voice_transcript": "help me begin this right without overcomplicating it",
+    "mode": "clarify"
+  },
+  {
+    "id": "S03",
+    "archetype": "operator-backlog",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "voice_transcript": "we keep collecting things and nothing moves",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S04",
+    "archetype": "handoff-operator",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "voice_transcript": "give me something i can hand off without making up facts",
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S05",
+    "archetype": "camera-observer",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "new structure forming",
+    "image_descriptions": [
+      "whiteboard with four columns labeled show tell know now and arrows between them",
+      "sticky note saying approvals are unclear and nothing moves"
+    ],
+    "voice_transcript": "this is the shape in my head but it still feels loose",
+    "mode": "summarize"
+  },
+  {
+    "id": "S06",
+    "archetype": "camera-observer",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "new structure forming",
+    "image_descriptions": [
+      "dashboard sketch with a large now card and three smaller stacked cards",
+      "annotation says too much noise in the lower area"
+    ],
+    "voice_transcript": "what is the most important thing this image is telling us",
+    "mode": "clarify"
+  },
+  {
+    "id": "S07",
+    "archetype": "asset-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, one selected image asset, one related voice note",
+    "image_descriptions": [
+      "mobile screen mockup with a bulky footer log taking too much space"
+    ],
+    "asset_comments": [
+      "the footer is telling too much and killing calmness"
+    ],
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S08",
+    "archetype": "asset-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, one selected image asset, one related voice note",
+    "image_descriptions": [
+      "mobile screen mockup with a bulky footer log taking too much space"
+    ],
+    "asset_comments": [
+      "this should become a cleaner handoff note"
+    ],
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S09",
+    "archetype": "triangle-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle surface open, two assets selected",
+    "triangle": {
+      "point_a": "voice note: we need stricter approval gates",
+      "point_b": "image description: sketch shows actions hidden under the log",
+      "angle": "what signal appears if the app must feel calm but decisive"
+    },
+    "mode": "inspect"
+  },
+  {
+    "id": "S10",
+    "archetype": "triangle-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle surface open, two assets selected",
+    "triangle": {
+      "point_a": "voice note: users capture a lot but hesitate to commit",
+      "point_b": "image description: current now card is visually weak",
+      "angle": "what should happen next to make decisions more visible"
+    },
+    "mode": "solve"
+  },
+  {
+    "id": "S11",
+    "archetype": "triangle-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle surface open, prior signal exists",
+    "triangle": {
+      "point_a": "asset comment: this area feels dead",
+      "point_b": "image description: home stack shows equal weight across all cards",
+      "angle": "how should hierarchy shift without losing identity"
+    },
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S12",
+    "archetype": "comment-thread-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "selected asset has 3 comments and no resolved action",
+    "image_descriptions": ["selected screen shows three layered comments under one mockup"],
+    "asset_comments": [
+      "good idea but still vague",
+      "make this calmer",
+      "what changes first"
+    ],
+    "mode": "summarize"
+  },
+  {
+    "id": "S13",
+    "archetype": "comment-thread-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "selected asset has 3 comments and no resolved action",
+    "image_descriptions": ["selected screen shows three layered comments under one mockup"],
+    "asset_comments": [
+      "good idea but still vague",
+      "make this calmer",
+      "what changes first"
+    ],
+    "mode": "clarify"
+  },
+  {
+    "id": "S14",
+    "archetype": "comment-thread-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "selected asset has 3 comments and no resolved action",
+    "image_descriptions": ["selected screen shows three layered comments under one mockup"],
+    "asset_comments": [
+      "good idea but still vague",
+      "make this calmer",
+      "what changes first"
+    ],
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S15",
+    "archetype": "voice-only-operator",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "approvals unclear, one pending decision, one duplicate branch",
+    "voice_transcript": "i think there are two branches saying the same thing and i dont want silent deletion",
+    "mode": "delete"
+  },
+  {
+    "id": "S16",
+    "archetype": "voice-only-operator",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "approvals unclear, one pending decision, one duplicate branch",
+    "voice_transcript": "clean this up but dont hide the mutation from me",
+    "mode": "solve"
+  },
+  {
+    "id": "S17",
+    "archetype": "founder-structure",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active, wants strict first structure",
+    "voice_transcript": "build the first structure so this stops being shapeless",
+    "mode": "build"
+  },
+  {
+    "id": "S18",
+    "archetype": "manager-blocked",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, routing low confidence, approvals active, unsafe mutation concern",
+    "voice_transcript": "where is this actually stuck right now",
+    "mode": "summarize"
+  },
+  {
+    "id": "S19",
+    "archetype": "creative-director",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "messy capture flow, strong visual instinct, weak structure",
+    "voice_transcript": "shape this into a cleaner capture flow without overbuilding it",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S20",
+    "archetype": "manager-conflict",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "two competing directions, no explicit decision yet",
+    "voice_transcript": "i need one sharp question that decides which branch wins",
+    "mode": "clarify"
+  },
+  {
+    "id": "S21",
+    "archetype": "mixed-asset",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one voice entry, one image, one comment, no structure decision",
+    "voice_transcript": "this wants to become a system not a note pile",
+    "image_descriptions": ["diagram with loose bubbles and no central spine"],
+    "asset_comments": ["needs a spine"],
+    "mode": "build"
+  },
+  {
+    "id": "S22",
+    "archetype": "mixed-asset",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one voice entry, one image, one comment, no structure decision",
+    "voice_transcript": "this wants to become a system not a note pile",
+    "image_descriptions": ["diagram with loose bubbles and no central spine"],
+    "asset_comments": ["needs a spine"],
+    "mode": "inspect"
+  },
+  {
+    "id": "S23",
+    "archetype": "mixed-asset",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one voice entry, one image, one comment, no structure decision",
+    "voice_transcript": "this wants to become a system not a note pile",
+    "image_descriptions": ["diagram with loose bubbles and no central spine"],
+    "asset_comments": ["needs a spine"],
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S24",
+    "archetype": "image-heavy-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "4 image captures, sparse voice context",
+    "image_descriptions": [
+      "camera photo of notebook page with cards show tell know now written by hand",
+      "wireframe of a triangle overlay with point a point b and angle prompt",
+      "mobile screen with a calm dark theme and one highlighted card",
+      "annotation saying log should feel like a trace not a second interface"
+    ],
+    "mode": "summarize"
+  },
+  {
+    "id": "S25",
+    "archetype": "image-heavy-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "4 image captures, sparse voice context",
+    "image_descriptions": [
+      "camera photo of notebook page with cards show tell know now written by hand",
+      "wireframe of a triangle overlay with point a point b and angle prompt",
+      "mobile screen with a calm dark theme and one highlighted card",
+      "annotation saying log should feel like a trace not a second interface"
+    ],
+    "mode": "clarify"
+  },
+  {
+    "id": "S26",
+    "archetype": "image-heavy-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "4 image captures, sparse voice context",
+    "image_descriptions": [
+      "camera photo of notebook page with cards show tell know now written by hand",
+      "wireframe of a triangle overlay with point a point b and angle prompt",
+      "mobile screen with a calm dark theme and one highlighted card",
+      "annotation saying log should feel like a trace not a second interface"
+    ],
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S27",
+    "archetype": "approval-sensitive",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one branch should probably be removed, no approval yet",
+    "voice_transcript": "delete the dead branch if its really duplicate",
+    "mode": "delete"
+  },
+  {
+    "id": "S28",
+    "archetype": "approval-sensitive",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one branch should probably be removed, no approval yet",
+    "voice_transcript": "tell me if this is safe to remove",
+    "mode": "inspect"
+  },
+  {
+    "id": "S29",
+    "archetype": "triangle-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle plus comments available",
+    "triangle": {
+      "point_a": "image description: now card has a subtle notification dot",
+      "point_b": "comment: users still miss pending decisions",
+      "angle": "what is the strongest small change that preserves calmness"
+    },
+    "asset_comments": ["must stay quiet", "needs more clarity"],
+    "mode": "solve"
+  },
+  {
+    "id": "S30",
+    "archetype": "triangle-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle plus comments available",
+    "triangle": {
+      "point_a": "voice note: users do not trust hidden actions",
+      "point_b": "image description: destructive actions are visually subtle",
+      "angle": "how should approval be staged visibly"
+    },
+    "asset_comments": ["mutations should feel explicit"],
+    "mode": "build"
+  },
+  {
+    "id": "S31",
+    "archetype": "triangle-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle plus comments available",
+    "triangle": {
+      "point_a": "voice note: the app should act like a calm collaborator",
+      "point_b": "image description: current card language feels slightly dashboard-like",
+      "angle": "what should the handoff card sound like"
+    },
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S32",
+    "archetype": "comment-cleanup",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "asset thread has repeated versions of the same feedback",
+    "asset_comments": [
+      "too noisy",
+      "too much going on",
+      "the lower area still feels noisy",
+      "noise again"
+    ],
+    "mode": "solve"
+  },
+  {
+    "id": "S33",
+    "archetype": "comment-cleanup",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "asset thread has repeated versions of the same feedback",
+    "asset_comments": [
+      "too noisy",
+      "too much going on",
+      "the lower area still feels noisy",
+      "noise again"
+    ],
+    "mode": "delete"
+  },
+  {
+    "id": "S34",
+    "archetype": "voice-image-pair",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "paired capture pending interpretation",
+    "voice_transcript": "this is the closest we have so far but it still lacks authority",
+    "image_descriptions": ["home screen card stack with a dominant hero card and three smaller cards behind it"],
+    "mode": "inspect"
+  },
+  {
+    "id": "S35",
+    "archetype": "voice-image-pair",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "paired capture pending interpretation",
+    "voice_transcript": "this is the closest we have so far but it still lacks authority",
+    "image_descriptions": ["home screen card stack with a dominant hero card and three smaller cards behind it"],
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S36",
+    "archetype": "voice-image-pair",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "paired capture pending interpretation",
+    "voice_transcript": "this is the closest we have so far but it still lacks authority",
+    "image_descriptions": ["home screen card stack with a dominant hero card and three smaller cards behind it"],
+    "mode": "clarify"
+  },
+  {
+    "id": "S37",
+    "archetype": "handoff-strict",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "blocked by unclear structure and approval gating",
+    "voice_transcript": "withdraw this into a handoff card with only grounded facts",
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S38",
+    "archetype": "handoff-strict",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "blocked by unclear structure and approval gating",
+    "image_descriptions": ["screen showing unresolved approval gate and a blocked decision card"],
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S39",
+    "archetype": "routing-audit",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "many captures, weak routing, rabbit-hole growing too fast",
+    "voice_transcript": "inspect what is most unsafe in the current routing",
+    "mode": "inspect"
+  },
+  {
+    "id": "S40",
+    "archetype": "routing-audit",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "many captures, weak routing, rabbit-hole growing too fast",
+    "voice_transcript": "solve the routing without making the app feel bureaucratic",
+    "mode": "solve"
+  },
+  {
+    "id": "S41",
+    "archetype": "triangle-rich",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "three related assets selected over one decision path",
+    "triangle": {
+      "point_a": "image description: triangle overlay feels elegant but underused",
+      "point_b": "voice transcript: this feature could be the real knowledge-builder",
+      "angle": "what exact next step would make triangle habit-forming"
+    },
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S42",
+    "archetype": "triangle-rich",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "three related assets selected over one decision path",
+    "triangle": {
+      "point_a": "comment: this should create a real signal not a vibe",
+      "point_b": "image description: current triangle output looks similar to a normal note",
+      "angle": "what is missing in the triangle outcome"
+    },
+    "mode": "summarize"
+  },
+  {
+    "id": "S43",
+    "archetype": "triangle-rich",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "three related assets selected over one decision path",
+    "triangle": {
+      "point_a": "voice transcript: if triangles are good they should drive decisions",
+      "point_b": "image description: current result feels like a passive note",
+      "angle": "what single question would force a stronger outcome"
+    },
+    "mode": "clarify"
+  },
+  {
+    "id": "S44",
+    "archetype": "comment-handoff",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "comment thread reached a stable conclusion but no export exists",
+    "asset_comments": [
+      "the log should become a trace",
+      "destructive actions need explicit approval",
+      "now must feel more decisive"
+    ],
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S45",
+    "archetype": "comment-handoff",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "comment thread reached a stable conclusion but no export exists",
+    "asset_comments": [
+      "the log should become a trace",
+      "destructive actions need explicit approval",
+      "now must feel more decisive"
+    ],
+    "mode": "build"
+  },
+  {
+    "id": "S46",
+    "archetype": "comment-handoff",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "comment thread reached a stable conclusion but no export exists",
+    "asset_comments": [
+      "the log should become a trace",
+      "destructive actions need explicit approval",
+      "now must feel more decisive"
+    ],
+    "mode": "inspect"
+  },
+  {
+    "id": "S47",
+    "archetype": "approval-path",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one safe patch available, one unsafe delete requested",
+    "voice_transcript": "what can we do now without crossing approval lines",
+    "mode": "summarize"
+  },
+  {
+    "id": "S48",
+    "archetype": "approval-path",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one safe patch available, one unsafe delete requested",
+    "voice_transcript": "make the next move obvious but safe",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S49",
+    "archetype": "approval-path",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "one safe patch available, one unsafe delete requested",
+    "voice_transcript": "what exact question unlocks the decision",
+    "mode": "clarify"
+  },
+  {
+    "id": "S50",
+    "archetype": "pro-readiness",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "system is coherent but still not fully pro",
+    "voice_transcript": "what is the highest-leverage gap left before this feels really pro",
+    "image_descriptions": ["clean card stack with triangle feature and thin trace log"],
+    "asset_comments": ["feels close but not there yet"],
+    "mode": "summarize"
+  }
+]

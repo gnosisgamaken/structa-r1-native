@@ -170,6 +170,11 @@
         last_insight_summary: result.clean
       });
     });
+    native?.traceEvent?.('image', 'analyzing', 'analyzed', {
+      entryId: job.entryId || '',
+      nodeId: job.nodeId || '',
+      insightId: insightNode?.node_id || ''
+    });
   }
 
   function applyAnalysisUnavailable(job, fallbackText) {
@@ -196,6 +201,11 @@
           preview_data: refs.node.meta?.preview_data || job.previewData
         };
       }
+    });
+    native?.traceEvent?.('image', 'analyzing', 'blocked', {
+      entryId: job.entryId || '',
+      nodeId: job.nodeId || '',
+      fallback: fallbackText || ''
     });
   }
 
@@ -237,6 +247,10 @@
     if (!jobs.length) return;
     jobs.forEach(function(job) {
       if (queueHasImageJob(job.entryId)) return;
+      native?.traceEvent?.('image', 'pending', 'queued', {
+        entryId: job.entryId,
+        nodeId: job.nodeId || ''
+      });
       queue.enqueue({
         kind: 'image-analyze',
         priority: 'P1',
@@ -254,6 +268,11 @@
     window.__STRUCTA_CAMERA_QUEUE_REGISTERED__ = true;
     queue.registerHandler('image-analyze', function(job) {
       const payload = job.payload || {};
+      native?.traceEvent?.('image', 'queued', 'analyzing', {
+        jobId: job.id || '',
+        entryId: payload.entryId || '',
+        nodeId: payload.nodeId || ''
+      });
       const rawBase64 = String(payload.previewData || '').split(',').pop();
       if (!rawBase64 || !window.StructaLLM?.processImage) {
         return {
@@ -292,12 +311,22 @@
           }));
           return result;
         }
+        native?.traceEvent?.('image', 'analyzing', 'blocked', {
+          jobId: job.id || '',
+          entryId: payload.entryId || '',
+          reason: result?.reason || 'stalled'
+        });
         return {
           ok: false,
           blocked: true,
           message: 'visual analysis stalled — tap to retry, double side skips'
         };
       }).catch(function() {
+        native?.traceEvent?.('image', 'analyzing', 'blocked', {
+          jobId: job.id || '',
+          entryId: payload.entryId || '',
+          reason: 'exception'
+        });
         return {
           ok: false,
           blocked: true,
@@ -700,6 +729,11 @@
         }
       });
     }
+    native?.traceEvent?.('image', 'captured', 'stored', {
+      entryId: bundle?.entry_id || '',
+      annotation: !!annotation,
+      nodeId: captureNode?.node_id || ''
+    });
 
     hideOverlay();
     markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);

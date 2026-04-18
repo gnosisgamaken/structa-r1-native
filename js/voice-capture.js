@@ -333,6 +333,12 @@
 
     queue.registerHandler('voice-interpret', function(job) {
       const payload = job.payload || {};
+      native?.traceEvent?.('voice', 'queued', 'interpreting', {
+        jobId: job.id || '',
+        mode: payload.mode || 'voice',
+        nodeId: payload.questionNodeId || payload.buildContext?.nodeId || '',
+        questionText: payload.questionText || ''
+      });
       if (!window.StructaLLM?.processVoice) {
         return Promise.resolve({ ok: false, error: 'llm unavailable' });
       }
@@ -342,8 +348,34 @@
       return window.StructaLLM.processVoice(payload.transcript || '', options).then(function(result) {
         if (payload.mode === 'question') {
           if (result && result.ok && result.clean) {
-            window.StructaLLM.storeAsInsight(result, 'answer');
+            var createdInsight = window.StructaLLM.storeAsInsight(result, 'answer');
+            if (createdInsight?.node_id && payload.questionNodeId && native?.touchProjectMemory) {
+              native.touchProjectMemory(function(project) {
+                var nodes = Array.isArray(project.nodes) ? project.nodes : [];
+                var questionNode = nodes.find(function(entry) { return entry.node_id === payload.questionNodeId; });
+                var insightNode = nodes.find(function(entry) { return entry.node_id === createdInsight.node_id; });
+                if (questionNode && insightNode) {
+                  questionNode.links = Array.isArray(questionNode.links) ? questionNode.links : [];
+                  insightNode.links = Array.isArray(insightNode.links) ? insightNode.links : [];
+                  insightNode.meta = { ...(insightNode.meta || {}), question_node_id: payload.questionNodeId };
+                  if (questionNode.links.indexOf(insightNode.node_id) === -1) questionNode.links.push(insightNode.node_id);
+                  if (insightNode.links.indexOf(questionNode.node_id) === -1) insightNode.links.push(questionNode.node_id);
+                }
+              });
+            }
             native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+            native?.emitModelChange?.({
+              scope: 'now',
+              itemId: payload.questionNodeId || '',
+              jobId: job.id || ''
+            });
+            native?.traceEvent?.('blocker', 'answered', 'insight-created', {
+              jobId: job.id || '',
+              nodeId: payload.questionNodeId || '',
+              insightId: createdInsight?.node_id || '',
+              clean: result.clean || ''
+            });
+            window.StructaLLM?.speakMilestone?.('signal_captured');
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'question-answer' }
             }));
@@ -430,6 +462,9 @@
     if (triangleContext) {
       activeTriangleContext = null;
       voiceTarget = null;
+      native?.traceEvent?.('triangle', 'angle-captured', 'submitted', {
+        label: triangleContext.label || 'your angle'
+      });
       native?.appendLogEntry?.({ kind: 'triangle', message: 'triangle synthesizing' });
       window.dispatchEvent(new CustomEvent('structa-triangle-submit', {
         detail: {
@@ -444,6 +479,11 @@
     if (questionContext) {
       var question = questionContext;
       voiceTarget = null;
+      native?.traceEvent?.('voice', 'captured', 'question-answer', {
+        nodeId: question.nodeId || '',
+        onboarding: !!question.onboarding,
+        text: question.text || ''
+      });
       var onboardingFinalized = false;
 
       function finalizeOnboardingAnswer() {
@@ -495,7 +535,8 @@
       queueVoiceInterpret({
         mode: 'question',
         transcript: text,
-        questionText: question.text || ''
+        questionText: question.text || '',
+        questionNodeId: question.nodeId || ''
       });
       return;
     }
@@ -516,6 +557,10 @@
     if (buildContext && buildContext.kind === 'thread-comment') {
       voiceTarget = null;
       if (text.length < 3) return;
+      native?.traceEvent?.('thread', 'captured', 'append-request', {
+        nodeId: buildContext.nodeId,
+        surface: buildContext.surface || 'know'
+      });
       const appended = native?.appendThreadComment?.(
         buildContext.nodeId,
         text,
@@ -658,6 +703,12 @@
     var pendingQuestion = activeQuestion;
     var pendingBuildContext = activeBuildContext;
     var pendingTriangleContext = activeTriangleContext;
+    native?.traceEvent?.('voice', 'listening', 'stopped', {
+      emit: !!emit,
+      target: voiceTarget || '',
+      questionNodeId: pendingQuestion?.nodeId || '',
+      buildNodeId: pendingBuildContext?.nodeId || ''
+    });
     listening = false;
     voiceTarget = null;
     activeQuestion = null;
@@ -720,6 +771,11 @@
         nodeId: index.nodeId || '',
         source: index.source || 'question'
       };
+      native?.traceEvent?.('voice', 'idle', 'question-context', {
+        nodeId: activeQuestion.nodeId || '',
+        text: activeQuestion.text || '',
+        onboarding: !!activeQuestion.onboarding
+      });
       voiceTarget = 'question-answer';
       return;
     }
@@ -730,6 +786,11 @@
       nodeId: meta && meta.nodeId ? meta.nodeId : '',
       source: meta && meta.source ? meta.source : 'question'
     };
+    native?.traceEvent?.('voice', 'idle', 'question-context', {
+      nodeId: activeQuestion.nodeId || '',
+      text: activeQuestion.text || '',
+      onboarding: !!activeQuestion.onboarding
+    });
     voiceTarget = 'question-answer';
   }
 
@@ -774,6 +835,11 @@
     pendingAudioAsset = null;
     listening = true;
     voiceTarget = activeQuestion ? 'question-answer' : (activeTriangleContext ? 'triangle' : 'tell');
+    native?.traceEvent?.('voice', 'idle', 'listening', {
+      target: voiceTarget || '',
+      questionNodeId: activeQuestion?.nodeId || '',
+      buildNodeId: activeBuildContext?.nodeId || ''
+    });
     setStatus('listening');
 
     // Mute heartbeat and initialize audio without breaking the current mute policy.

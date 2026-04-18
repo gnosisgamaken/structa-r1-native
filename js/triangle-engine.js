@@ -14,6 +14,12 @@
   let status = '';
   let lastError = '';
   let queuedJobId = '';
+  const LEGAL_TRANSITIONS = Object.freeze({
+    empty: ['armed'],
+    armed: ['empty', 'synthesizing'],
+    synthesizing: ['empty', 'armed'],
+    resolved: ['empty']
+  });
 
   function clone(value) {
     return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -27,6 +33,34 @@
 
   function nowIso() {
     return new Date().toISOString();
+  }
+
+  function traceTriangle(from, to, ctx) {
+    native?.traceEvent?.('triangle', from, to, Object.assign({
+      mode: mode,
+      status: status,
+      jobId: queuedJobId || ''
+    }, ctx || {}));
+  }
+
+  function transitionState(nextMode, ctx) {
+    const from = mode;
+    if (from !== nextMode) {
+      const legal = LEGAL_TRANSITIONS[from] || [];
+      if (legal.indexOf(nextMode) === -1) {
+        const detail = Object.assign({ from: from, to: nextMode }, ctx || {});
+        traceTriangle(from, 'illegal-transition', detail);
+        const devMode = !!(window.location.hash.includes('probe') || new URLSearchParams(window.location.search || '').get('debug') === '1');
+        if (devMode) {
+          throw new Error('illegal triangle transition: ' + from + ' → ' + nextMode);
+        }
+        return getState();
+      }
+    }
+    mode = nextMode;
+    traceTriangle(from, nextMode, ctx);
+    persistArmed();
+    return getState();
   }
 
   function persistArmed() {
@@ -261,6 +295,7 @@
   }
 
   function clearRuntimeState() {
+    const from = mode;
     mode = 'empty';
     armed = null;
     pair = null;
@@ -268,6 +303,7 @@
     lastError = '';
     queuedJobId = '';
     persistArmed();
+    traceTriangle(from, 'empty', { reason: 'clear-runtime' });
   }
 
   function getState() {
@@ -285,10 +321,13 @@
     armed = clone(item);
     armed.armedAt = nowIso();
     pair = null;
-    mode = 'armed';
     status = 'armed';
     lastError = '';
-    persistArmed();
+    transitionState('armed', {
+      reason: 'copy',
+      itemId: item?.id || '',
+      itemType: item?.type || ''
+    });
     emit('structa-triangle-copied', {
       item: clone(armed)
     });
@@ -297,6 +336,7 @@
 
   function dismiss() {
     if (queuedJobId && queue?.cancel) queue.cancel(queuedJobId);
+    traceTriangle(mode, 'empty', { reason: 'dismiss' });
     clearRuntimeState();
     emit('structa-triangle-dismissed', {});
     return getState();
@@ -311,9 +351,13 @@
       b: clone(item),
       origin: clone(meta || {})
     };
-    mode = 'synthesizing';
     status = 'waiting-angle';
     lastError = '';
+    transitionState('synthesizing', {
+      reason: 'pair-complete',
+      itemA: pair?.a?.id || '',
+      itemB: pair?.b?.id || ''
+    });
     emit('structa-triangle-synthesizing', {
       pair: clone(pair)
     });
@@ -323,12 +367,11 @@
   function cancel() {
     if (queuedJobId && queue?.cancel) queue.cancel(queuedJobId);
     if (armed) {
-      mode = 'armed';
       pair = null;
       status = 'armed';
       lastError = '';
       queuedJobId = '';
-      persistArmed();
+      transitionState('armed', { reason: 'cancel-to-armed', itemId: armed?.id || '' });
       emit('structa-triangle-cancelled', {
         item: clone(armed)
       });
@@ -342,6 +385,7 @@
     if (!spoken) {
       lastError = 'no angle heard — hold ptt again';
       status = 'retry';
+      traceTriangle('synthesizing', 'retry', { reason: 'empty-angle' });
       emit('structa-triangle-failed', { message: lastError, recoverable: true });
       return Promise.resolve({ ok: false, error: lastError, recoverable: true });
     }
@@ -351,6 +395,10 @@
     }
     status = 'synthesizing';
     lastError = '';
+    traceTriangle('synthesizing', 'submitting', {
+      reason: 'angle-submitted',
+      angle: spoken
+    });
     emit('structa-triangle-submitting', {
       pair: clone(pair),
       angle: spoken
@@ -375,6 +423,7 @@
     });
     queuedJobId = jobId;
     persistArmed();
+    traceTriangle('submitting', 'queued', { jobId: jobId });
     return Promise.resolve({ ok: true, queued: true, jobId: jobId });
   }
 
@@ -486,9 +535,13 @@
 
       updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
       const origin = clone(localPair.origin || {});
+      traceTriangle('synthesizing', 'resolved', {
+        signalId: signalNode?.node_id || '',
+        questionId: questionNode?.node_id || ''
+      });
       clearRuntimeState();
       window.StructaFeedback?.fire?.('resolve');
-      window.StructaLLM?.speakMilestone?.('triangle');
+      window.StructaLLM?.speakMilestone?.('triangle_captured');
       emit('structa-triangle-result', {
         signal: signalArtifact.body,
         question: (questionArtifact && questionArtifact.body) || '',
@@ -507,6 +560,7 @@
     }).catch(function() {
       lastError = 'synthesis failed — try again';
       status = 'retry';
+      traceTriangle('synthesizing', 'failed', { reason: 'exception' });
       emit('structa-triangle-failed', { message: lastError, recoverable: true });
       return { ok: false, error: lastError, recoverable: true };
     });
@@ -517,6 +571,7 @@
     queue.registerHandler('triangle-synthesize', function(job) {
       return runTriangleSynthesis(job.payload || {}).then(function(result) {
         if (!result || !result.ok) {
+          clearRuntimeState();
           return {
             ok: false,
             blocked: true,
@@ -525,6 +580,7 @@
         }
         return result;
       }).catch(function() {
+        clearRuntimeState();
         return {
           ok: false,
           blocked: true,
@@ -538,19 +594,22 @@
     const slot = native?.getTriangleSlot?.();
     if (slot?.mode === 'synthesizing' && slot?.pair?.a && slot?.pair?.b) {
       const existingJob = queue?.snapshot?.().find(function(job) { return job.id === slot.jobId; });
-      if (existingJob) {
+      if (existingJob && existingJob.status !== 'blocked') {
         mode = 'synthesizing';
         armed = clone(slot.item || slot.pair.a);
         pair = clone(slot.pair);
         status = slot.status || 'synthesizing';
         lastError = '';
         queuedJobId = slot.jobId || '';
+        traceTriangle('boot', 'rehydrated-synth', { jobId: queuedJobId });
       } else if (slot.item) {
         mode = 'armed';
         armed = clone(slot.item);
         pair = null;
         status = 'armed';
         lastError = '';
+        queuedJobId = '';
+        traceTriangle('boot', 'rehydrated-armed', { itemId: armed?.id || '' });
       } else {
         clearRuntimeState();
       }
@@ -560,6 +619,8 @@
       pair = null;
       status = 'armed';
       lastError = '';
+      queuedJobId = '';
+      traceTriangle('boot', 'rehydrated-armed', { itemId: armed?.id || '' });
     } else {
       clearRuntimeState();
     }

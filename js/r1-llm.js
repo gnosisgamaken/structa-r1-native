@@ -99,18 +99,61 @@
     return 'structa-' + Date.now() + '-' + requestId;
   }
 
+  function normalizeMilestoneKind(kind) {
+    var raw = String(kind || '').trim().toLowerCase();
+    var aliases = {
+      triangle: 'triangle_captured',
+      first_capture: 'frame_ready'
+    };
+    return aliases[raw] || raw;
+  }
+
   function speakMilestone(kind) {
+    var normalized = normalizeMilestoneKind(kind);
     var STRINGS = {
-      triangle: 'signal captured',
+      triangle_captured: 'signal captured',
+      signal_captured: 'signal captured',
       decision_created: 'decision ready',
       decision_approved: 'locked',
-      first_capture: 'frame ready',
+      frame_ready: 'frame ready',
       project_live: 'project live'
     };
-    var text = STRINGS[kind];
-    if (!text || !runtimeCaps.hasBridge || typeof PluginMessageHandler === 'undefined') return false;
+    var MULTI_FIRE = {
+      triangle_captured: true,
+      signal_captured: true,
+      decision_created: true,
+      decision_approved: true
+    };
+    var text = STRINGS[normalized];
+    if (!text) {
+      native?.recordVoiceCall?.(normalized || 'unknown', false, { reason: 'not-allowlisted' });
+      return false;
+    }
+    if (!runtimeCaps.hasBridge || typeof PluginMessageHandler === 'undefined') {
+      native?.recordVoiceCall?.(normalized, true, { reason: 'bridge-unavailable' });
+      return false;
+    }
     var now = Date.now();
-    if (now - lastMilestoneSpeechAt < MILESTONE_COOLDOWN_MS) return false;
+    if (!MULTI_FIRE[normalized] && native?.touchProjectMemory) {
+      var duplicate = false;
+      native.touchProjectMemory(function(project) {
+        project.meta = project.meta || {};
+        project.meta.milestones = project.meta.milestones || {};
+        if (project.meta.milestones[normalized]) {
+          duplicate = true;
+          return;
+        }
+        project.meta.milestones[normalized] = new Date().toISOString();
+      });
+      if (duplicate) {
+        native?.recordVoiceCall?.(normalized, true, { reason: 'project-dedupe' });
+        return false;
+      }
+    }
+    if (now - lastMilestoneSpeechAt < MILESTONE_COOLDOWN_MS) {
+      native?.recordVoiceCall?.(normalized, true, { reason: 'cooldown' });
+      return false;
+    }
     lastMilestoneSpeechAt = now;
     try {
       PluginMessageHandler.postMessage(JSON.stringify({
@@ -120,8 +163,11 @@
         wantsR1Response: true,
         wantsJournalEntry: false
       }));
+      native?.recordVoiceCall?.(normalized, true, { reason: 'milestone' });
+      native?.traceEvent?.('voice', 'silent', normalized, { milestone: normalized });
       return true;
     } catch (_) {
+      native?.recordVoiceCall?.(normalized, true, { reason: 'post-failed' });
       return false;
     }
   }

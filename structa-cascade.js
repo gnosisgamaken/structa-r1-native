@@ -109,6 +109,8 @@
   let lastScrollAt = 0;
   let scrollEventsInWindow = 0;
   let scrollWindowStartedAt = performance.now();
+  let logHeaderTapCount = 0;
+  let logHeaderTapWindowStartedAt = 0;
 
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
@@ -792,6 +794,20 @@
     log.replaceChildren(fragment);
   }
 
+  function getTraceEntries(limit = 20) {
+    const trace = native?.getTrace?.() || {};
+    const events = Array.isArray(trace.events) ? trace.events.slice(-limit) : [];
+    return events.map(function(entry) {
+      const ctx = entry && entry.ctx ? Object.keys(entry.ctx).map(function(key) {
+        return key + ':' + String(entry.ctx[key]);
+      }).join(' · ') : '';
+      return {
+        created_at: entry?.t || new Date().toISOString(),
+        message: [entry?.flow || 'trace', entry?.from || '', entry?.to || '', ctx].filter(Boolean).join(' · ')
+      };
+    });
+  }
+
   // === Transition ===
   function transition(newState, data = {}) {
     const prev = currentState;
@@ -807,6 +823,9 @@
 
     // Enter new state
     stateEnterHandlers[newState]?.(stateData);
+    native?.traceEvent?.('surface', prev, newState, {
+      data: data || {}
+    });
 
     // Render
     scheduleRender();
@@ -823,17 +842,20 @@
     const previousScroll = log.scrollTop;
     const previousBottomOffset = Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight));
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
-    const entries = (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
+    const traceMode = !!stateData.logTraceMode;
+    const entries = traceMode
+      ? getTraceEntries(logOpen ? 20 : 5)
+      : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit);
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
-      logPreview.textContent = getQueueLine();
+      logPreview.textContent = traceMode ? 'trace empty' : getQueueLine();
       updateLogOps();
       if (logOpen) logPinnedToBottom = true;
       return;
     }
     renderLogRows(entries);
-    logPreview.textContent = latestLogText();
+    logPreview.textContent = traceMode ? 'trace · ' + entries.length : latestLogText();
     updateLogOps();
     if (logOpen) {
       if (followLatest) {
@@ -856,6 +878,7 @@
       logPinnedToBottom = true;
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     } else {
+      stateData.logTraceMode = false;
       scheduleLogRefresh();
     }
   }
@@ -863,6 +886,25 @@
   log?.addEventListener('scroll', function() {
     if (!logOpen) return;
     logPinnedToBottom = isLogNearBottom();
+  });
+
+  logDrawer?.addEventListener('pointerup', function(event) {
+    if (!logOpen) return;
+    const bounds = logDrawer.getBoundingClientRect();
+    const relY = event.clientY - bounds.top;
+    if (relY < 0 || relY > 44) return;
+    const now = Date.now();
+    if (now - logHeaderTapWindowStartedAt > 700) {
+      logHeaderTapCount = 0;
+      logHeaderTapWindowStartedAt = now;
+    }
+    logHeaderTapCount += 1;
+    if (logHeaderTapCount < 3) return;
+    logHeaderTapCount = 0;
+    logHeaderTapWindowStartedAt = 0;
+    stateData.logTraceMode = !stateData.logTraceMode;
+    fireFeedback('touch-commit');
+    refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
   });
 
   // === State enter/exit handlers ===
@@ -1203,13 +1245,16 @@
   function openNowNextMove() {
     const project = getProjectMemory();
     const openQuestionNodes = project?.open_question_nodes || [];
-    const openQuestions = openQuestionNodes.map(function(question) {
-      return softenGuidedAsk(question?.body || question);
-    });
-    if (openQuestions.length) {
+    if (openQuestionNodes.length) {
+      const activeQuestion = openQuestionNodes[0] || {};
       voiceReturnState = STATES.NOW_BROWSE;
       transition(STATES.VOICE_OPEN, {
-        answeringQuestion: { index: 0, text: openQuestions[0] },
+        answeringQuestion: {
+          index: 0,
+          nodeId: activeQuestion.node_id || '',
+          text: softenGuidedAsk(activeQuestion?.body || activeQuestion?.title || ''),
+          source: activeQuestion.source || 'question'
+        },
         fromPTT: false
       });
       return;
@@ -1483,7 +1528,17 @@
     const ui = getUIState();
     const captures = getCaptureList();
     const insights = project?.insights || [];
-    const openQuestionNodes = project?.open_question_nodes || [];
+    const allQuestionNodes = project?.open_question_nodes || [];
+    const suppressBlockers = (stateData.nowHideQuestionsUntil || 0) > Date.now();
+    const openQuestionNodes = suppressBlockers
+      ? []
+      : allQuestionNodes.filter(function(question) {
+          return native?.isBlockerLive?.({
+            nodeId: question?.node_id || '',
+            text: question?.body || question?.title || '',
+            createdAt: question?.created_at || ''
+          }) !== false;
+        });
     const openQuestions = openQuestionNodes.length
       ? openQuestionNodes.map(function(question) {
           return softenGuidedAsk(question?.body || question);
@@ -1536,6 +1591,7 @@
       pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
       activePendingDecision: activePendingDecision,
       activeQuestionNode: activeQuestionNode,
+      activeQuestionNodeId: activeQuestionNode?.node_id || '',
       activeThreadSummary: activeThreadSummary,
       activeThreadDepth: threadDepth(activeThread),
       blockerCount,
@@ -2092,10 +2148,10 @@
       escapeHtml(formatTimeLabel(item?.created_at)),
       '</div>',
       '</div>',
-      '<div style="font-size:14px; line-height:1.18; font-weight:600; color:rgba(26,22,18,1); margin-bottom:6px;">',
+      '<div style="font-size:15px; line-height:1.2; font-weight:600; color:rgba(26,22,18,1); margin-bottom:8px;">',
       escapeHtml(item?.title || 'untitled'),
       '</div>',
-      '<div style="font-size:12px; line-height:1.5; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
+      '<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
       body,
       '</div>',
       commentRows,
@@ -2132,7 +2188,7 @@
     const scroller = document.createElement('div');
     scroller.style.height = '100%';
     scroller.style.overflowY = 'auto';
-    scroller.style.padding = '10px 10px 18px 10px';
+    scroller.style.padding = '8px 8px 20px 8px';
     scroller.style.color = 'rgba(8,8,8,0.88)';
     scroller.style.fontFamily = 'PowerGrotesk-Regular, sans-serif';
     scroller.style.fontSize = '12px';
@@ -3002,6 +3058,7 @@
     }
     return {
       kind: 'project',
+      nodeId: data.activeQuestionNodeId || '',
       text: data.blockerQuestion || data.next || '',
       surface: 'now'
     };
@@ -3169,7 +3226,7 @@
       return {
         type: 'now',
         id: `question:${data.blockerQuestion}`,
-        nodeId: '',
+        nodeId: data.activeQuestionNodeId || '',
         project_id: getActiveProjectId(),
         title: 'blocker',
         body: data.blockerQuestion,
@@ -3662,7 +3719,7 @@
       });
       return;
     }
-    const LAYOUT = { top: 72, tabsH: 20, branchH: 18, footerY: 282, gap: 6 };
+    const LAYOUT = { top: 72, tabsH: 20, branchH: 18, footerY: 282, gap: 5 };
     const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 42 },
@@ -3738,10 +3795,10 @@
     }
 
     const frame = {
-      x: 12,
-      y: contentCursorY + 4,
-      width: 216,
-      height: Math.max(104, LAYOUT.footerY - (contentCursorY + 4) - 14)
+      x: 10,
+      y: contentCursorY + 2,
+      width: 220,
+      height: Math.max(110, LAYOUT.footerY - (contentCursorY + 2) - 12)
     };
     const dotsCount = Math.min(Math.max(1, items.length || 1), 6);
     const dotsIndex = Math.min(safeItemIdx, dotsCount - 1);
@@ -5001,6 +5058,7 @@
     if (source === 'visual-insight' || source === 'insight' || source === 'question-answer') notifyCard('know', 'soft');
     if (source === 'project-switch') notifyCard('now', 'soft');
     if (currentState === STATES.NOW_BROWSE && source === 'question-answer') {
+      stateData.nowHideQuestionsUntil = Date.now() + 200;
       stateData.nowFeedback = 'answer queued';
       scheduleRender();
       setTimeout(function() {
@@ -5009,6 +5067,9 @@
           scheduleRender();
         }
       }, 1200);
+      setTimeout(function() {
+        scheduleRender();
+      }, 220);
     }
   });
 
@@ -5023,6 +5084,24 @@
   window.addEventListener('structa-chain-updated', function() {
     scheduleOpsRefresh();
     if (currentState === STATES.NOW_BROWSE) scheduleRender();
+  });
+
+  window.addEventListener('structa-model-change', function(event) {
+    const detail = event && event.detail ? event.detail : {};
+    const scope = detail.scope || '';
+    if (scope === 'all' || scope === 'now') {
+      scheduleRender();
+      return;
+    }
+    if (scope === 'item' && (
+      currentState === STATES.KNOW_BROWSE ||
+      currentState === STATES.KNOW_DETAIL ||
+      currentState === STATES.SHOW_BROWSE ||
+      currentState === STATES.TELL_BROWSE ||
+      currentState === STATES.NOW_BROWSE
+    )) {
+      scheduleRender();
+    }
   });
 
   // === Voice command handler ===

@@ -1513,14 +1513,37 @@
    * @param {string} answer - the user's answer
    */
   function resolveQuestion(index, answer) {
-    var idx = index || 0;
+    var idx = 0;
+    var nodeId = '';
+    var questionText = '';
+    if (typeof index === 'object' && index) {
+      idx = typeof index.index === 'number' ? index.index : 0;
+      nodeId = String(index.nodeId || '').trim();
+      questionText = String(index.text || '').trim();
+    } else {
+      idx = index || 0;
+    }
     // Try node-based resolution
     var questionNodes = memory.projectMemory.nodes.filter(function(n) { return n.type === 'question' && n.status === 'open'; });
-    if (idx < questionNodes.length) {
-      resolveNode(questionNodes[idx].node_id, { question_answer: answer });
+    var questionNode = null;
+    if (nodeId) {
+      questionNode = questionNodes.find(function(node) { return node.node_id === nodeId; }) || null;
+    }
+    if (!questionNode && questionText) {
+      var normalizedText = lower(questionText).trim();
+      questionNode = questionNodes.find(function(node) {
+        var body = lower(node.body || node.title || '').trim();
+        return body === normalizedText || body.indexOf(normalizedText) !== -1 || normalizedText.indexOf(body) !== -1;
+      }) || null;
+    }
+    if (!questionNode && idx < questionNodes.length) {
+      questionNode = questionNodes[idx];
+    }
+    if (questionNode) {
+      resolveNode(questionNode.node_id, { question_answer: answer });
       addVoiceEntry({
-        title: 'answered: ' + (questionNodes[idx].body || '').slice(0, 30),
-        body: 'Q: ' + (questionNodes[idx].body || '') + '\nA: ' + (answer || ''),
+        title: 'answered: ' + (questionNode.body || '').slice(0, 30),
+        body: 'Q: ' + (questionNode.body || '') + '\nA: ' + (answer || ''),
         source: 'voice-answer',
         entry_mode: 'answer'
       });

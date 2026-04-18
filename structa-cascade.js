@@ -2084,7 +2084,7 @@
     }).join('');
     const olderCount = detailMode && thread.length > 3 ? thread.length - 3 : 0;
     return [
-      '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:8px;">',
+      '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px;">',
       '<div style="font-size:10px; color:rgba(138,132,122,1);">',
       escapeHtml(kindLabel),
       '</div>',
@@ -2092,10 +2092,10 @@
       escapeHtml(formatTimeLabel(item?.created_at)),
       '</div>',
       '</div>',
-      '<div style="font-size:15px; line-height:1.2; font-weight:600; color:rgba(26,22,18,1); margin-bottom:8px;">',
+      '<div style="font-size:14px; line-height:1.18; font-weight:600; color:rgba(26,22,18,1); margin-bottom:6px;">',
       escapeHtml(item?.title || 'untitled'),
       '</div>',
-      '<div style="font-size:13px; line-height:1.45; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
+      '<div style="font-size:12px; line-height:1.5; color:rgba(42,37,31,0.94); overflow-wrap:anywhere;">',
       body,
       '</div>',
       commentRows,
@@ -2132,11 +2132,11 @@
     const scroller = document.createElement('div');
     scroller.style.height = '100%';
     scroller.style.overflowY = 'auto';
-    scroller.style.padding = '12px 12px 24px 12px';
+    scroller.style.padding = '10px 10px 18px 10px';
     scroller.style.color = 'rgba(8,8,8,0.88)';
     scroller.style.fontFamily = 'PowerGrotesk-Regular, sans-serif';
-    scroller.style.fontSize = '13px';
-    scroller.style.lineHeight = '1.45';
+    scroller.style.fontSize = '12px';
+    scroller.style.lineHeight = '1.5';
     scroller.style.textTransform = 'lowercase';
     scroller.style.whiteSpace = 'normal';
     scroller.style.wordBreak = 'normal';
@@ -3662,7 +3662,7 @@
       });
       return;
     }
-    const LAYOUT = { top: 74, tabsH: 22, branchH: 20, dotsH: 12, footerH: 18, gap: 8 };
+    const LAYOUT = { top: 72, tabsH: 20, branchH: 18, footerY: 282, gap: 6 };
     const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [
       { id: 'questions', label: 'asks', width: 42 },
@@ -3681,7 +3681,7 @@
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: LAYOUT.top + 15,
+        x: tabX + tab.width / 2, y: LAYOUT.top + 14,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11', 'text-anchor': 'middle'
       }, pillGroup);
@@ -3718,7 +3718,7 @@
           stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
         }, chipGroup);
         const chipText = mk('text', {
-          x: chipX + chipWidth / 2, y: contentCursorY + 13,
+          x: chipX + chipWidth / 2, y: contentCursorY + 12,
           fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
         }, chipGroup);
@@ -3737,20 +3737,18 @@
       contentCursorY += LAYOUT.branchH + LAYOUT.gap;
     }
 
+    const frame = {
+      x: 12,
+      y: contentCursorY + 4,
+      width: 216,
+      height: Math.max(104, LAYOUT.footerY - (contentCursorY + 4) - 14)
+    };
     const dotsCount = Math.min(Math.max(1, items.length || 1), 6);
     const dotsIndex = Math.min(safeItemIdx, dotsCount - 1);
     const dotsWidth = dotsCount > 1 ? ((dotsCount - 1) * 8) : 0;
     if (dotsCount > 1) {
-      drawKnowItemDots(dotsCount, dotsIndex, 226 - dotsWidth - 6, contentCursorY + 4);
+      drawKnowItemDots(dotsCount, dotsIndex, frame.x + frame.width - dotsWidth - 10, frame.y - 6);
     }
-    contentCursorY += LAYOUT.dotsH + LAYOUT.gap;
-
-    const frame = {
-      x: 14,
-      y: contentCursorY,
-      width: 212,
-      height: Math.max(84, 282 - contentCursorY - LAYOUT.footerH - LAYOUT.gap)
-    };
 
     const nextText = lower(String(item?.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
     const html = buildKnowFrameMarkup({
@@ -3799,12 +3797,12 @@
     const footerRight = onboardingActive() && getOnboardingStep() === 3
       ? 'scroll once'
       : (!detailMode ? 'click · detail' : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · comment'));
-    text(14, 276, footerLeft, {
+    text(14, LAYOUT.footerY, footerLeft, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, 276, footerRight, {
+    text(226, LAYOUT.footerY, footerRight, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -4114,7 +4112,14 @@
         const item = items[stateData.knowItemIndex || 0];
         if (item && item.source === 'question' && item.questionIndex !== undefined) {
           fireFeedback('touch-commit');
-          transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
+          transition(STATES.KNOW_ANSWER, {
+            question: {
+              index: item.questionIndex,
+              nodeId: item.node_id || '',
+              text: item.body,
+              source: item.source || 'question'
+            }
+          });
           return;
         }
         fireFeedback('touch-commit');
@@ -4277,7 +4282,7 @@
           break;
         }
         const project = getProjectMemory();
-        const openQuestions = project?.open_questions || [];
+        const openQuestionNodes = project?.open_question_nodes || [];
         voiceReturnState = STATES.NOW_BROWSE;
         if (onboardingActive() && getOnboardingStep() === 2) {
           transition(STATES.VOICE_OPEN, {
@@ -4285,9 +4290,15 @@
             fromPTT: true,
             inlinePTTSurface: 'project'
           });
-        } else if (openQuestions.length) {
+        } else if (openQuestionNodes.length) {
+          const openQuestion = openQuestionNodes[0] || {};
           transition(STATES.VOICE_OPEN, {
-            answeringQuestion: { index: 0, text: openQuestions[0] },
+            answeringQuestion: {
+              index: 0,
+              nodeId: openQuestion.node_id || '',
+              text: openQuestion.body || openQuestion.title || '',
+              source: openQuestion.source || 'question'
+            },
             fromPTT: true,
             inlinePTTSurface: 'project'
           });
@@ -4345,7 +4356,14 @@
         const items = getKnowVisibleItems(model);
         const item = items[stateData.knowItemIndex || 0];
         if (item && item.source === 'question' && item.questionIndex !== undefined) {
-          transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
+          transition(STATES.KNOW_ANSWER, {
+            question: {
+              index: item.questionIndex,
+              nodeId: item.node_id || '',
+              text: item.body,
+              source: item.source || 'question'
+            }
+          });
         } else {
           if (!buildKnowCommentContext()) break;
           voiceReturnState = STATES.KNOW_DETAIL;

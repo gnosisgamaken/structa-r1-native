@@ -476,7 +476,12 @@
           entry_mode: 'onboarding'
         });
       } else {
-        native?.resolveQuestion?.(question.index, text);
+        native?.resolveQuestion?.({
+          index: question.index,
+          nodeId: question.nodeId || '',
+          text: question.text || '',
+          source: question.source || 'question'
+        }, text);
       }
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-answer' }
@@ -711,7 +716,9 @@
       activeQuestion = {
         index: typeof index.index === 'number' ? index.index : -1,
         text: index.text || '',
-        onboarding: !!index.onboarding
+        onboarding: !!index.onboarding,
+        nodeId: index.nodeId || '',
+        source: index.source || 'question'
       };
       voiceTarget = 'question-answer';
       return;
@@ -719,7 +726,9 @@
     activeQuestion = {
       index: index,
       text: questionText,
-      onboarding: !!(meta && meta.onboarding)
+      onboarding: !!(meta && meta.onboarding),
+      nodeId: meta && meta.nodeId ? meta.nodeId : '',
+      source: meta && meta.source ? meta.source : 'question'
     };
     voiceTarget = 'question-answer';
   }

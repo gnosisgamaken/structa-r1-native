@@ -1,0 +1,13 @@
+{
+  "id": "x3_prompt_has_project_context",
+  "title": "prompt builder includes project name and recent claim context",
+  "runtime_dump": "runtime/synthetic/x3_prompt_has_project_context.json",
+  "expect_tail": [
+    { "flow": "image.dispatch", "to": "bridge" }
+  ],
+  "expect_claims": [
+    { "source": "voice", "minCount": 1 },
+    { "source": "image", "minCount": 1 }
+  ],
+  "expect_no_orphan_evidence": true
+}

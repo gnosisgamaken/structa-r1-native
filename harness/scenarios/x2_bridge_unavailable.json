@@ -1,0 +1,12 @@
+{
+  "id": "x2_bridge_unavailable",
+  "title": "image analysis falls back when bridge is unavailable",
+  "runtime_dump": "runtime/synthetic/x2_bridge_unavailable.json",
+  "expect_tail": [
+    { "flow": "image.dispatch", "to": "fallback-server" }
+  ],
+  "expect_claims": [
+    { "source": "image", "minCount": 1 }
+  ],
+  "expect_no_orphan_evidence": true
+}

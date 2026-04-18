@@ -1,0 +1,17 @@
+{
+  "id": "x1_bridge_happy_path",
+  "title": "bridge image analysis journals first then extracts claims",
+  "runtime_dump": "runtime/synthetic/x1_bridge_happy_path.json",
+  "expect_tail": [
+    { "flow": "image.dispatch", "to": "bridge" },
+    { "flow": "image.bridge", "to": "response" },
+    { "flow": "image.claims", "to": "extracted", "ctx": { "count": 2 } }
+  ],
+  "expect_claims": [
+    { "source": "image", "minCount": 2, "status": "active" }
+  ],
+  "expect_model": {
+    "claims_count": 2
+  },
+  "expect_no_orphan_evidence": true
+}

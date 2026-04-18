@@ -1,0 +1,23 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T18:14:00.000Z", "flow": "image", "from": "pending", "to": "queued", "ctx": { "entryId": "cap-6a" } },
+      { "t": "2026-04-18T18:14:00.700Z", "flow": "image", "from": "pending", "to": "queued", "ctx": { "entryId": "cap-6b" } },
+      { "t": "2026-04-18T18:14:01.400Z", "flow": "image", "from": "pending", "to": "queued", "ctx": { "entryId": "cap-6c" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-burst-1", "source": "image", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-burst-2", "source": "image", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-burst-3", "source": "image", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

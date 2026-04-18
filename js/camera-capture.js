@@ -32,7 +32,12 @@
   let pendingVoiceCapture = false;
   let pendingVoiceCaptureTimer = null;
   let analysisQueueTimer = null;
+  let annotationWindowTimer = null;
+  let pendingAnnotation = null;
+  let lastCaptureAt = 0;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const CAPTURE_COOLDOWN_MS = 600;
+  const ANNOTATION_WINDOW_MS = 1500;
 
   function getCaps() {
     return window.__structaCaps || {};
@@ -87,10 +92,37 @@
           createdAt: capture?.meta?.analysis_enqueued_at || capture?.captured_at || capture?.created_at || capture?.meta?.captured_at || '',
           previewData: capturePreviewData(capture),
           annotation: capture?.voice_annotation || capture?.prompt_text || '',
-          facingMode: capture?.meta?.facingMode || 'environment'
+          facingMode: capture?.meta?.facingMode || 'environment',
+          annotationWindowUntil: Number(capture?.meta?.annotation_window_until || 0)
         };
       })
       .filter(function(job) { return !!job.entryId && !!job.previewData; })
+      .filter(function(job) {
+        return Number(job.annotationWindowUntil || 0) <= Date.now();
+      })
+      .sort(function(a, b) {
+        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+      });
+  }
+
+  function getPendingClaimExtractionJobs() {
+    const project = native?.getProjectMemory?.() || {};
+    return (project.captures || [])
+      .filter(function(capture) {
+        return !!capturePreviewData(capture)
+          && !!capture?.meta?.claim_extraction_pending
+          && lower(capture?.meta?.analysis_status || '') === 'ready';
+      })
+      .map(function(capture) {
+        return {
+          entryId: captureEntryId(capture),
+          nodeId: capture?.node_id || '',
+          text: String(capture?.ai_analysis || capture?.summary || '').trim(),
+          annotation: capture?.voice_annotation || capture?.prompt_text || '',
+          createdAt: capture?.meta?.analysis_completed_at || capture?.captured_at || capture?.created_at || ''
+        };
+      })
+      .filter(function(job) { return !!job.entryId && !!job.text; })
       .sort(function(a, b) {
         return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
       });
@@ -114,19 +146,99 @@
         refs.capture.meta = {
           ...(refs.capture.meta || {}),
           analysis_status: 'pending',
+          analysis_stage: 'queued',
           analysis_enqueued_at: refs.capture.meta?.analysis_enqueued_at || timestamp,
-          preview_data: refs.capture.preview_data || dataUrl
+          preview_data: refs.capture.preview_data || dataUrl,
+          annotation_window_until: 0
         };
       }
       if (refs.node) {
         refs.node.meta = {
           ...(refs.node.meta || {}),
           analysis_status: 'pending',
+          analysis_stage: 'queued',
           analysis_enqueued_at: refs.node.meta?.analysis_enqueued_at || timestamp,
-          preview_data: refs.node.meta?.preview_data || dataUrl
+          preview_data: refs.node.meta?.preview_data || dataUrl,
+          annotation_window_until: 0
         };
       }
     });
+  }
+
+  function updateCaptureAnalysisStage(entryId, nodeId, patch) {
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, entryId, nodeId);
+      if (refs.capture) {
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          ...(patch || {})
+        };
+      }
+      if (refs.node) {
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          ...(patch || {})
+        };
+      }
+    });
+  }
+
+  function markClaimExtractionResult(entryId, nodeId, claimIds, pending) {
+    const ids = Array.isArray(claimIds) ? claimIds.filter(Boolean) : [];
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, entryId, nodeId);
+      if (refs.capture) {
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          claim_extraction_pending: !!pending,
+          claim_ids: ids,
+          analysis_stage: pending ? 'extracting claims' : 'done'
+        };
+      }
+      if (refs.node) {
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          claim_extraction_pending: !!pending,
+          claim_ids: ids,
+          analysis_stage: pending ? 'extracting claims' : 'done'
+        };
+      }
+    });
+  }
+
+  function clearAnnotationWindow() {
+    if (annotationWindowTimer) {
+      clearTimeout(annotationWindowTimer);
+      annotationWindowTimer = null;
+    }
+    pendingAnnotation = null;
+  }
+
+  function annotationContextLive() {
+    return !!(pendingAnnotation && pendingAnnotation.deadlineAt > Date.now());
+  }
+
+  function startAnnotationWindow(entryId, nodeId) {
+    clearAnnotationWindow();
+    pendingAnnotation = {
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      deadlineAt: Date.now() + ANNOTATION_WINDOW_MS
+    };
+    updateCaptureAnalysisStage(entryId, nodeId, {
+      analysis_stage: 'capturing',
+      annotation_window_until: pendingAnnotation.deadlineAt
+    });
+    annotationWindowTimer = setTimeout(function() {
+      var active = pendingAnnotation;
+      clearAnnotationWindow();
+      if (!active) return;
+      native?.traceEvent?.('capture.annotation', 'pending', 'skipped', {
+        entryId: active.entryId || ''
+      });
+      markCaptureAnalysisQueued(active.entryId, active.nodeId, '');
+      scheduleAnalysisDrain(90);
+    }, ANNOTATION_WINDOW_MS);
   }
 
   function applyAnalysisReady(job, result, insightNode) {
@@ -145,7 +257,10 @@
           analysis_status: 'ready',
           analysis_completed_at: new Date().toISOString(),
           preview_data: refs.capture.preview_data || job.previewData,
-          claim_ids: linkedClaimIds
+          claim_ids: linkedClaimIds,
+          claim_extraction_pending: !!result?.claim_extraction_pending,
+          analysis_stage: result?.claim_extraction_pending ? 'extracting claims' : 'done',
+          annotation_window_until: 0
         };
       }
       if (refs.node) {
@@ -157,7 +272,10 @@
           analysis_status: 'ready',
           analysis_completed_at: new Date().toISOString(),
           preview_data: refs.node.meta?.preview_data || job.previewData,
-          claim_ids: linkedClaimIds
+          claim_ids: linkedClaimIds,
+          claim_extraction_pending: !!result?.claim_extraction_pending,
+          analysis_stage: result?.claim_extraction_pending ? 'extracting claims' : 'done',
+          annotation_window_until: 0
         };
         if (insightNode && insightNode.node_id) {
           refs.node.links = Array.isArray(refs.node.links) ? refs.node.links : [];
@@ -193,7 +311,9 @@
           ...(refs.capture.meta || {}),
           analysis_status: 'unavailable',
           analysis_completed_at: new Date().toISOString(),
-          preview_data: refs.capture.preview_data || job.previewData
+          preview_data: refs.capture.preview_data || job.previewData,
+          analysis_stage: 'blocked',
+          annotation_window_until: 0
         };
       }
       if (refs.node) {
@@ -202,7 +322,9 @@
           ...(refs.node.meta || {}),
           analysis_status: 'unavailable',
           analysis_completed_at: new Date().toISOString(),
-          preview_data: refs.node.meta?.preview_data || job.previewData
+          preview_data: refs.node.meta?.preview_data || job.previewData,
+          analysis_stage: 'blocked',
+          annotation_window_until: 0
         };
       }
     });
@@ -248,7 +370,6 @@
   function syncAnalysisQueue() {
     if (document.visibilityState === 'hidden' || !queue) return;
     const jobs = getPendingAnalysisJobs();
-    if (!jobs.length) return;
     jobs.forEach(function(job) {
       if (queueHasImageJob(job.entryId)) return;
       native?.traceEvent?.('image', 'pending', 'queued', {
@@ -266,12 +387,31 @@
         timeoutMs: 28000
       });
     });
+    getPendingClaimExtractionJobs().forEach(function(job) {
+      if (queue.snapshot().some(function(entry) {
+        return entry.kind === 'image-claim-extract' && entry.payload?.entryId === job.entryId;
+      })) return;
+      queue.enqueue({
+        kind: 'image-claim-extract',
+        priority: 'P2',
+        payload: job,
+        origin: {
+          screen: 'show',
+          itemId: job.entryId
+        },
+        timeoutMs: 12000
+      });
+    });
   }
 
   if (queue && !window.__STRUCTA_CAMERA_QUEUE_REGISTERED__) {
     window.__STRUCTA_CAMERA_QUEUE_REGISTERED__ = true;
     queue.registerHandler('image-analyze', function(job) {
       const payload = job.payload || {};
+      updateCaptureAnalysisStage(payload.entryId, payload.nodeId, {
+        analysis_status: 'pending',
+        analysis_stage: 'analyzing'
+      });
       native?.traceEvent?.('image', 'queued', 'analyzing', {
         jobId: job.id || '',
         entryId: payload.entryId || '',
@@ -295,6 +435,7 @@
       return Promise.race([
         window.StructaLLM.processImage(rawBase64, desc, {
           imageId: payload.entryId,
+          itemId: payload.nodeId || '',
           facingMode: payload.facingMode,
           voiceAnnotation: payload.annotation,
           priority: 'low'
@@ -306,6 +447,12 @@
         })
       ]).then(function(result) {
         if (result && result.ok && result.clean) {
+          if (result.claim_extraction_pending) {
+            updateCaptureAnalysisStage(payload.entryId, payload.nodeId, {
+              analysis_stage: 'extracting claims',
+              claim_extraction_pending: true
+            });
+          }
           const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture', {
             imageId: payload.entryId || '',
             itemId: payload.nodeId || ''
@@ -340,6 +487,87 @@
           blocked: true,
           message: 'visual analysis stalled — tap to retry, double side skips'
         };
+      });
+    });
+    queue.registerHandler('image-claim-extract', function(job) {
+      const payload = job.payload || {};
+      const project = native?.getProjectMemory?.() || {};
+      updateCaptureAnalysisStage(payload.entryId, payload.nodeId, {
+        analysis_stage: 'extracting claims',
+        claim_extraction_pending: true
+      });
+      return window.StructaLLM.extractClaimsFromText({
+        project: {
+          id: project.project_id || '',
+          name: project.name || 'untitled project',
+          type: project.type || 'general',
+          brief: project.brief || '',
+          selectedSurface: 'show',
+          openQuestions: (project.open_question_nodes || []).slice(0, 2).map(function(question) {
+            return {
+              id: question.node_id || '',
+              body: question.body || question.title || '',
+              branchId: question.branch_id || question.meta?.branch_id || 'main'
+            };
+          }),
+          recentClaims: (project.claims || []).filter(function(claim) {
+            return claim && claim.status === 'active' && claim.text;
+          }).slice(-3).reverse().map(function(claim) {
+            return {
+              id: claim.id || '',
+              text: claim.text || '',
+              kind: claim.kind || 'fact',
+              branchId: claim.branchId || 'main',
+              status: claim.status || 'active'
+            };
+          }),
+          activeBranch: {
+            id: 'main',
+            name: 'main',
+            parentBranchId: ''
+          },
+          summary: project.name || ''
+        },
+        input: {
+          text: payload.text || '',
+          deviceId: native?.deviceId || ''
+        },
+        source: payload.annotation ? 'show-tell' : 'image',
+        sourceRef: {
+          imageId: payload.entryId || '',
+          itemId: payload.nodeId || ''
+        },
+        meta: {
+          deviceId: native?.deviceId || '',
+          imageId: payload.entryId || ''
+        }
+      }).then(function(result) {
+        if (!result || !result.ok) {
+          native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
+            entryId: payload.entryId || '',
+            reason: result?.error || 'extract failed'
+          });
+          return { ok: true };
+        }
+        const stored = native?.ingestClaims?.(result.claims || [], {
+          source: payload.annotation ? 'show-tell' : 'image',
+          sourceRef: {
+            imageId: payload.entryId || '',
+            itemId: payload.nodeId || ''
+          }
+        }) || [];
+        markClaimExtractionResult(payload.entryId, payload.nodeId, stored.map(function(claim) { return claim.id; }), false);
+        native?.traceEvent?.('image.claims', 'pending', 'extracted', {
+          entryId: payload.entryId || '',
+          count: stored.length
+        });
+        return { ok: true, claims: stored };
+      }).catch(function(error) {
+        native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
+          entryId: payload.entryId || '',
+          reason: error?.message || 'extract failed'
+        });
+        return { ok: true };
       });
     });
   }
@@ -609,6 +837,37 @@
     }, 420);
   }
 
+  function beginPendingAnnotation() {
+    if (!annotationContextLive()) return null;
+    return {
+      entryId: pendingAnnotation.entryId || '',
+      nodeId: pendingAnnotation.nodeId || '',
+      deadlineAt: pendingAnnotation.deadlineAt
+    };
+  }
+
+  function completePendingAnnotation(text) {
+    var active = pendingAnnotation;
+    clearAnnotationWindow();
+    if (!active) return false;
+    var bodyText = String(text || '').trim();
+    if (bodyText.length >= 3) {
+      native?.annotateCapture?.(active.entryId, active.nodeId, bodyText);
+      native?.traceEvent?.('capture.annotation', 'pending', 'captured', {
+        entryId: active.entryId || '',
+        length: bodyText.length
+      });
+    } else {
+      native?.traceEvent?.('capture.annotation', 'pending', 'skipped', {
+        entryId: active.entryId || '',
+        reason: 'empty'
+      });
+    }
+    markCaptureAnalysisQueued(active.entryId, active.nodeId, '');
+    scheduleAnalysisDrain(90);
+    return true;
+  }
+
   // Listen for R1 STT results during voice strip
   window.addEventListener('structa-stt-ended', function(event) {
     if ((voiceStripActive || voiceStripStopping) && event && event.detail && event.detail.transcript) {
@@ -629,6 +888,12 @@
   });
 
   async function capture() {
+    if (Date.now() - lastCaptureAt < CAPTURE_COOLDOWN_MS) {
+      setStatus('shutter settling');
+      window.StructaFeedback?.fire?.('blocked');
+      return null;
+    }
+    lastCaptureAt = Date.now();
     let dataUrl = '';
     let w = preview?.videoWidth || 720;
     let h = preview?.videoHeight || 720;
@@ -689,6 +954,7 @@
       : imageAsset;
 
     const analysisQueuedAt = new Date().toISOString();
+    const annotationWindowUntil = annotation ? 0 : (Date.now() + ANNOTATION_WINDOW_MS);
     const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
       source_type: 'camera',
       input_type: annotation ? 'image+voice' : 'image',
@@ -704,7 +970,10 @@
         image_asset_name: resolvedAsset.name || '',
         preview_data: dataUrl,
         analysis_status: 'pending',
-        analysis_enqueued_at: analysisQueuedAt
+        analysis_stage: annotation ? 'queued' : 'capturing',
+        analysis_enqueued_at: analysisQueuedAt,
+        claim_extraction_pending: false,
+        annotation_window_until: annotationWindowUntil
       }
     });
 
@@ -738,8 +1007,11 @@
           bundle_id: bundle?.entry_id || null,
           facingMode: facingMode,
           analysis_status: 'pending',
+          analysis_stage: annotation ? 'queued' : 'capturing',
           analysis_enqueued_at: analysisQueuedAt,
-          preview_data: dataUrl
+          preview_data: dataUrl,
+          claim_extraction_pending: false,
+          annotation_window_until: annotationWindowUntil
         }
       });
     }
@@ -750,8 +1022,12 @@
     });
 
     hideOverlay();
-    markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);
-    scheduleAnalysisDrain(120);
+    if (annotation) {
+      markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);
+      scheduleAnalysisDrain(120);
+    } else {
+      startAnnotationWindow(bundle?.entry_id || '', captureNode?.node_id || '');
+    }
 
     return bundle;
   }
@@ -803,9 +1079,14 @@
     startVoiceStrip,
     finalizeVoiceStripCapture,
     stopVoiceStrip,
+    beginPendingAnnotation,
+    completePendingAnnotation,
     pendingAnalysisCount,
     scheduleAnalysisDrain,
     skipBlockedAnalysis,
+    getPendingAnnotation: function() {
+      return annotationContextLive() ? { ...pendingAnnotation } : null;
+    },
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },
     get facingMode() { return facingMode; },

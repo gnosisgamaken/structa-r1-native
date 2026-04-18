@@ -1,0 +1,23 @@
+{
+  "memory": {
+    "uiState": {
+      "last_capture_summary": "kitchen shows open shelving"
+    }
+  },
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T18:11:00.000Z", "flow": "image.bridge", "from": "pending", "to": "response", "ctx": { "entryId": "cap-5", "textLength": 124, "latencyMs": 980 } },
+      { "t": "2026-04-18T18:11:02.000Z", "flow": "image.claims", "from": "pending", "to": "extraction_failed", "ctx": { "entryId": "cap-5", "reason": "claims extraction rate limited" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

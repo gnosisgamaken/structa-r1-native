@@ -1,0 +1,16 @@
+{
+  "id": "x5_claim_extraction_timeout",
+  "title": "analysis lands immediately and retries claim extraction later",
+  "runtime_dump": "runtime/synthetic/x5_claim_extraction_timeout.json",
+  "expect_tail": [
+    { "flow": "image.bridge", "to": "response" },
+    { "flow": "image.claims", "to": "extraction_failed" }
+  ],
+  "expect_ui_state": {
+    "last_capture_summary": "kitchen shows open shelving"
+  },
+  "expect_claims": [
+    { "source": "image", "minCount": 0, "maxCount": 0 }
+  ],
+  "expect_no_orphan_evidence": true
+}

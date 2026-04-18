@@ -706,6 +706,20 @@
     return lower(raw);
   }
 
+  function getCaptureProcessingLine(capture) {
+    if (!capture) return 'ready';
+    const meta = capture?.meta || {};
+    if (Number(meta.annotation_window_until || 0) > Date.now()) return 'speak to tag, or wait';
+    const stage = lower(meta.analysis_stage || '');
+    if (stage === 'capturing') return 'capturing';
+    if (stage === 'queued') return 'working in background';
+    if (stage === 'analyzing') return 'analyzing';
+    if (stage === 'extracting claims') return 'extracting claims';
+    if (lower(meta.analysis_status || '') === 'pending') return 'working in background';
+    if (meta.claim_extraction_pending) return 'will finish soon';
+    return 'done';
+  }
+
   function latestLogText() {
     const entries = native?.getRecentLogEntries?.(1, { visible_only: true }) || [];
     const latest = entries[entries.length - 1];
@@ -3288,6 +3302,9 @@
       imageHref: current ? getCaptureImageHref(current) : '',
       analysisReady: current ? captureAnalysisReady(current) : false,
       analysisState: lower(current?.meta?.analysis_status || ''),
+      processingLine: current ? getCaptureProcessingLine(current) : 'ready',
+      annotationPending: Number(current?.meta?.annotation_window_until || 0) > Date.now(),
+      claimExtractionPending: !!current?.meta?.claim_extraction_pending,
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null,
       pendingQueueCount: getPendingCaptureQueueCount(),
       thread: cloneThread(current?.thread),
@@ -3349,7 +3366,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : 'processing visual note', 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : model.processingLine, 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
       if (model.claimSummary) {
         wrapTextBlock(undefined, 'claim · ' + model.claimSummary.slice(0, 42), 22, 204, 172, 10, 'rgba(244,239,228,0.84)', '9', 1);
       }
@@ -3358,7 +3375,7 @@
         drawKnowDepthGlyph(model.threadDepth || 0, 204, model.claimSummary ? 214 : 202);
       }
       if (!model.analysisReady) {
-        text(210, 129, 'processing', {
+        text(210, 129, model.processingLine, {
           fill: 'rgba(244,239,228,0.88)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10',
@@ -3379,8 +3396,8 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, lower(String(model.summary || 'processing visual note')), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
-      text(20, 206, model.analysisState === 'pending' ? 'processing visual note' : 'saved without preview', {
+      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || 'working in background')), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      text(20, 206, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3446,8 +3463,12 @@
       });
     });
 
-    const showFooter = model.pendingQueueCount > 0
-      ? `${model.pendingQueueCount} queued · keep open`
+    const showFooter = model.annotationPending
+      ? 'hold ptt · tag frame'
+      : model.claimExtractionPending
+      ? 'working in background'
+      : model.pendingQueueCount > 0
+      ? `${model.pendingQueueCount} queued · working in background`
       : (model.captures.length ? (model.claimCount > 0 ? `${model.claimCount} claims · hold ptt · comment` : 'hold ptt · comment') : 'ready to capture');
     text(226, 276, showFooter, {
       fill: 'rgba(8,8,8,0.38)',
@@ -4148,7 +4169,7 @@
       }
     }
 
-    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · waits` : 'chain waits for answer') : 'hold ptt on project', {
+    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · will finish soon` : 'waiting on your answer') : 'hold ptt on project', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -4929,6 +4950,24 @@
         break;
 
       case STATES.SHOW_BROWSE:
+        if (window.StructaCamera?.getPendingAnnotation?.()) {
+          const pendingAnnotation = window.StructaCamera.beginPendingAnnotation?.();
+          if (!pendingAnnotation) break;
+          voiceReturnState = STATES.SHOW_BROWSE;
+          transition(STATES.VOICE_OPEN, {
+            fromPTT: true,
+            tellStatus: 'tagging frame',
+            inlinePTTSurface: 'show',
+            buildContext: {
+              kind: 'capture-annotation',
+              nodeId: pendingAnnotation.nodeId || '',
+              entryId: pendingAnnotation.entryId || '',
+              surface: 'show',
+              text: 'tag this frame for the project'
+            }
+          });
+          break;
+        }
         if (!buildShowCommentContext()) {
           break;
         }
@@ -5323,7 +5362,7 @@
       stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
     }
     if (currentState === STATES.SHOW_BROWSE) {
-      stateData.showStatus = 'processing visual note';
+      stateData.showStatus = 'working in background';
       render();
     }
     native?.updateUIState?.({ tutorial_step4_camera_denied: false });

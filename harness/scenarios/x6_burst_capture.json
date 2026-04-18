@@ -1,0 +1,15 @@
+{
+  "id": "x6_burst_capture",
+  "title": "burst capture stays responsive and queues work in background",
+  "runtime_dump": "runtime/synthetic/x6_burst_capture.json",
+  "expect_tail": [
+    { "flow": "image", "to": "queued" }
+  ],
+  "expect_model": {
+    "claims_count": 3
+  },
+  "expect_claims": [
+    { "source": "image", "minCount": 3 }
+  ],
+  "expect_no_orphan_evidence": true
+}

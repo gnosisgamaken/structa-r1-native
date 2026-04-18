@@ -851,6 +851,55 @@
     return updated;
   }
 
+  function annotateCapture(entryId, nodeId, text) {
+    var bodyText = String(text || '').trim();
+    if (!entryId && !nodeId) return null;
+    var updated = null;
+    touchProjectMemory(function(project) {
+      var capture = (project.captures || []).find(function(entry) {
+        return entry && (entry.entry_id === entryId || entry.id === entryId || entry.node_id === nodeId);
+      }) || null;
+      var node = (project.nodes || []).find(function(entry) {
+        return entry && (entry.node_id === nodeId || entry.capture_image === entryId || entry.meta?.bundle_id === entryId);
+      }) || null;
+      if (capture) {
+        capture.voice_annotation = bodyText || capture.voice_annotation || '';
+        capture.prompt_text = bodyText || capture.prompt_text || '';
+        capture.summary = bodyText ? compact(bodyText, 72) : capture.summary;
+        capture.meta = {
+          ...(capture.meta || {}),
+          voiceAnnotation: capture.voice_annotation || '',
+          annotation_updated_at: new Date().toISOString(),
+          annotation_window_until: 0
+        };
+      }
+      if (node) {
+        node.voice_annotation = bodyText || node.voice_annotation || '';
+        node.body = bodyText || node.body || '';
+        node.title = bodyText ? compact(bodyText, 42) : (node.title || 'visual capture');
+        node.meta = {
+          ...(node.meta || {}),
+          annotation_updated_at: new Date().toISOString(),
+          annotation_window_until: 0
+        };
+      }
+      updated = {
+        entryId: entryId || capture?.entry_id || capture?.id || '',
+        nodeId: nodeId || node?.node_id || capture?.node_id || '',
+        text: bodyText
+      };
+    });
+    if (updated) {
+      traceEvent('capture.annotation', bodyText ? 'pending' : 'idle', bodyText ? 'captured' : 'cleared', {
+        entryId: updated.entryId,
+        nodeId: updated.nodeId,
+        length: bodyText.length
+      });
+      emitModelChange({ scope: 'item', itemId: updated.nodeId || updated.entryId });
+    }
+    return updated;
+  }
+
   function cloneThread(thread) {
     return Array.isArray(thread) ? thread.map(function(entry) {
       return {
@@ -2824,6 +2873,7 @@
     },
     addVoiceEntry,
     appendToVoiceEntry,
+    annotateCapture,
     addNode,
     resolveNode,
     archiveNode,

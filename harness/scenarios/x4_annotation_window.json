@@ -1,0 +1,13 @@
+{
+  "id": "x4_annotation_window",
+  "title": "post-shutter annotation is captured before analysis dispatch",
+  "runtime_dump": "runtime/synthetic/x4_annotation_window.json",
+  "expect_tail": [
+    { "flow": "capture.annotation", "to": "captured" },
+    { "flow": "image.dispatch", "to": "bridge" }
+  ],
+  "expect_ui_state": {
+    "last_capture_summary": "tagged frame"
+  },
+  "expect_no_orphan_evidence": true
+}

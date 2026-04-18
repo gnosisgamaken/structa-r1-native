@@ -463,6 +463,55 @@
     return parts.join('\n');
   }
 
+  function getRecentProjectClaims(project, limit) {
+    return (project?.claims || [])
+      .filter(function(claim) {
+        return claim && claim.status === 'active' && claim.text;
+      })
+      .slice()
+      .sort(function(a, b) {
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      })
+      .slice(0, limit || 3)
+      .map(function(claim) {
+        return {
+          id: claim.id || '',
+          text: String(claim.text || '').slice(0, 160),
+          kind: claim.kind || 'fact',
+          branchId: claim.branchId || 'main',
+          status: claim.status || 'active'
+        };
+      });
+  }
+
+  function getProjectOpenQuestions(project, limit) {
+    return (project?.open_question_nodes || [])
+      .slice(0, limit || 2)
+      .map(function(question) {
+        return {
+          id: question.node_id || '',
+          body: String(question.body || question.title || '').slice(0, 160),
+          branchId: question.branch_id || question.meta?.branch_id || 'main'
+        };
+      });
+  }
+
+  function getActiveBranch(project) {
+    var focus = native?.getActiveFocus?.();
+    if (focus?.target?.branchId || focus?.target?.id) {
+      return {
+        id: focus.target.branchId || focus.target.id || 'main',
+        name: focus.target.branchId || focus.target.id || 'main',
+        parentBranchId: ''
+      };
+    }
+    return {
+      id: 'main',
+      name: 'main',
+      parentBranchId: ''
+    };
+  }
+
   function buildHistoryContext() {
     if (!conversationHistory.length) return '';
     return '\nRecent:\n' + conversationHistory.slice(-4).map(function(h) {
@@ -478,6 +527,9 @@
       type: project.type || 'general',
       brief: project.brief || '',
       topQuestions: (project.open_questions || []).slice(0, 3),
+      openQuestions: getProjectOpenQuestions(project, 2),
+      recentClaims: getRecentProjectClaims(project, 3),
+      activeBranch: getActiveBranch(project),
       selectedSurface: surface || '',
       summary: buildProjectContext({ deep: true })
     };
@@ -564,26 +616,139 @@
    */
   function processImage(rawBase64, description, meta) {
     var orchestrator = window.StructaOrchestrator;
-    if (!orchestrator || !orchestrator.analyzeImage) {
+    if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
       return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
-    var priority = meta && meta.priority ? meta.priority : 'high';
-    return orchestrator.analyzeImage({
-      project: buildProjectEnvelope('show'),
-      selection: null,
+    var options = meta || {};
+    var priority = 'high';
+    var projectEnvelope = buildProjectEnvelope('show');
+    var selection = {
+      kind: 'capture',
+      id: options.itemId || options.imageId || '',
+      body: description || 'camera capture',
+      claims: options.itemId && native?.getClaimsForItem ? native.getClaimsForItem(options.itemId).slice(0, 6) : []
+    };
+    var payload = {
+      project: projectEnvelope,
+      selection: selection,
       input: {
-        transcript: meta && meta.voiceAnnotation ? meta.voiceAnnotation : '',
-        imageId: meta && meta.imageId ? meta.imageId : '',
+        transcript: options.voiceAnnotation || '',
+        voiceAnnotation: options.voiceAnnotation || '',
+        imageId: options.imageId || '',
+        itemId: options.itemId || '',
         imageRef: description || 'camera capture',
         imageBase64: rawBase64
       },
-      meta: meta || {},
+      meta: options,
       policy: {
         priority: priority,
         allowSearch: false,
         allowSpeech: false
       }
-    }, executePreparedLLM);
+    };
+    var startedAt = Date.now();
+
+    if (!runtimeCaps.hasBridge) {
+      native?.traceEvent?.('image.dispatch', 'bridge-unavailable', 'fallback-server', {
+        entryId: options.imageId || '',
+        reason: 'bridge unavailable'
+      });
+      if (!orchestrator.analyzeImage) {
+        return Promise.resolve({ ok: false, error: 'bridge unavailable' });
+      }
+      return orchestrator.analyzeImage(payload, executePreparedLLM);
+    }
+
+    return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
+      if (!prepared || !prepared.ok || !prepared.prompt) {
+        native?.traceEvent?.('image.dispatch', 'prepare', 'fallback-server', {
+          entryId: options.imageId || '',
+          reason: prepared?.error || 'prompt unavailable'
+        });
+        if (!orchestrator.analyzeImage) {
+          return { ok: false, error: prepared?.error || 'prompt unavailable' };
+        }
+        return orchestrator.analyzeImage(payload, executePreparedLLM);
+      }
+
+      native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
+        entryId: options.imageId || '',
+        projectId: projectEnvelope.id || '',
+        promptLength: String(prepared.prompt || '').length
+      });
+      return sendToLLM(prepared.prompt, {
+        imageBase64: rawBase64,
+        pluginId: 'com.playgranada.structa',
+        journal: true,
+        timeout: 15000,
+        priority: 'high'
+      }).then(function(bridgeResult) {
+        if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) return bridgeResult;
+        native?.traceEvent?.('image.bridge', 'pending', 'response', {
+          entryId: options.imageId || '',
+          textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
+          latencyMs: Date.now() - startedAt
+        });
+        return extractClaimsFromText({
+          project: projectEnvelope,
+          input: {
+            text: bridgeResult.clean || bridgeResult.text || '',
+            deviceId: native?.deviceId || ''
+          },
+          source: options.voiceAnnotation ? 'show-tell' : 'image',
+          sourceRef: {
+            imageId: options.imageId || '',
+            itemId: options.itemId || ''
+          },
+          meta: {
+            deviceId: native?.deviceId || '',
+            imageId: options.imageId || ''
+          }
+        }).then(function(extracted) {
+          var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
+          if (claims.length) {
+            native?.traceEvent?.('image.claims', 'pending', 'extracted', {
+              entryId: options.imageId || '',
+              count: claims.length
+            });
+          } else if (!extracted?.ok) {
+            native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
+              entryId: options.imageId || '',
+              reason: extracted?.error || 'extraction failed'
+            });
+          }
+          return {
+            ok: true,
+            text: bridgeResult.text || bridgeResult.clean || '',
+            clean: bridgeResult.clean || bridgeResult.text || '',
+            structured: extractFields(bridgeResult.clean || bridgeResult.text || ''),
+            claims: claims,
+            claim_extraction_pending: !claims.length,
+            bridge: true
+          };
+        });
+      });
+    });
+  }
+
+  function extractClaimsFromText(payload) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.extractClaimsFromText) {
+      return Promise.resolve({ ok: false, claims: [], error: 'claims extractor unavailable' });
+    }
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = {
+      priority: 'low',
+      allowSearch: false,
+      allowSpeech: false
+    };
+    return withTimeout(
+      orchestrator.extractClaimsFromText(envelope),
+      12000,
+      'image claim extraction'
+    ).catch(function(error) {
+      return { ok: false, claims: [], error: error?.message || 'image claim extraction failed' };
+    });
   }
 
   function refineThreadComment(payload) {
@@ -937,6 +1102,7 @@
     executePreparedLLM: executePreparedLLM,
     processVoice: processVoice,
     processImage: processImage,
+    extractClaimsFromText: extractClaimsFromText,
     refineThreadComment: refineThreadComment,
     backfillClaimsForItem: backfillClaimsForItem,
     query: query,

@@ -744,6 +744,18 @@
       return;
     }
 
+    if (buildContext && buildContext.kind === 'capture-annotation') {
+      voiceTarget = null;
+      window.StructaCamera?.completePendingAnnotation?.(text);
+      if (text.length >= 3) {
+        window.StructaFeedback?.fire?.('resolve');
+        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+          detail: { source: 'capture-annotation' }
+        }));
+      }
+      return;
+    }
+
     if (buildContext && buildContext.kind === 'thread-comment') {
       voiceTarget = null;
       if (text.length < 3) return;

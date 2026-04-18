@@ -77,6 +77,18 @@
     return run('/v1/image/analyze', envelope, executeLLM);
   }
 
+  function prepareImageContextPrompt(payload) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy);
+    return postJSON('/v1/image/context_prompt', envelope);
+  }
+
+  function extractClaimsFromText(payload) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
+    return postJSON('/v1/claims/extract_from_text', envelope);
+  }
+
   function runChainStep(payload, executeLLM) {
     var envelope = Object.assign({}, payload || {});
     envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
@@ -110,6 +122,8 @@
   window.StructaOrchestrator = Object.freeze({
     interpretVoice: interpretVoice,
     analyzeImage: analyzeImage,
+    prepareImageContextPrompt: prepareImageContextPrompt,
+    extractClaimsFromText: extractClaimsFromText,
     runChainStep: runChainStep,
     synthesizeTriangle: synthesizeTriangle,
     backfillClaims: backfillClaims,

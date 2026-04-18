@@ -1,0 +1,20 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T18:05:00.000Z", "flow": "image.dispatch", "from": "prepare", "to": "bridge", "ctx": { "entryId": "cap-3", "projectId": "prj-home", "promptLength": 388 } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-voice-ctx-1", "source": "voice", "kind": "intent", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-image-ctx-1", "source": "image", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

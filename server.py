@@ -2,7 +2,11 @@
 import http.server
 import json
 import os
+import time
 from urllib.parse import urlparse
+
+CLAIMS_EXTRACT_BUCKETS = {}
+CLAIMS_EXTRACT_PER_MINUTE = 10
 
 
 def compact(text, limit=220):
@@ -50,6 +54,122 @@ def build_selection_lines(selection):
             if isinstance(claim_entry, dict) and claim_entry.get("id") and claim_entry.get("text"):
                 lines.append(f"claim {claim_entry['id']}: {compact(claim_entry['text'], 90)}")
     return lines
+
+
+def build_image_prompt(project, input_data, meta=None):
+    project = project if isinstance(project, dict) else {}
+    input_data = input_data if isinstance(input_data, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    annotation = compact(input_data.get("voiceAnnotation") or input_data.get("transcript") or "", 180)
+    project_name = compact(project.get("name") or "untitled project", 72)
+    project_type = compact(project.get("type") or "general", 32)
+    branch = project.get("activeBranch") if isinstance(project.get("activeBranch"), dict) else {}
+    branch_name = compact(branch.get("name") or branch.get("id") or "main", 48)
+    branch_parent = compact(branch.get("parentBranchId") or "", 48)
+    recent_claims = []
+    for claim in project.get("recentClaims") or []:
+        if not isinstance(claim, dict):
+            continue
+        text = compact(claim.get("text") or "", 80)
+        if not text:
+            continue
+        recent_claims.append(text)
+        if len(recent_claims) >= 3:
+            break
+    open_questions = []
+    for question in project.get("openQuestions") or project.get("topQuestions") or []:
+        if isinstance(question, dict):
+            text = compact(question.get("body") or question.get("text") or question.get("title") or "", 80)
+        else:
+            text = compact(question, 80)
+        if not text:
+            continue
+        open_questions.append(text)
+        if len(open_questions) >= 2:
+            break
+
+    prompt_lines = [
+        "you are capturing visual input for an ongoing project.",
+        "return a concise factual description (2-3 sentences), then list distinct claims as short lines prefixed with \"-\".",
+        "no speculation.",
+        "",
+        f"project: {project_name}",
+        f"type: {project_type}",
+        f"active branch: {branch_name}" + (f" (parent {branch_parent})" if branch_parent else ""),
+        "what the user is working on:",
+    ]
+    if recent_claims:
+        prompt_lines.extend(["- " + claim for claim in recent_claims])
+    else:
+        prompt_lines.append("- early project, signal still forming")
+    prompt_lines.append("open questions they're trying to answer:")
+    if open_questions:
+        prompt_lines.extend(["- " + question for question in open_questions])
+    else:
+        prompt_lines.append("- no open questions yet")
+    prompt_lines.extend([
+        "capture intent:",
+        annotation or "no annotation — infer relevance from project context above",
+        "",
+        "camera context:",
+        f"- facing mode: {compact(meta.get('facingMode') or 'environment', 24)}",
+        f"- image id: {compact(input_data.get('imageId') or '', 80) or 'unknown'}",
+        f"- item id: {compact(input_data.get('itemId') or '', 80) or 'unknown'}",
+    ])
+
+    text = "\n".join(prompt_lines)
+    return compact(text, 3200)
+
+
+def extract_claim_lines_from_text(raw):
+    lines = []
+    for line in str(raw or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        claim_text = compact(stripped.lstrip("-").strip(), 160)
+        if claim_text:
+            lines.append(claim_text)
+    if lines:
+        return lines[:4]
+    text = normalize_multiline(raw)
+    fallback_parts = [part.strip() for part in text.replace("\n", " ").split(".") if part.strip()]
+    return [compact(part, 160) for part in fallback_parts[:2] if compact(part, 160)]
+
+
+def extract_claims_from_text(payload):
+    input_data = payload.get("input") or {}
+    raw_text = input_data.get("text") or payload.get("text") or ""
+    source = compact(payload.get("source") or "image", 24).lower() or "image"
+    source_ref = payload.get("sourceRef") or {}
+    lines = extract_claim_lines_from_text(raw_text)
+    claims = extract_simple_claims(lines, source, source_ref=source_ref)
+    return {
+        "ok": True,
+        "claims": claims,
+        "ui": {
+            "summary": f"{len(claims)} claims",
+            "logLine": "claims extracted",
+        },
+        "meta": {
+            "kind": "claims-extract-from-text",
+        },
+    }
+
+
+def claims_extract_allowed(payload):
+    meta = payload.get("meta") or {}
+    input_data = payload.get("input") or {}
+    key = compact(meta.get("deviceId") or input_data.get("deviceId") or "anonymous", 120) or "anonymous"
+    now = int(time.time())
+    bucket = CLAIMS_EXTRACT_BUCKETS.get(key) or []
+    bucket = [stamp for stamp in bucket if now - stamp < 60]
+    if len(bucket) >= CLAIMS_EXTRACT_PER_MINUTE:
+        CLAIMS_EXTRACT_BUCKETS[key] = bucket
+        return False
+    bucket.append(now)
+    CLAIMS_EXTRACT_BUCKETS[key] = bucket
+    return True
 
 
 def normalize_multiline(text):
@@ -291,41 +411,14 @@ def voice_normalize(payload):
 def image_prepare(payload):
     project = payload.get("project") or {}
     input_data = payload.get("input") or {}
-    annotation = compact(input_data.get("transcript") or "", 220)
     image_base64 = input_data.get("imageBase64") or ""
-    image_id = compact(input_data.get("imageId") or ((payload.get("meta") or {}).get("imageId")) or "", 80)
-    image_ref = input_data.get("imageRef") or ""
     meta = payload.get("meta") or {}
-
-    lines = [
-        "Analyze this image for Structa.",
-        "Use only the image, project context, and optional annotation.",
-        "",
-        "PROJECT",
-    ] + build_project_lines(project)
-
-    lines.extend([
-        "",
-        "CAPTURE",
-        f"camera: {meta.get('facingMode', 'environment')}",
-        f"image id: {image_id or 'unknown'}",
-        f"image ref: {image_ref or 'inline capture'}",
-    ])
-    if annotation:
-        lines.append(f"annotation: {annotation}")
-
-    lines.extend([
-        "",
-        "Return exactly these lines:",
-        "FACTS: <factual visible description only>",
-        "SIGNAL: <project-relevant meaning only>",
-        "NEXT: <one short next step>",
-    ])
+    prompt = build_image_prompt(project, input_data, meta)
 
     return {
         "ok": True,
         "llm": {
-            "prompt": "\n".join(lines),
+            "prompt": prompt,
             "imageBase64": image_base64,
             "timeout": 40000,
             "priority": payload.get("policy", {}).get("priority", "high"),
@@ -1110,6 +1203,26 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(400, {"ok": False, "error": "typed focus and project are required"})
                 return
             self.send_json(200, {"ok": True, **build_chain_digest(payload.get("project") or {}, focus, payload.get("history") or {})})
+            return
+        if parsed.path == "/v1/image/context_prompt":
+            project = payload.get("project")
+            if not isinstance(project, dict):
+                self.send_json(400, {"ok": False, "error": "project is required"})
+                return
+            input_data = payload.get("input") or {}
+            meta = payload.get("meta") or {}
+            self.send_json(200, {
+                "ok": True,
+                "prompt": build_image_prompt(project, input_data, meta),
+                "ui": {"summary": "bridge image prompt", "logLine": "image prompt ready"},
+                "meta": {"kind": "image-context-prompt"},
+            })
+            return
+        if parsed.path == "/v1/claims/extract_from_text":
+            if not claims_extract_allowed(payload):
+                self.send_json(429, {"ok": False, "error": "claims extraction rate limited"})
+                return
+            self.send_json(200, extract_claims_from_text(payload))
             return
 
         handlers = {

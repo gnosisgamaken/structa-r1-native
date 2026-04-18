@@ -92,6 +92,13 @@
     });
   }
 
+  function compactText(text, limit) {
+    var max = Number(limit || 160);
+    var value = String(text || '').trim().replace(/\s+/g, ' ');
+    if (value.length <= max) return value;
+    return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
+  }
+
   probeCapabilities();
 
   function getNextId() {
@@ -184,8 +191,7 @@
     var protectedMessage = message;
     if (!opts.useSerpAPI && typeof protectedMessage === 'string' && !/DO NOT SEARCH/i.test(protectedMessage)) {
       protectedMessage =
-        '🚫 DO NOT SEARCH. DO NOT BROWSE. DO NOT USE TOOLS. DO NOT SAVE NOTES. DO NOT CREATE REMINDERS.\n' +
-        'Reason only from the provided context.\n\n' +
+        'Use only the provided context.\n\n' +
         protectedMessage;
     }
 
@@ -605,6 +611,67 @@
     });
   }
 
+  function buildLocalImagePrompt(projectEnvelope, options) {
+    var projectName = compactText(projectEnvelope?.name || 'untitled project', 64);
+    var branchName = compactText(projectEnvelope?.activeBranch?.name || projectEnvelope?.activeBranch?.id || 'main', 48);
+    var recentClaims = (projectEnvelope?.recentClaims || [])
+      .map(function(entry) { return compactText(entry?.text || '', 72); })
+      .filter(Boolean)
+      .slice(0, 2);
+    var openQuestions = (projectEnvelope?.openQuestions || projectEnvelope?.topQuestions || [])
+      .map(function(entry) {
+        if (entry && typeof entry === 'object') return compactText(entry.body || entry.text || entry.title || '', 72);
+        return compactText(entry || '', 72);
+      })
+      .filter(Boolean)
+      .slice(0, 2);
+    var intent = compactText(options?.voiceAnnotation || '', 96);
+    var lines = [
+      'Project image analysis.',
+      'Describe only what is factually visible and relevant.',
+      'Return 2 short sentences, then 1-4 bullet claims prefixed with "-".',
+      'project: ' + projectName,
+      'branch: ' + branchName
+    ];
+    if (recentClaims.length) lines.push('focus: ' + recentClaims.join(' | '));
+    if (openQuestions.length) lines.push('questions: ' + openQuestions.join(' | '));
+    lines.push('intent: ' + (intent || 'no annotation'));
+    return lines.join('\n');
+  }
+
+  function emailText(subject, body) {
+    var safeSubject = compactText(subject || 'Structa export', 96);
+    var safeBody = String(body || '').trim();
+    if (safeBody.length > 2800) {
+      safeBody = safeBody.slice(0, 2799).trimEnd() + '…';
+    }
+    var messaging = window.r1?.messaging;
+    if (messaging?.emailUser) {
+      return Promise.resolve(messaging.emailUser({
+        subject: safeSubject,
+        body: safeBody
+      })).then(function() {
+        return { ok: true, mode: 'native', subject: safeSubject };
+      }).catch(function(error) {
+        return { ok: false, error: error?.message || 'email failed', mode: 'native' };
+      });
+    }
+    if (typeof PluginMessageHandler !== 'undefined' && typeof PluginMessageHandler.postMessage === 'function') {
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: 'Email this exact report to the user.\nSubject: ' + safeSubject + '\n\n' + safeBody,
+          useLLM: true,
+          wantsR1Response: false,
+          wantsJournalEntry: false
+        }));
+        return Promise.resolve({ ok: true, mode: 'bridge-requested', subject: safeSubject });
+      } catch (error) {
+        return Promise.resolve({ ok: false, error: error?.message || 'bridge email failed', mode: 'bridge-requested' });
+      }
+    }
+    return Promise.resolve({ ok: false, error: 'email unavailable', mode: 'unavailable' });
+  }
+
   /**
    * processImage -- sends image to R1 LLM with FULL project context.
    * Project type fundamentally changes how to interpret an image:
@@ -660,23 +727,29 @@
     }
 
     return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
-      if (!prepared || !prepared.ok || !prepared.prompt) {
-        native?.traceEvent?.('image.dispatch', 'prepare', 'fallback-server', {
+      var prompt = String(prepared?.prompt || '').trim();
+      if (!prepared || !prepared.ok || !prompt) {
+        prompt = buildLocalImagePrompt(projectEnvelope, options);
+        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
           entryId: options.imageId || '',
-          reason: prepared?.error || 'prompt unavailable'
+          reason: prepared?.error || 'prompt unavailable',
+          promptLength: prompt.length
         });
-        if (!orchestrator.analyzeImage) {
-          return { ok: false, error: prepared?.error || 'prompt unavailable' };
-        }
-        return orchestrator.analyzeImage(payload, executePreparedLLM);
+      } else if (prompt.length > 1600) {
+        prompt = buildLocalImagePrompt(projectEnvelope, options);
+        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
+          entryId: options.imageId || '',
+          reason: 'prompt too long',
+          promptLength: prompt.length
+        });
       }
 
       native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
         entryId: options.imageId || '',
         projectId: projectEnvelope.id || '',
-        promptLength: String(prepared.prompt || '').length
+        promptLength: prompt.length
       });
-      return sendToLLM(prepared.prompt, {
+      return sendToLLM(prompt, {
         imageBase64: rawBase64,
         pluginId: 'com.playgranada.structa',
         journal: true,
@@ -1038,17 +1111,9 @@
 
     return sendToLLM(prompt, { journal: false }).then(function(result) {
       if (!result || !result.ok) return { ok: false };
-      // Send via email through R1
-      if (typeof PluginMessageHandler !== 'undefined') {
-        try {
-          PluginMessageHandler.postMessage(JSON.stringify({
-            message: 'email this to me:\n\nStructa ' + exportType + ' — ' + (project.name || 'project') + '\n\n' + result.clean,
-            useLLM: true,
-            wantsR1Response: false
-          }));
-        } catch (e) {}
-      }
-      return { ok: true, type: exportType, content: result.clean };
+      return emailText('Structa ' + exportType + ' — ' + (project.name || 'project'), result.clean).then(function(delivery) {
+        return { ok: true, type: exportType, content: result.clean, delivery: delivery };
+      });
     });
   }
 
@@ -1110,6 +1175,7 @@
     linkNode: linkNode,
     research: research,
     generateExport: generateExport,
+    emailText: emailText,
     titleProject: titleProject,
     speakMilestone: speakMilestone,
     probeCapabilities: probeCapabilities,

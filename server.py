@@ -91,36 +91,33 @@ def build_image_prompt(project, input_data, meta=None):
             break
 
     prompt_lines = [
-        "you are capturing visual input for an ongoing project.",
-        "return a concise factual description (2-3 sentences), then list distinct claims as short lines prefixed with \"-\".",
-        "no speculation.",
-        "",
+        "Project image analysis.",
+        "Describe only visible facts relevant to the project.",
+        "Return 2 short sentences, then 1-4 bullet claims prefixed with '-'.",
         f"project: {project_name}",
         f"type: {project_type}",
-        f"active branch: {branch_name}" + (f" (parent {branch_parent})" if branch_parent else ""),
-        "what the user is working on:",
+        f"branch: {branch_name}" + (f" (parent {branch_parent})" if branch_parent else ""),
+        "focus:",
     ]
     if recent_claims:
         prompt_lines.extend(["- " + claim for claim in recent_claims])
     else:
-        prompt_lines.append("- early project, signal still forming")
-    prompt_lines.append("open questions they're trying to answer:")
+        prompt_lines.append("- early project")
+    prompt_lines.append("questions:")
     if open_questions:
         prompt_lines.extend(["- " + question for question in open_questions])
     else:
-        prompt_lines.append("- no open questions yet")
+        prompt_lines.append("- none yet")
     prompt_lines.extend([
-        "capture intent:",
+        "intent:",
         annotation or "no annotation — infer relevance from project context above",
-        "",
-        "camera context:",
-        f"- facing mode: {compact(meta.get('facingMode') or 'environment', 24)}",
-        f"- image id: {compact(input_data.get('imageId') or '', 80) or 'unknown'}",
-        f"- item id: {compact(input_data.get('itemId') or '', 80) or 'unknown'}",
+        "camera:",
+        f"- mode: {compact(meta.get('facingMode') or 'environment', 24)}",
+        f"- image: {compact(input_data.get('imageId') or '', 48) or 'unknown'}",
     ])
 
     text = "\n".join(prompt_lines)
-    return compact(text, 3200)
+    return compact(text, 1400)
 
 
 def extract_claim_lines_from_text(raw):

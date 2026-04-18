@@ -487,7 +487,7 @@
       updateLinks(signalNode?.node_id || '', localPair.a, localPair.b, questionNode?.node_id || '');
       const origin = clone(localPair.origin || {});
       clearRuntimeState();
-      window.StructaAudio?.cue?.('resolve');
+      window.StructaFeedback?.fire?.('resolve');
       window.StructaLLM?.speakMilestone?.('triangle');
       emit('structa-triangle-result', {
         signal: signalArtifact.body,

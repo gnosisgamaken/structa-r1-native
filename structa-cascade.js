@@ -51,12 +51,15 @@
   });
 
   const IC = window.StructaIcons || {};
+  function iconAsset(slot, fallback = '') {
+    return IC.get?.(slot) || IC.slots?.[slot] || IC.byId?.[slot] || fallback;
+  }
   const triangleEngine = window.StructaTriangle;
   const cards = [
-    { id: 'show', title: 'show', iconPath: IC['4'] || 'assets/icons/png/4.png', iconFallback: '▣', role: 'visual capture', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: IC['3'] || 'assets/icons/png/3.png', iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
-    { id: 'know', title: 'know', iconPath: IC['7'] || 'assets/icons/png/7.png', iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', iconPath: IC['6'] || 'assets/icons/png/6.png', iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
+    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'visual capture', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', iconPath: iconAsset('card-know', 'assets/icons/png/7.png'), iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', iconPath: iconAsset('card-now', 'assets/icons/png/6.png'), iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
   ];
 
   // === State machine ===
@@ -183,6 +186,10 @@
 
   function lower(text = '') {
     return String(text || '').toLowerCase();
+  }
+
+  function fireFeedback(kind) {
+    return window.StructaFeedback?.fire?.(kind) || false;
   }
 
   function normalizeTinyText(text = '') {
@@ -1148,8 +1155,10 @@
   // === Open a card's primary surface ===
   function openCard(card) {
     if (onboardingActive() && !onboardingAllowedCardIds().includes(card.id)) {
+      fireFeedback('blocked');
       return;
     }
+    fireFeedback('touch-commit');
     if (card.surface === 'camera') {
       transition(STATES.SHOW_BROWSE);
       return;
@@ -1183,12 +1192,13 @@
       render();
     }
     if (source !== 'touch') {
-      stateData.showStatus = 'touch to start camera';
+      stateData.showStatus = 'click to start camera';
       stateData.pendingShowNarration = false;
-      window.StructaAudio?.play?.('error');
+      fireFeedback('blocked');
       render();
       return false;
     }
+    fireFeedback('touch-commit');
     window.StructaCamera?.openFromGesture?.('environment');
     return true;
   }
@@ -1265,9 +1275,16 @@
 
   function retryCurrentQueueBlocker() {
     const blocker = buildNowSummary().queueBlocker;
-    if (!blocker || !processingQueue?.retry) return false;
+    if (!blocker || !processingQueue?.retry) {
+      fireFeedback('blocked');
+      return false;
+    }
     const didRetry = processingQueue.retry(blocker.id);
-    if (!didRetry) return false;
+    if (!didRetry) {
+      fireFeedback('blocked');
+      return false;
+    }
+    fireFeedback('touch-commit');
     const remaining = (getUIState().queue_blockers || []).filter(function(entry) {
       return entry.id !== blocker.id;
     });
@@ -1285,7 +1302,11 @@
 
   function skipCurrentQueueBlocker() {
     const blocker = buildNowSummary().queueBlocker;
-    if (!blocker) return false;
+    if (!blocker) {
+      fireFeedback('blocked');
+      return false;
+    }
+    fireFeedback('touch-commit');
     processingQueue?.cancel?.(blocker.id);
     if (blocker.kind === 'image-analyze') {
       window.StructaCamera?.skipBlockedAnalysis?.(blocker.payload?.entryId, blocker.payload?.nodeId);
@@ -1333,8 +1354,12 @@
 
   function activateSelectedProject() {
     const rows = getProjectSwitcherRows();
-    if (!rows.length) return false;
+    if (!rows.length) {
+      fireFeedback('blocked');
+      return false;
+    }
     if (onboardingActive() && getOnboardingStep() === 1) {
+      fireFeedback('touch-commit');
       setOnboardingStep(2);
       pushLog('lesson 1 complete', 'system');
       transition(STATES.NOW_BROWSE);
@@ -1343,12 +1368,17 @@
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const index = Math.max(0, Math.min(selectedIndexValue, rows.length - 1));
     const row = rows[index];
-    if (!row) return false;
+    if (!row) {
+      fireFeedback('blocked');
+      return false;
+    }
     if (row.type === 'add') {
+      fireFeedback('touch-commit');
       openNewProjectFlow();
       return true;
     }
     const project = row.project;
+    fireFeedback('touch-commit');
     native?.switchProject?.(project.project_id);
     pushLog(`project: ${project.name}`, 'voice');
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -1542,7 +1572,7 @@
       });
       wrapTextBlock(undefined, 'this is your project surface. everything starts here.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 4);
       mk('rect', { x: 18, y: cardY + 116, width: 116, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, cardY + 132, 'ptt click → begin', {
+      text(30, cardY + 132, 'click → begin', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -1981,6 +2011,7 @@
       indicator.addEventListener('pointerup', function(event) {
         event.preventDefault();
         event.stopPropagation();
+        fireFeedback('touch-commit');
         transition(STATES.LOG_OPEN);
       });
     }
@@ -2264,7 +2295,7 @@
   function drawWordmark() {
     if (currentState !== STATES.HOME && currentState !== STATES.LOG_OPEN) return;
     const project = getProjectMemory();
-    drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
+    drawFramedIcon(iconAsset('brand-mark', 'assets/icons/png/5.png'), {
       x: 11, y: 14, width: 24, height: 24, rx: 4, ry: 4
     }, svg, {
       inset: 1.5,
@@ -2300,7 +2331,7 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
     if (recordingActive()) recordingDot(23, 25, 10, svg);
-    else drawFramedIcon(IC['5'] || 'assets/icons/png/5.png', {
+    else drawFramedIcon(iconAsset('brand-mark', 'assets/icons/png/5.png'), {
       x: 12, y: 14, width: 22, height: 22, rx: 4, ry: 4
     }, svg, {
       inset: 1.35,
@@ -2337,6 +2368,7 @@
       flushTap.addEventListener('pointerup', function(event) {
         event.preventDefault();
         event.stopPropagation();
+        fireFeedback('touch-commit');
         if (stateData.projectFlushConfirm) {
           flushTestingMemory();
           return;
@@ -2435,7 +2467,10 @@
         event.stopPropagation();
         stateData.projectListIndex = absoluteIndex;
         if (isSelected) activateSelectedProject();
-        else render();
+        else {
+          fireFeedback('touch-commit');
+          render();
+        }
       });
     });
 
@@ -2455,6 +2490,7 @@
       archiveTap.addEventListener('pointerup', event => {
         event.preventDefault();
         event.stopPropagation();
+        fireFeedback('touch-commit');
         native?.archiveProject?.(selectedProject.project_id);
         const refreshed = getProjects();
         const nextIndex = Math.max(0, Math.min(stateData.projectListIndex || 0, Math.max(refreshed.length - 1, 0)));
@@ -2590,7 +2626,10 @@
 
     const activate = event => {
       event.preventDefault();
-      if (onboardingActive() && !homeOnboardingSelectionAllowed(card.id)) return;
+      if (onboardingActive() && !homeOnboardingSelectionAllowed(card.id)) {
+        fireFeedback('blocked');
+        return;
+      }
       if (selected && isHome()) {
         if (card.id === 'show' && event.type === 'pointerup') {
           openCameraFromShow('touch');
@@ -2598,7 +2637,10 @@
         }
         openCard(card);
       }
-      else if (isHome()) selectIndex(index);
+      else if (isHome()) {
+        fireFeedback('touch-commit');
+        selectIndex(index);
+      }
     };
 
     group.addEventListener('pointerup', activate);
@@ -2747,7 +2789,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, inlineListening ? 'release reprompt' : (canReprompt ? 'ptt on frame' : 'ptt in lens'), {
+    text(216, 92, inlineListening ? 'release reprompt' : (canReprompt ? 'hold ptt on frame' : 'hold ptt in lens'), {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -2761,12 +2803,12 @@
 
     mk('rect', { x: 14, y: 112, width: 212, height: 112, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
     if (currentState === STATES.SHOW_PRIMED) {
-      text(20, 148, 'touch to start camera', {
+      text(20, 148, 'click to start camera', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, 172, 'then click shoots · hold narrates', {
+      text(20, 172, 'then click shoots · hold ptt narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -2820,7 +2862,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 168, 'touch open lens to begin', {
+      text(20, 168, 'click open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -2833,7 +2875,7 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(226, 276, 'waiting for touch', {
+      text(226, 276, 'waiting for click', {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
         'text-anchor': 'end'
@@ -2865,6 +2907,7 @@
       thumbTap.addEventListener('pointerup', event => {
         event.preventDefault();
         event.stopPropagation();
+        fireFeedback('touch-commit');
         const absoluteIndex = model.captures.indexOf(capture);
         stateData.showCaptureIndex = absoluteIndex >= 0 ? absoluteIndex : 0;
         stateData.showCaptureEntryId = capture?.entry_id || capture?.id || '';
@@ -3321,12 +3364,13 @@
       rowTap.addEventListener('pointerup', event => {
         event.preventDefault();
         event.stopPropagation();
+        fireFeedback('touch-commit');
         stateData.tellEntryIndex = absoluteIndex;
         stateData.tellStatus = 'saved';
         render();
       });
     });
-    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt comments' : 'hold ptt comments', {
+    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt' : 'hold ptt', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -3628,6 +3672,7 @@
       pillGroup.addEventListener('pointerup', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        fireFeedback('touch-commit');
         stateData.knowLaneIndex = i;
         stateData.knowItemIndex = 0;
         stateData.knowBodyScrollTop = 0;
@@ -3664,6 +3709,7 @@
         chipGroup.addEventListener('pointerup', (e) => {
           e.preventDefault();
           e.stopPropagation();
+          fireFeedback('touch-commit');
           stateData.knowChipIndex = realIndex;
           stateData.knowItemIndex = 0;
           stateData.knowBodyScrollTop = 0;
@@ -3727,6 +3773,7 @@
       frameTap.addEventListener('pointerup', function(e) {
         e.preventDefault();
         e.stopPropagation();
+        fireFeedback('touch-commit');
         transition(STATES.KNOW_DETAIL);
       });
     }
@@ -3932,6 +3979,7 @@
       lastNativeScrollDirection = normalized;
     }
     markScrollActivity();
+    fireFeedback('scroll-step');
     handleScrollDirection(normalized);
   }
 
@@ -3971,11 +4019,13 @@
           skipCurrentQueueBlocker();
           break;
         }
+        fireFeedback('touch-commit');
         dispatchTriangleDoubleSide(buildTriangleCurrentItem());
         break;
       }
 
       case STATES.LOG_OPEN:
+        fireFeedback('touch-commit');
         window.StructaImpactChain?.stop?.();
         pushLog('chain killed by user', 'system');
         break;
@@ -3988,7 +4038,7 @@
   function handleSideClick() {
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
-        activateSelectedProject();
+        if (!activateSelectedProject()) fireFeedback('blocked');
         break;
 
       case STATES.SHOW_BROWSE:
@@ -3999,6 +4049,7 @@
         // Side click on TELL = open KNOW to see impact of this note
         const tellContext = buildTellVoiceContext();
         if (tellContext.text) {
+          fireFeedback('touch-commit');
           const project = getProjectMemory();
           const relatedInsights = (project?.insights || []).filter(function(insight) {
             return insight?.node_id === tellContext.nodeId || (insight?.links || []).includes(tellContext.nodeId);
@@ -4008,6 +4059,8 @@
           }
           selectedIndex = cards.findIndex(c => c.id === 'know');
           transition(STATES.KNOW_BROWSE, { knowLaneIndex: 1, knowItemIndex: 0, knowFocusNodeId: tellContext.nodeId || '' });
+        } else {
+          fireFeedback('blocked');
         }
         break;
       }
@@ -4019,6 +4072,7 @@
 
       case STATES.CAMERA_OPEN:
         // Side = capture
+        fireFeedback('touch-commit');
         transition(STATES.CAMERA_CAPTURE);
         break;
 
@@ -4033,6 +4087,7 @@
 
       case STATES.KNOW_BROWSE:
         // Side = open detail
+        fireFeedback('touch-commit');
         transition(STATES.KNOW_DETAIL);
         break;
 
@@ -4041,9 +4096,11 @@
         const items = getKnowVisibleItems(model);
         const item = items[stateData.knowItemIndex || 0];
         if (item && item.source === 'question' && item.questionIndex !== undefined) {
+          fireFeedback('touch-commit');
           transition(STATES.KNOW_ANSWER, { question: { index: item.questionIndex, text: item.body } });
           return;
         }
+        fireFeedback('touch-commit');
         transition(STATES.KNOW_BROWSE, { preserveKnowFocus: true });
         break;
       }
@@ -4052,11 +4109,13 @@
         if (onboardingActive()) {
           const step = getOnboardingStep();
           if (step === 0) {
+            fireFeedback('touch-commit');
             setOnboardingStep(1);
             pushLog('lesson 0 complete', 'system');
             render();
             return;
           }
+          fireFeedback('blocked');
           return;
         }
         if (buildNowSummary().queueBlocker) {
@@ -4067,11 +4126,13 @@
           if (window.StructaAudio?.play) window.StructaAudio.play('approve');
           return;
         }
+        fireFeedback('blocked');
         pushLog('hold ptt to answer blocker', 'project');
         break;
       }
 
       case STATES.LOG_OPEN:
+        fireFeedback('touch-commit');
         if (window.StructaImpactChain?.active && !window.StructaImpactChain?.manuallyStopped) {
           window.StructaImpactChain?.pause?.('manual stop');
           pushLog('chain paused', 'system');
@@ -4083,7 +4144,10 @@
         break;
 
       case STATES.HOME:
-        if (onboardingActive() && !homeOnboardingSelectionAllowed(currentCard().id)) return;
+        if (onboardingActive() && !homeOnboardingSelectionAllowed(currentCard().id)) {
+          fireFeedback('blocked');
+          return;
+        }
         openCard(currentCard());
         break;
 
@@ -4475,6 +4539,7 @@
     event.preventDefault();
     if (!onboardingAllowsLogs()) return;
     if (isCaptureState()) return;
+    fireFeedback('touch-commit');
     if (currentState === STATES.LOG_OPEN) {
       transition(STATES.HOME);
     } else if (currentState === STATES.HOME) {
@@ -4610,14 +4675,8 @@
       scheduleRender();
     });
   });
-  window.addEventListener('structa-queue-resolved', function(event) {
-    const kind = event?.detail?.job?.kind || '';
-    if (kind === 'triangle-synthesize' || kind === 'image-analyze') {
-      window.StructaAudio?.cue?.('resolve');
-    }
-  });
   window.addEventListener('structa-queue-blocked', function() {
-    window.StructaAudio?.cue?.('blocker');
+    fireFeedback('blocked');
   });
 
   window.addEventListener('structa-triangle-copied', function(event) {

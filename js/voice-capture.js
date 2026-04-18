@@ -518,7 +518,7 @@
         'ptt'
       );
       if (!appended || !appended.comment) return;
-      window.StructaAudio?.cue?.('resolve');
+      window.StructaFeedback?.fire?.('resolve');
       window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
         detail: {
           nodeId: buildContext.nodeId,
@@ -767,13 +767,11 @@
     voiceTarget = activeQuestion ? 'question-answer' : (activeTriangleContext ? 'triangle' : 'tell');
     setStatus('listening');
 
-    // Mute heartbeat and play voice start sound
+    // Mute heartbeat and initialize audio without breaking the current mute policy.
     if (window.StructaAudio) {
       window.StructaAudio.mute();
       window.StructaAudio.init();
-      window.StructaAudio.unmute(); // briefly unmute for the sound
-      window.StructaAudio.play('voice');
-      window.StructaAudio.mute();
+      window.StructaFeedback?.fire?.('voice-open');
     }
 
     // Show context-specific status

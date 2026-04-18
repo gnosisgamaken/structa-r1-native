@@ -284,7 +284,7 @@
         if (result && result.ok && result.clean) {
           const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture');
           applyAnalysisReady(payload, result, insightNode);
-          window.StructaAudio?.cue?.('resolve');
+          window.StructaFeedback?.fire?.('resolve');
           native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell insight ready' : 'visual insight ready' });
           if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -319,7 +319,7 @@
       native?.setCameraFacing?.(facingMode);
     }
     streamReady = true;
-    setStatus('side click shoots');
+    setStatus('click shoots');
     showOverlay();
     showOverlayReady();
     return true;
@@ -398,7 +398,7 @@
       if (getCaps().nativeCapturePreferred && window.r1?.camera?.capturePhoto) {
         facingMode = target;
         native?.setCameraFacing?.(facingMode);
-        setStatus('side click shoots');
+        setStatus('click shoots');
         showOverlay();
         showOverlayReady();
         return;
@@ -442,7 +442,7 @@
           await attachPreview();
           streamReady = true;
           native?.setCameraFacing?.(facingMode);
-      setStatus('side click shoots');
+          setStatus('click shoots');
         })
         .catch(() => { killStream(); setStatus('flip failed'); });
     } finally {
@@ -539,7 +539,7 @@
       var textEl = strip.querySelector('.strip-text');
       if (textEl) textEl.textContent = 'recording narration...';
     }
-    setStatus('side click shoots');
+    setStatus('click shoots');
   }
 
   function finalizeVoiceStripCapture() {
@@ -614,8 +614,7 @@
     }
     if (!dataUrl) {
       native?.appendLogEntry?.({ kind: 'camera', message: 'frame capture failed — try again' });
-      window.StructaAudio?.cue?.('blocker');
-      window.StructaAudio?.play?.('error');
+      window.StructaFeedback?.fire?.('blocked');
       window.dispatchEvent(new CustomEvent('structa-capture-failed'));
       return null;
     }
@@ -631,7 +630,7 @@
     // Play capture sound
     if (window.StructaAudio) {
       window.StructaAudio.init();
-      window.StructaAudio.cue?.('capture');
+      window.StructaFeedback?.fire?.('capture');
     }
 
     const imageAsset = {

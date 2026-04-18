@@ -1,7 +1,7 @@
 {
   "id": "s1_blocker_answer",
   "title": "blocker answer resolves into answer node, claim, and insight",
-  "runtime_dump": "runtime/s1_blocker_answer.json",
+  "runtime_dump": "runtime/synthetic/s1_blocker_answer.json",
   "expect_tail": [
     { "flow": "answer", "from": "captured", "to": "stored" },
     { "flow": "blocker", "from": "open", "to": "answer-received" },

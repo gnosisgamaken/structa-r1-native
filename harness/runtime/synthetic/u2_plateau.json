@@ -1,0 +1,26 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T14:05:00.000Z", "flow": "focus.start", "from": "selected", "to": "focus-2", "ctx": { "focusId": "focus-2", "targetKind": "branch", "targetId": "main" } },
+      { "t": "2026-04-18T14:05:01.000Z", "flow": "focus.step", "from": "focus-2", "to": "observe", "ctx": { "focusId": "focus-2", "phase": "observe", "jobId": "job-2" } },
+      { "t": "2026-04-18T14:05:01.050Z", "flow": "focus.step.rejected", "from": "focus-2", "to": "validator", "ctx": { "focusId": "focus-2", "reason": "insufficient signal" } },
+      { "t": "2026-04-18T14:05:03.050Z", "flow": "focus.end", "from": "focus-2", "to": "plateau", "ctx": { "focusId": "focus-2", "durationMs": 3050, "stepCount": 3 } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-base-1", "source": "voice", "kind": "fact", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [
+      { "id": "focus-2", "target": { "kind": "branch", "id": "main", "branchId": "main" }, "phase": "clarify", "state": "plateau", "steps": [] }
+    ],
+    "activeFocusId": null,
+    "chainHistory": [
+      { "focusId": "focus-2", "target": { "kind": "branch", "id": "main", "branchId": "main" }, "outcome": "plateau" }
+    ]
+  }
+}

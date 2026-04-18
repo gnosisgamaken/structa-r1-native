@@ -97,6 +97,18 @@
     'active', 'superseded', 'disputed', 'stale'
   ]);
 
+  const focusKinds = Object.freeze([
+    'branch', 'question', 'claim'
+  ]);
+
+  const focusPhases = Object.freeze([
+    'observe', 'clarify', 'evaluate', 'decision'
+  ]);
+
+  const focusStates = Object.freeze([
+    'active', 'resolved', 'plateau', 'dismissed', 'blocked', 'superseded'
+  ]);
+
   function createNode(input = {}) {
     const now = new Date().toISOString();
     return {
@@ -157,6 +169,27 @@
     };
   }
 
+  function createFocus(input = {}) {
+    const now = new Date().toISOString();
+    return {
+      id: input.id || makeEntryId('focus'),
+      projectId: input.projectId || baseProjectCode,
+      target: {
+        kind: focusKinds.includes(input.target?.kind) ? input.target.kind : 'branch',
+        id: String(input.target?.id || 'main'),
+        branchId: String(input.target?.branchId || input.target?.id || 'main')
+      },
+      phase: focusPhases.includes(input.phase) ? input.phase : 'observe',
+      state: focusStates.includes(input.state) ? input.state : 'active',
+      createdAt: input.createdAt || now,
+      lastStepAt: input.lastStepAt || null,
+      steps: Array.isArray(input.steps) ? input.steps : [],
+      plateauCount: Number.isFinite(input.plateauCount) ? Number(input.plateauCount) : 0,
+      rejectCount: Number.isFinite(input.rejectCount) ? Number(input.rejectCount) : 0,
+      lastUserSignalAt: input.lastUserSignalAt || now
+    };
+  }
+
   // === Project Schema ===
   const projectTypes = Object.freeze([
     'architecture', 'software', 'design', 'film', 'music', 'writing', 'research', 'general'
@@ -178,6 +211,8 @@
         byBranch: {},
         byStatus: {}
       },
+      focuses: Array.isArray(input.focuses) ? input.focuses : [],
+      activeFocusId: input.activeFocusId || null,
       chainHistory: Array.isArray(input.chainHistory) ? input.chainHistory : [],
       impact_chain: Array.isArray(input.impact_chain) ? input.impact_chain : [],
       exports: Array.isArray(input.exports) ? input.exports : [],
@@ -185,6 +220,187 @@
       created_at: input.created_at || now,
       updated_at: now,
       meta: input.meta || {}
+    };
+  }
+
+  function legalPhaseTransition(fromPhase, toPhase) {
+    const phase = focusPhases.includes(fromPhase) ? fromPhase : 'observe';
+    const target = focusPhases.includes(toPhase) ? toPhase : phase;
+    const allowed = {
+      observe: ['observe', 'clarify', 'evaluate'],
+      clarify: ['clarify', 'evaluate', 'decision'],
+      evaluate: ['clarify', 'evaluate', 'decision'],
+      decision: ['decision', 'observe']
+    };
+    return (allowed[phase] || []).indexOf(target) !== -1;
+  }
+
+  function legalStateTransition(fromState, toState) {
+    const state = focusStates.includes(fromState) ? fromState : 'active';
+    const target = focusStates.includes(toState) ? toState : state;
+    const allowed = {
+      active: ['active', 'resolved', 'plateau', 'dismissed', 'blocked', 'superseded'],
+      resolved: ['resolved'],
+      plateau: ['plateau'],
+      dismissed: ['dismissed'],
+      blocked: ['blocked'],
+      superseded: ['superseded']
+    };
+    return (allowed[state] || []).indexOf(target) !== -1;
+  }
+
+  function collectEvidenceRegistry(project = {}) {
+    const registry = {};
+    (project.claims || []).forEach(function(claim) {
+      if (!claim?.id) return;
+      registry[claim.id] = {
+        kind: 'claim',
+        id: claim.id,
+        status: claim.status || 'active'
+      };
+    });
+    (project.answers || []).forEach(function(answer) {
+      if (!answer?.id) return;
+      registry[answer.id] = {
+        kind: 'answer',
+        id: answer.id,
+        status: 'active'
+      };
+    });
+    (project.nodes || []).forEach(function(node) {
+      if (!node?.node_id || node.type !== 'question') return;
+      registry[node.node_id] = {
+        kind: 'question',
+        id: node.node_id,
+        status: node.status || 'open'
+      };
+    });
+    return registry;
+  }
+
+  function normalizeChainEvidence(value) {
+    if (Array.isArray(value)) return value.map(function(entry) { return String(entry || '').trim(); }).filter(Boolean);
+    if (typeof value === 'string') {
+      return value.split(/[,\n|]/).map(function(entry) { return String(entry || '').trim(); }).filter(Boolean);
+    }
+    return [];
+  }
+
+  function normalizeChainOutput(output = {}) {
+    const produced = output.produced && typeof output.produced === 'object' ? output.produced : {};
+    const focus = output.focus && typeof output.focus === 'object' ? output.focus : {};
+    const stepMetadata = output.step_metadata && typeof output.step_metadata === 'object' ? output.step_metadata : {};
+    const normalizeCollection = function(items, mapper) {
+      return Array.isArray(items) ? items.map(mapper).filter(Boolean) : [];
+    };
+    return {
+      focus: {
+        phase_next: focusPhases.includes(focus.phase_next) ? focus.phase_next : '',
+        state_next: focusStates.includes(focus.state_next) ? focus.state_next : 'active'
+      },
+      produced: {
+        claims: normalizeCollection(produced.claims, function(entry) {
+          if (!entry || !String(entry.text || '').trim()) return null;
+          return {
+            ...entry,
+            text: String(entry.text || '').trim(),
+            branchId: String(entry.branchId || 'main'),
+            evidence: normalizeChainEvidence(entry.evidence)
+          };
+        }),
+        questions: normalizeCollection(produced.questions, function(entry) {
+          if (!entry || !String(entry.body || '').trim()) return null;
+          const meta = entry.meta && typeof entry.meta === 'object' ? entry.meta : {};
+          return {
+            ...entry,
+            id: String(entry.id || ''),
+            body: String(entry.body || '').trim(),
+            meta: {
+              ...meta,
+              evidence_claims: normalizeChainEvidence(meta.evidence_claims),
+              rationale: String(meta.rationale || '').trim()
+            }
+          };
+        }),
+        decisions: normalizeCollection(produced.decisions, function(entry) {
+          if (!entry || !String(entry.body || '').trim()) return null;
+          return {
+            ...entry,
+            id: String(entry.id || ''),
+            body: String(entry.body || '').trim(),
+            evidence: normalizeChainEvidence(entry.evidence),
+            options: Array.isArray(entry.options) ? entry.options.slice(0, 3).map(function(option) { return String(option || '').trim(); }).filter(Boolean) : [],
+            recommended: entry.recommended || ''
+          };
+        }),
+        tasks: normalizeCollection(produced.tasks, function(entry) {
+          if (!entry || !String(entry.body || '').trim()) return null;
+          return {
+            ...entry,
+            id: String(entry.id || ''),
+            body: String(entry.body || '').trim(),
+            evidence: normalizeChainEvidence(entry.evidence)
+          };
+        })
+      },
+      step_metadata: {
+        rationale: String(stepMetadata.rationale || '').trim(),
+        confidence: typeof stepMetadata.confidence === 'number' ? stepMetadata.confidence : 0.0,
+        model: String(stepMetadata.model || '').trim(),
+        latencyMs: Number.isFinite(stepMetadata.latencyMs) ? Number(stepMetadata.latencyMs) : 0
+      },
+      note: String(output.note || '').trim()
+    };
+  }
+
+  function validateChainOutput(output = {}, context = {}) {
+    const normalized = normalizeChainOutput(output);
+    const errors = [];
+    const project = context.project || {};
+    const currentPhase = focusPhases.includes(context.currentPhase) ? context.currentPhase : 'observe';
+    const currentState = focusStates.includes(context.currentState) ? context.currentState : 'active';
+    const registry = collectEvidenceRegistry(project);
+    const allowStatus = { active: true, disputed: true, open: true };
+
+    if (!normalized.focus.phase_next) {
+      errors.push({ code: 'missing_phase_next' });
+    } else if (!legalPhaseTransition(currentPhase, normalized.focus.phase_next)) {
+      errors.push({ code: 'illegal_phase', from: currentPhase, to: normalized.focus.phase_next });
+    }
+
+    if (!legalStateTransition(currentState, normalized.focus.state_next)) {
+      errors.push({ code: 'illegal_state', from: currentState, to: normalized.focus.state_next });
+    }
+
+    function validateEvidence(entries, getEvidence, nodeKind) {
+      entries.forEach(function(entry) {
+        const evidence = getEvidence(entry);
+        if (!evidence.length) {
+          errors.push({ code: 'no_evidence', nodeKind: nodeKind, nodeId: entry.id || entry.text || entry.body || '' });
+          return;
+        }
+        evidence.forEach(function(ref) {
+          const found = registry[ref];
+          if (!found) {
+            errors.push({ code: 'orphan_evidence', nodeKind: nodeKind, nodeId: entry.id || entry.text || entry.body || '', missingRef: ref });
+            return;
+          }
+          if (!allowStatus[found.status]) {
+            errors.push({ code: 'inactive_evidence', nodeKind: nodeKind, nodeId: entry.id || entry.text || entry.body || '', ref: ref, status: found.status });
+          }
+        });
+      });
+    }
+
+    validateEvidence(normalized.produced.claims, function(entry) { return entry.evidence || []; }, 'claim');
+    validateEvidence(normalized.produced.decisions, function(entry) { return entry.evidence || []; }, 'decision');
+    validateEvidence(normalized.produced.tasks, function(entry) { return entry.evidence || []; }, 'task');
+    validateEvidence(normalized.produced.questions, function(entry) { return entry.meta?.evidence_claims || []; }, 'question');
+
+    return {
+      ok: errors.length === 0,
+      errors: errors,
+      value: normalized
     };
   }
 
@@ -226,6 +442,9 @@
     nodeStatuses,
     claimKinds,
     claimStatuses,
+    focusKinds,
+    focusPhases,
+    focusStates,
     projectTypes,
     vocabularyMap,
     makeEntryId,
@@ -235,8 +454,12 @@
     createNode,
     createClaim,
     createAnswerNode,
+    createFocus,
     createProject,
     createTransfer,
-    getVocabulary
+    getVocabulary,
+    legalPhaseTransition,
+    legalStateTransition,
+    validateChainOutput
   });
 })();

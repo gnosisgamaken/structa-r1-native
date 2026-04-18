@@ -9,7 +9,7 @@
   const MAX_LOG_ITEMS = 240;
   const MAX_PROBE_EVENTS = 240;
   const MAX_TRACE_ITEMS = 200;
-  const MAX_CLAIMS = 320;
+  const MAX_CLAIMS = 9999;
   const MAX_ANSWERS = 120;
   const EXPORT_BATCH_SIZE = 33;
   const UI_STATE_PERSIST_DELAY_MS = 120;
@@ -109,6 +109,9 @@
     var openQuestions = Array.isArray(project?.open_question_nodes)
       ? project.open_question_nodes.length
       : ((project?.nodes || []).filter(function(node) { return node.type === 'question' && node.status === 'open'; }).length);
+    var activeFocus = Array.isArray(project?.focuses)
+      ? project.focuses.find(function(entry) { return entry.id === project.activeFocusId; }) || null
+      : null;
     return {
       memory: cloneValue(memory),
       project: project,
@@ -118,7 +121,11 @@
         questions_open: openQuestions,
         answers_count: Array.isArray(project?.answers) ? project.answers.length : 0,
         claims_count: Array.isArray(project?.claims) ? project.claims.length : 0,
-        disputed_claims: Array.isArray(project?.claims) ? project.claims.filter(function(claim) { return claim?.status === 'disputed'; }).length : 0
+        disputed_claims: Array.isArray(project?.claims) ? project.claims.filter(function(claim) { return claim?.status === 'disputed'; }).length : 0,
+        blockers_live: openQuestions,
+        focus_state: activeFocus?.state || 'idle',
+        active_focus_id: activeFocus?.id || '',
+        history_entries: Array.isArray(project?.chainHistory) ? project.chainHistory.length : 0
       }
     };
   }
@@ -208,8 +215,10 @@
       byBranch: {},
       byStatus: {}
     };
+    project.focuses = Array.isArray(input.focuses) ? input.focuses : [];
+    project.activeFocusId = input.activeFocusId || null;
     project.chainHistory = Array.isArray(input.chainHistory) ? input.chainHistory : [];
-    project.schema_version = input.schema_version || 5;
+    project.schema_version = input.schema_version || 6;
     return project;
   }
 
@@ -222,8 +231,219 @@
       byBranch: {},
       byStatus: {}
     };
+    project.focuses = Array.isArray(project.focuses) ? project.focuses : [];
+    project.activeFocusId = project.activeFocusId || null;
     project.chainHistory = Array.isArray(project.chainHistory) ? project.chainHistory : [];
     return project;
+  }
+
+  function ensureProjectChainState(project) {
+    ensureProjectKnowledge(project);
+    project.focuses = Array.isArray(project.focuses) ? project.focuses.map(function(entry) {
+      return contracts.createFocus(entry || {});
+    }) : [];
+    if (project.activeFocusId && !project.focuses.some(function(entry) { return entry.id === project.activeFocusId; })) {
+      project.activeFocusId = null;
+    }
+    project.chainHistory = Array.isArray(project.chainHistory) ? project.chainHistory : [];
+    return project;
+  }
+
+  function getActiveFocusOnProject(project) {
+    ensureProjectChainState(project);
+    if (!project.activeFocusId) return null;
+    return project.focuses.find(function(entry) { return entry.id === project.activeFocusId; }) || null;
+  }
+
+  function getLiveEvidenceRegistry(project) {
+    ensureProjectKnowledge(project);
+    var registry = {};
+    (project.claims || []).forEach(function(claim) {
+      if (!claim?.id) return;
+      registry[claim.id] = {
+        kind: 'claim',
+        id: claim.id,
+        status: claim.status || 'active'
+      };
+    });
+    (project.answers || []).forEach(function(answer) {
+      if (!answer?.id) return;
+      registry[answer.id] = {
+        kind: 'answer',
+        id: answer.id,
+        status: 'active'
+      };
+    });
+    (project.nodes || []).forEach(function(node) {
+      if (!node?.node_id || node.type !== 'question') return;
+      registry[node.node_id] = {
+        kind: 'question',
+        id: node.node_id,
+        status: node.status || 'open'
+      };
+    });
+    return registry;
+  }
+
+  function validateEvidenceIntegrity(project, options) {
+    ensureProjectChainState(project);
+    var opts = options && typeof options === 'object' ? options : {};
+    var registry = getLiveEvidenceRegistry(project);
+    var orphans = [];
+    function pushOrphan(nodeId, missingRef) {
+      orphans.push({ nodeId: String(nodeId || ''), missingRef: String(missingRef || '') });
+    }
+    (project.claims || []).forEach(function(claim) {
+      (claim?.evidence || []).forEach(function(ref) {
+        if (!registry[ref]) pushOrphan(claim.id, ref);
+      });
+    });
+    (project.nodes || []).forEach(function(node) {
+      var refs = Array.isArray(node?.meta?.evidence_claims) ? node.meta.evidence_claims : [];
+      refs.forEach(function(ref) {
+        if (!registry[ref]) pushOrphan(node.node_id, ref);
+      });
+    });
+    if (!opts.silent) {
+      orphans.forEach(function(orphan) {
+        traceEvent('chain.orphan_evidence', 'found', orphan.nodeId, {
+          nodeId: orphan.nodeId,
+          missingRef: orphan.missingRef
+        });
+      });
+    }
+    return orphans;
+  }
+
+  function createChainHistoryEntry(input) {
+    var now = new Date().toISOString();
+    return {
+      focusId: input.focusId || '',
+      target: input.target || null,
+      outcome: lower(input.outcome || 'resolved'),
+      durationMs: Number(input.durationMs || 0),
+      stepCount: Number(input.stepCount || 0),
+      producedClaimCount: Number(input.producedClaimCount || 0),
+      at: now
+    };
+  }
+
+  function startFocusOnProject(project, target, options) {
+    if (!project || !target) return null;
+    ensureProjectChainState(project);
+    var opts = options && typeof options === 'object' ? options : {};
+    var focus = contracts.createFocus({
+      projectId: project.project_id,
+      target: {
+        kind: target.kind || 'branch',
+        id: target.id || 'main',
+        branchId: target.branchId || target.id || 'main'
+      },
+      phase: opts.phase || 'observe',
+      state: 'active',
+      createdAt: new Date().toISOString(),
+      lastUserSignalAt: opts.lastUserSignalAt || new Date().toISOString()
+    });
+    project.focuses.unshift(focus);
+    project.activeFocusId = focus.id;
+    return focus;
+  }
+
+  function updateActiveFocusOnProject(project, patch) {
+    ensureProjectChainState(project);
+    var focus = getActiveFocusOnProject(project);
+    if (!focus || !patch || typeof patch !== 'object') return null;
+    Object.keys(patch).forEach(function(key) {
+      if (key === 'target' && patch.target && typeof patch.target === 'object') {
+        focus.target = { ...(focus.target || {}), ...patch.target };
+        return;
+      }
+      focus[key] = patch[key];
+    });
+    return focus;
+  }
+
+  function endFocusOnProject(project, focusId, outcome, options) {
+    ensureProjectChainState(project);
+    var focus = (project.focuses || []).find(function(entry) { return entry.id === focusId; }) || null;
+    if (!focus) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    focus.state = lower(outcome || focus.state || 'resolved');
+    focus.endedAt = new Date().toISOString();
+    var historyEntry = createChainHistoryEntry({
+      focusId: focus.id,
+      target: cloneValue(focus.target),
+      outcome: focus.state,
+      durationMs: Math.max(0, new Date(focus.endedAt).getTime() - new Date(focus.createdAt || focus.endedAt).getTime()),
+      stepCount: Array.isArray(focus.steps) ? focus.steps.length : 0,
+      producedClaimCount: Number(opts.producedClaimCount || 0)
+    });
+    project.chainHistory.unshift(historyEntry);
+    project.chainHistory = project.chainHistory.slice(0, 80);
+    if (project.activeFocusId === focus.id) {
+      project.activeFocusId = null;
+    }
+    return {
+      focus: focus,
+      historyEntry: historyEntry
+    };
+  }
+
+  function normalizeQuestionText(text) {
+    return lower(String(text || '')).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function getQuestionBranchId(questionNode) {
+    return String(questionNode?.meta?.branch_id || questionNode?.meta?.branchId || 'main');
+  }
+
+  function selectChainFocusOnProject(project) {
+    ensureProjectChainState(project);
+    var now = Date.now();
+    var openQuestions = (project.nodes || []).filter(function(node) {
+      return node?.type === 'question'
+        && node.status === 'open'
+        && (!node.meta?.skipped_until || new Date(node.meta.skipped_until).getTime() <= now);
+    });
+    var highPriorityQuestion = openQuestions.find(function(node) {
+      return lower(node?.meta?.priority || '') === 'high'
+        || (node?.meta?.viewed_at && (now - new Date(node.meta.viewed_at).getTime()) < 15 * 60 * 1000);
+    });
+    if (highPriorityQuestion) {
+      return {
+        target: {
+          kind: 'question',
+          id: highPriorityQuestion.node_id,
+          branchId: getQuestionBranchId(highPriorityQuestion)
+        },
+        reason: 'question-priority'
+      };
+    }
+    if (openQuestions.length) {
+      var branchId = getQuestionBranchId(openQuestions[0]);
+      return {
+        target: {
+          kind: 'branch',
+          id: branchId,
+          branchId: branchId
+        },
+        reason: 'branch-open-questions'
+      };
+    }
+    var disputed = (project.claims || []).find(function(claim) {
+      return claim?.status === 'disputed';
+    });
+    if (disputed) {
+      return {
+        target: {
+          kind: 'claim',
+          id: disputed.id,
+          branchId: disputed.branchId || 'main'
+        },
+        reason: 'disputed-claim'
+      };
+    }
+    return null;
   }
 
   function normalizeClaimText(text = '') {
@@ -333,6 +553,18 @@
     }) || null;
   }
 
+  function findMatchingBranchClaim(project, claim) {
+    var text = normalizeClaimText(claim.text || '');
+    var kind = lower(claim.kind || 'fact');
+    var branchId = String(claim.branchId || 'main');
+    return (project.claims || []).find(function(entry) {
+      return !!entry
+        && normalizeClaimText(entry.text || '') === text
+        && lower(entry.kind || 'fact') === kind
+        && String(entry.branchId || 'main') === branchId;
+    }) || null;
+  }
+
   function addClaimsToProject(project, rawClaims, options) {
     ensureProjectKnowledge(project);
     var claims = Array.isArray(rawClaims) ? rawClaims : [];
@@ -359,14 +591,24 @@
         expiresAt: rawClaim.expiresAt || null
       });
       var existing = findExistingClaim(project, candidate);
+      if (!existing && opts.dedupByBranchText) {
+        existing = findMatchingBranchClaim(project, candidate);
+      }
       if (existing) {
+        var newEvidence = Array.isArray(candidate.evidence) ? candidate.evidence.filter(Boolean) : [];
+        var existingEvidence = Array.isArray(existing.evidence) ? existing.evidence : [];
+        var appended = newEvidence.filter(function(ref) { return existingEvidence.indexOf(ref) === -1; });
+        if (appended.length) {
+          existing.evidence = existingEvidence.concat(appended);
+          traceEvent('claim.evidence.extended', 'existing', existing.id, {
+            claimId: existing.id,
+            newEvidenceIds: appended
+          });
+        }
         added.push(existing);
         return;
       }
       project.claims.unshift(candidate);
-      if (project.claims.length > MAX_CLAIMS) {
-        project.claims = project.claims.slice(0, MAX_CLAIMS);
-      }
       added.push(candidate);
     });
     rebuildClaimIndex(project);
@@ -382,6 +624,12 @@
     var previous = String(claim.status || 'active');
     claim.status = nextStatus;
     if (opts.supersededBy) claim.supersededBy = opts.supersededBy;
+    if (nextStatus === 'superseded') {
+      var activeFocus = getActiveFocusOnProject(project);
+      if (activeFocus && activeFocus.target?.kind === 'claim' && activeFocus.target?.id === claimId) {
+        endFocusOnProject(project, activeFocus.id, 'superseded', { producedClaimCount: 0 });
+      }
+    }
     rebuildClaimIndex(project);
     return {
       id: claim.id,
@@ -500,9 +748,16 @@
       if (!hydrated.device_scope_key) hydrated.device_scope_key = deviceScopeKey;
       if (!hydrated.schema_version || hydrated.schema_version < 3) migrateV2toV3(hydrated);
       ensureProjectKnowledge(hydrated);
+      ensureProjectChainState(hydrated);
       migrateClaimRefs(hydrated);
       rebuildClaimIndex(hydrated);
-      if (!hydrated.schema_version || hydrated.schema_version < 5) hydrated.schema_version = 5;
+      validateEvidenceIntegrity(hydrated, { silent: false });
+      if (!hydrated.schema_version || hydrated.schema_version < 6) {
+        hydrated.schema_version = 6;
+        traceEvent('chain', 'legacy', 'migrated', {
+          projectId: hydrated.project_id
+        });
+      }
       return hydrated;
     });
 
@@ -1102,6 +1357,8 @@
           body: n.body || n.title,
           created_at: n.created_at,
           source: n.source || 'question',
+          branch_id: n.meta?.branch_id || 'main',
+          meta: cloneValue(n.meta || {}),
           links: Array.isArray(n.links) ? n.links.slice() : [],
           thread: thread,
           thread_depth: countDistinctThreadClaims(thread),
@@ -1972,6 +2229,132 @@
     return { ok: true, payload };
   }
 
+  function dumpDebugSnapshot(options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var stamp = new Date().toISOString();
+    var key = 'structa.snapshot.debug.' + stamp;
+    var snapshot = snapshotState();
+    try {
+      if (window.creationStorage?.plain?.setItem) {
+        window.creationStorage.plain.setItem(key, JSON.stringify(snapshot));
+      }
+    } catch (_) {}
+    if (opts.export) {
+      var body = JSON.stringify(snapshot, null, 2);
+      postPayload({
+        message: body,
+        useLLM: false,
+        wantsJournalEntry: true
+      });
+    }
+    appendLogEntry({ kind: 'export', message: 'snapshot dumped' });
+    traceEvent('system', 'snapshot', 'dumped', {
+      key: key,
+      exported: !!opts.export
+    });
+    return { ok: true, key: key, snapshot: snapshot };
+  }
+
+  function markQuestionSkipped(nodeId, options) {
+    if (!nodeId) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var updated = null;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry.node_id === nodeId && entry.type === 'question';
+      });
+      if (!node) return;
+      node.meta = { ...(node.meta || {}) };
+      var until = new Date(Date.now() + Number(opts.durationMs || 24 * 60 * 60 * 1000)).toISOString();
+      node.meta.skipped_until = until;
+      node.meta.skip_reason = opts.reason || 'user-dismissed';
+      updated = {
+        nodeId: node.node_id,
+        skippedUntil: until,
+        reason: node.meta.skip_reason
+      };
+    });
+    if (updated) {
+      traceEvent('question.skip.cooldown', 'open', updated.nodeId, {
+        nodeId: updated.nodeId,
+        skippedUntil: updated.skippedUntil,
+        reason: updated.reason
+      });
+    }
+    return updated;
+  }
+
+  function getActiveFocus() {
+    ensureProjectRegistry();
+    var focus = getActiveFocusOnProject(memory.projectMemory);
+    return focus ? cloneValue(focus) : null;
+  }
+
+  function activateNextFocus(options) {
+    var activated = null;
+    var selection = null;
+    touchProjectMemory(function(project) {
+      ensureProjectChainState(project);
+      var existing = getActiveFocusOnProject(project);
+      if (existing) {
+        activated = cloneValue(existing);
+        return;
+      }
+      selection = selectChainFocusOnProject(project);
+      if (!selection) return;
+      var focus = startFocusOnProject(project, selection.target, options);
+      activated = focus ? cloneValue(focus) : null;
+    });
+    if (activated && selection) {
+      traceEvent('focus.select', 'idle', selection.target.kind, {
+        targetKind: selection.target.kind,
+        targetId: selection.target.id,
+        reason: selection.reason || ''
+      });
+      traceEvent('focus.start', 'selected', activated.id, {
+        focusId: activated.id,
+        targetKind: activated.target?.kind || '',
+        targetId: activated.target?.id || ''
+      });
+    } else if (!activated) {
+      var project = getProjectMemory();
+      traceEvent('chain.idle', 'selection', 'idle', {
+        resolvedCount: Array.isArray(project?.chainHistory) ? project.chainHistory.filter(function(entry) { return entry?.outcome === 'resolved'; }).length : 0,
+        awaitingCount: (project?.open_question_nodes || []).length
+      });
+    }
+    return activated;
+  }
+
+  function updateActiveFocus(patch) {
+    var updated = null;
+    touchProjectMemory(function(project) {
+      updated = updateActiveFocusOnProject(project, patch);
+      if (updated) updated = cloneValue(updated);
+    });
+    return updated;
+  }
+
+  function completeActiveFocus(outcome, options) {
+    var result = null;
+    touchProjectMemory(function(project) {
+      var active = getActiveFocusOnProject(project);
+      if (!active) return;
+      result = endFocusOnProject(project, active.id, outcome, options);
+      if (result) result = cloneValue(result);
+    });
+    if (result) {
+      traceEvent('focus.end', result.focus?.id || '', lower(outcome || ''), {
+        focusId: result.focus?.id || '',
+        outcome: lower(outcome || ''),
+        durationMs: result.historyEntry?.durationMs || 0,
+        stepCount: result.historyEntry?.stepCount || 0
+      });
+      emitModelChange({ scope: 'chain', focusId: result.focus?.id || '' });
+    }
+    return result;
+  }
+
   function openCamera(mode = 'environment') {
     appendLogEntry({ kind: 'camera', message: `${mode} camera open` });
     return sendStructuredMessage(contracts.createEnvelope({
@@ -2232,6 +2615,7 @@
     }
     if (!questionNode) return false;
     if (questionNode.status !== 'open') return false;
+    if (questionNode.meta?.skipped_until && new Date(questionNode.meta.skipped_until).getTime() > Date.now()) return false;
     var blockerCreatedAt = new Date(blocker.createdAt || blocker.created_at || questionNode.created_at || 0).getTime();
     var childAnswer = nodes.find(function(node) {
       if (node.status === 'archived' || node.node_id === questionNode.node_id) return false;
@@ -2321,6 +2705,7 @@
     sendStructuredMessage,
     writeJournalEntry,
     requestEmailWithdrawal,
+    dumpDebugSnapshot,
     storeAsset,
     storeCaptureBundle,
     openCamera,
@@ -2373,6 +2758,14 @@
     ingestClaims,
     getClaimsForItem,
     getOpenQuestionNodes: function() { return JSON.parse(JSON.stringify(memory.projectMemory?.open_question_nodes || [])); },
+    getActiveFocus,
+    activateNextFocus,
+    updateActiveFocus,
+    completeActiveFocus,
+    markQuestionSkipped,
+    validateEvidenceIntegrity: function() {
+      return validateEvidenceIntegrity(memory.projectMemory || {}, { silent: false });
+    },
     addVoiceEntry,
     appendToVoiceEntry,
     addNode,

@@ -1,0 +1,22 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T14:12:00.000Z", "flow": "question.skip.cooldown", "from": "open", "to": "q-skip", "ctx": { "nodeId": "q-skip", "skippedUntil": "2026-04-19T14:12:00.000Z", "reason": "user-dismissed" } },
+      { "t": "2026-04-18T14:12:00.100Z", "flow": "chain.idle", "from": "selection", "to": "idle", "ctx": { "resolvedCount": 0, "awaitingCount": 0 } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "nodes": [
+      { "node_id": "q-skip", "type": "question", "status": "open", "meta": { "skipped_until": "2026-04-19T14:12:00.000Z", "evidence_claims": [] } }
+    ],
+    "open_question_nodes": [
+      { "node_id": "q-skip", "type": "question", "status": "open", "meta": { "skipped_until": "2026-04-19T14:12:00.000Z" } }
+    ],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

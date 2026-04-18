@@ -1,0 +1,26 @@
+{
+  "id": "u1_focus_lifecycle",
+  "title": "focus selects, steps, resolves, and lands in history",
+  "runtime_dump": "runtime/synthetic/u1_focus_lifecycle.json",
+  "expect_tail": [
+    { "flow": "focus.select", "ctx": { "targetKind": "question" } },
+    { "flow": "focus.start" },
+    { "flow": "focus.step" },
+    { "flow": "focus.step.produced", "ctx": { "decisions": 1 } },
+    { "flow": "focus.end", "to": "resolved" }
+  ],
+  "expect_claims": [
+    { "source": "voice", "minCount": 2 },
+    { "source": "chain", "minCount": 1 }
+  ],
+  "expect_questions": {
+    "open_min": 0,
+    "open_max": 0
+  },
+  "expect_chain": {
+    "focus_state": "idle",
+    "history_entries_min": 1,
+    "last_outcome": "resolved"
+  },
+  "expect_no_orphan_evidence": true
+}

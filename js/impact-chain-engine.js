@@ -1,17 +1,11 @@
 /**
- * impact-chain-engine.js — Structa Autonomous Impact Chain
+ * impact-chain-engine.js — Focus-grounded reasoning engine
  *
- * Structa quietly reviews the project in the background.
- * Each "impact" is a self-contained LLM call that:
- * 1. Reads current project context
- * 2. Decides: clarify further, or create a decision for the user
- * 3. Stores the result tagged for the next chain step
- * 4. Updates the NOW card with the latest impact
- *
- * Phases: observe → clarify → clarify → decision
- * After decision: 60s cooldown, then restart
- * Auto-pauses after 5 min of no user interaction
- * Resumes on any hardware event
+ * T2 turns the chain into a single-focus reasoner:
+ * - one active focus at a time
+ * - typed digest input only
+ * - evidence-cited output only
+ * - explicit termination and idle states
  */
 (function() {
   'use strict';
@@ -19,36 +13,71 @@
   var native = window.StructaNative;
   var llm = window.StructaLLM;
   var queue = window.StructaProcessingQueue;
+  var orchestrator = window.StructaOrchestrator;
+  var contracts = window.StructaContracts;
 
-  // === Chain state ===
   var chain = {
     active: false,
-    bpm: 2,                    // beats per minute (2 = every 30s)
+    bpm: 2,
     beatCount: 0,
     impacts: [],
-    currentPhase: 'idle',       // idle | blocked | observe | clarify | evaluate | decision | cooldown
-    lastDecisionAt: 0,
-    lastUserActivity: Date.now(),
-    maxImpactsPerChain: 3,      // observe + clarify × N before decision
-    cooldownMs: 30000,          // 30s cooldown after decision
-    idleTimeoutMs: 300000,      // 5 min auto-pause
+    currentPhase: 'idle',
     timerId: null,
-    chainId: 0,
+    lastUserActivity: Date.now(),
+    idleTimeoutMs: 300000,
+    manuallyStopped: false,
+    stepInFlight: false,
     totalImpacts: 0,
     totalDecisions: 0,
-    awaitingFastTrack: false,
-    manuallyStopped: false
+    lastIdleSignature: ''
   };
-  var cooldownTickTimer = null;
+
   var PAUSE_KEY = 'structa.chain.paused';
+
+  function lower(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function compact(text, limit) {
+    var value = String(text || '').trim().replace(/\s+/g, ' ');
+    var max = Number(limit || 72);
+    if (value.length <= max) return value;
+    return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
+  }
+
+  function currentProject() {
+    return native?.getProjectMemory?.() || {};
+  }
+
+  function currentFocus() {
+    return native?.getActiveFocus?.() || null;
+  }
+
+  function queueHasHigherPriorityWork() {
+    if (!queue?.countByPriority) return false;
+    return ['P0', 'P1', 'P2'].some(function(priority) {
+      return Number(queue.countByPriority(priority) || 0) > 0;
+    });
+  }
+
+  function getBlockers() {
+    var project = currentProject();
+    var pending = project.pending_decisions || [];
+    var openQuestions = project.open_question_nodes || [];
+    return {
+      pendingCount: pending.length,
+      questionCount: openQuestions.length,
+      total: pending.length + openQuestions.length,
+      topDecision: pending.length ? (typeof pending[0] === 'string' ? pending[0] : (pending[0].text || 'decision waiting')) : '',
+      topQuestion: openQuestions.length ? String(openQuestions[0]?.body || openQuestions[0]?.title || '') : ''
+    };
+  }
 
   function emitPhase() {
     window.dispatchEvent(new CustomEvent('structa-impact-phase', {
       detail: {
         phase: chain.currentPhase,
-        cooldownMs: chain.currentPhase === 'cooldown'
-          ? Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt))
-          : 0,
+        cooldownMs: 0,
         paused: !!chain.manuallyStopped
       }
     }));
@@ -59,12 +88,22 @@
     emitPhase();
   }
 
-  function emitUIUpdate(detail) {
-    try {
+  function syncPhaseWithFocus() {
+    var focus = currentFocus();
+    if (chain.manuallyStopped) {
+      setPhase('paused');
       window.dispatchEvent(new CustomEvent('structa-chain-updated', {
-        detail: detail || {}
+        detail: { phase: 'paused', focusId: '' }
       }));
-    } catch (_) {}
+      return;
+    }
+    setPhase(focus ? (focus.phase || 'observe') : 'idle');
+    window.dispatchEvent(new CustomEvent('structa-chain-updated', {
+      detail: {
+        phase: focus ? (focus.phase || 'observe') : 'idle',
+        focusId: focus?.id || ''
+      }
+    }));
   }
 
   function persistPauseState(paused) {
@@ -75,252 +114,75 @@
     } catch (_) {}
   }
 
-  function startCooldownTicker() {
-    stopCooldownTicker();
-    cooldownTickTimer = setInterval(function() {
-      if (chain.currentPhase !== 'cooldown') {
-        stopCooldownTicker();
-        return;
-      }
-      emitPhase();
-    }, 1000);
+  function clearTimer() {
+    if (!chain.timerId) return;
+    clearTimeout(chain.timerId);
+    chain.timerId = null;
   }
 
-  function stopCooldownTicker() {
-    if (cooldownTickTimer) {
-      clearInterval(cooldownTickTimer);
-      cooldownTickTimer = null;
-    }
+  function scheduleNextBeat(delayMs) {
+    clearTimer();
+    if (chain.manuallyStopped) return;
+    var wait = Math.max(120, Number(delayMs || 0));
+    chain.timerId = setTimeout(function() {
+      chain.timerId = null;
+      beat();
+    }, wait);
   }
 
-  // === Impact ID ===
-  function makeImpactId(type) {
-    chain.chainId++;
-    var d = new Date();
-    var ts = d.getFullYear() + '' +
-      String(d.getMonth() + 1).padStart(2, '0') +
-      String(d.getDate()).padStart(2, '0') + '-' +
-      String(d.getHours()).padStart(2, '0') +
-      String(d.getMinutes()).padStart(2, '0');
-    return ts + '-' + type.slice(0, 3) + '-' + String(chain.chainId).padStart(3, '0');
+  function onboardingBlocked() {
+    var ui = native?.getUIState?.() || {};
+    if (ui && ui.onboarded) return false;
+    if (ui && ui.onboarding_step === 'complete') return false;
+    if (ui && typeof ui.onboarding_step === 'number') return true;
+    var project = currentProject();
+    var isUntitled = String(project?.name || '').toLowerCase() === 'untitled project';
+    var nodeCount = (project.nodes || []).length;
+    var legacyCount = (project.insights || []).length + (project.captures || []).length +
+      (project.decisions || []).length + (project.backlog || []).length +
+      (project.open_questions || []).length + (project.pending_decisions || []).length;
+    return isUntitled && nodeCount + legacyCount === 0;
   }
 
-  // === Tag extraction ===
-  var STOP_WORDS = new Set([
-    'the','a','an','is','are','was','were','be','been','being',
-    'have','has','had','do','does','did','will','would','could',
-    'should','may','might','can','this','that','these','those',
-    'it','its','we','you','they','our','your','their','i','me',
-    'my','he','she','him','her','his','of','in','to','for','with',
-    'on','at','by','from','or','and','but','not','no','so','if',
-    'than','too','very','just','about','up','out','into','over',
-    'after','before','between','under','again','then','once',
-    'here','there','when','where','why','how','all','each',
-    'what','which','who','whom','more','most','other','some',
-    'such','only','same','also','still','even','need','needs'
-  ]);
-
-  function extractTags(text) {
-    if (!text) return [];
-    var words = String(text).toLowerCase().replace(/[^a-z0-9\s-]/g, '').split(/\s+/);
-    var counts = {};
-    words.forEach(function(w) {
-      if (w.length > 2 && !STOP_WORDS.has(w)) {
-        counts[w] = (counts[w] || 0) + 1;
-      }
-    });
-    return Object.keys(counts)
-      .sort(function(a, b) { return counts[b] - counts[a]; })
-      .slice(0, 3);
+  function buildPreviousSteps(focus) {
+    return Array.isArray(focus?.steps)
+      ? focus.steps.slice(-4).map(function(step) {
+          return {
+            at: step.at || '',
+            phase: lower(step.phase || focus.phase || 'observe'),
+            jobId: step.jobId || '',
+            producedClaimIds: Array.isArray(step.producedClaimIds) ? step.producedClaimIds.slice(0, 6) : [],
+            producedQuestionIds: Array.isArray(step.producedQuestionIds) ? step.producedQuestionIds.slice(0, 6) : [],
+            outcome: lower(step.outcome || '')
+          };
+        })
+      : [];
   }
 
-  // === Context builder for impact prompts ===
-  function buildImpactContext() {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var memory = native && native.getMemory ? native.getMemory() : {};
-    var captures = memory.captures || [];
-    var insights = project.insights || [];
-    var openQuestions = project.open_questions || [];
-    var pending = project.pending_decisions || [];
-    var backlog = project.backlog || [];
-
-    var parts = [];
-    parts.push('Project: ' + (project.name || 'untitled'));
-    parts.push('Captures: ' + captures.length + ' | Insights: ' + insights.length + ' | Asks: ' + openQuestions.length);
-    if (backlog.length) {
-      parts.push('Backlog: ' + backlog.slice(0, 3).map(function(b) { return b.title; }).join(', '));
-    }
-    if (openQuestions.length) {
-      parts.push('Open: ' + openQuestions.slice(0, 2).map(function(q) {
-        return String(q).slice(0, 40);
-      }).join('; '));
-    }
-    if (pending.length) {
-      var pd = typeof pending[0] === 'string' ? pending[0] : (pending[0].text || '');
-      parts.push('Pending decision: ' + pd.slice(0, 50));
-    }
-    if (pending.length || openQuestions.length) {
-      parts.push('Blockers: ' + (pending.length + openQuestions.length));
-    }
-
-    // Last impact summary
-    var lastImpact = chain.impacts[chain.impacts.length - 1];
-    if (lastImpact) {
-      parts.push('Last impact: ' + String(lastImpact.output).slice(0, 60));
-    }
-
-    return parts.join('\n');
-  }
-
-  function buildChainProjectEnvelope() {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+  function buildChainPayload(focus) {
+    var project = currentProject();
     return {
-      id: project.project_id || project.id || '',
-      name: project.name || 'untitled project',
-      type: project.type || 'general',
-      brief: project.brief || '',
-      topQuestions: (project.open_questions || []).slice(0, 3),
-      selectedSurface: 'now',
-      summary: buildImpactContext()
-    };
-  }
-
-  function buildChainPayload(phase, extra) {
-    return {
-      project: buildChainProjectEnvelope(),
-      selection: null,
-      input: {},
+      project: project,
+      focus: {
+        kind: focus?.target?.kind || 'branch',
+        id: focus?.target?.id || 'main',
+        branchId: focus?.target?.branchId || 'main',
+        phase: focus?.phase || 'observe'
+      },
+      history: {
+        previous_steps: buildPreviousSteps(focus),
+        plateau_count: Number(focus?.plateauCount || 0)
+      },
       policy: {
         priority: 'low',
         allowSearch: false,
         allowSpeech: false
-      },
-      phase: phase,
-      discoveryMode: !!(extra && extra.discoveryMode),
-      contextSummary: buildImpactContext(),
-      recentArtifacts: chain.impacts.slice(-4).map(function(impact) {
-        return {
-          type: impact.type,
-          body: impact.output,
-          output: impact.output,
-          createdAt: impact.created_at
-        };
-      }),
-      blockers: getBlockers()
-    };
-  }
-
-  // === Store impact ===
-  function storeImpact(type, verb, input, output) {
-    var impact = {
-      impact_id: makeImpactId(type),
-      chain_index: chain.impacts.length + 1,
-      parent_id: chain.impacts.length ? chain.impacts[chain.impacts.length - 1].impact_id : null,
-      type: type,
-      verb: verb,
-      input: String(input).slice(0, 200),
-      output: String(output).slice(0, 200),
-      tags: extractTags(output),
-      created_at: new Date().toISOString()
-    };
-
-    chain.impacts.push(impact);
-    chain.totalImpacts++;
-
-    // Persist to project memory
-    if (native && native.touchProjectMemory) {
-      native.touchProjectMemory(function(project) {
-        project.impact_chain = Array.isArray(project.impact_chain) ? project.impact_chain : [];
-        project.impact_chain.unshift(impact);
-        // Keep last 24 impacts
-        project.impact_chain = project.impact_chain.slice(0, 24);
-      });
-    }
-
-    // Keep chain activity mostly silent; only major outcomes surface elsewhere.
-
-    // Dispatch event for cascade to re-render
-    window.dispatchEvent(new CustomEvent('structa-impact', { detail: impact }));
-
-    return impact;
-  }
-
-  // === Store decision ===
-  function storeDecision(decisionText, options) {
-    if (!native || !native.touchProjectMemory) return;
-
-    native.touchProjectMemory(function(project) {
-      project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
-      var exists = project.pending_decisions.some(function(d) {
-        return (d.text || d) === decisionText;
-      });
-      if (!exists) {
-        project.pending_decisions.unshift({
-          text: decisionText,
-          options: options || [],
-          source: 'impact-chain',
-          created_at: new Date().toISOString()
-        });
-        project.pending_decisions = project.pending_decisions.slice(0, 8);
-        chain.totalDecisions++;
       }
-    });
-
-    chain.lastDecisionAt = Date.now();
-    setPhase('cooldown');
-    startCooldownTicker();
-
-    if (panel && panel.pushLog) {
-      panel.pushLog('decision ready', 'decision');
-    }
-    llm?.speakMilestone?.('decision_created');
-
-    // Notify cascade to show decision on NOW card
-    window.dispatchEvent(new CustomEvent('structa-decision-created', {
-      detail: { text: decisionText, options: options }
-    }));
-
-    // No automatic spoken announcement here — keep heartbeat and chain calm.
-  }
-
-  // === Parse JSON from LLM ===
-  function tryParseDecision(text) {
-    if (!text) return null;
-    // Try direct JSON parse
-    try {
-      var obj = JSON.parse(text);
-      if (obj.decision && Array.isArray(obj.options) && obj.options.length >= 2) {
-        return { decision: obj.decision, options: obj.options.slice(0, 3) };
-      }
-    } catch (e) {}
-
-    // Try extracting JSON from surrounding text
-    var jsonMatch = text.match(/\{[\s\S]*"decision"[\s\S]*"options"[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        var obj2 = JSON.parse(jsonMatch[0]);
-        if (obj2.decision && Array.isArray(obj2.options)) {
-          return { decision: obj2.decision, options: obj2.options.slice(0, 3) };
-        }
-      } catch (e2) {}
-    }
-    return null;
-  }
-
-  // === Discovery mode ===
-  // When project has <5 nodes, ask concrete questions to shape the project
-  function isDiscoveryMode() {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var nodeCount = (project.nodes || []).length;
-    // Also check legacy arrays for compat
-    var legacyCount = (project.insights || []).length + (project.captures || []).length +
-      (project.decisions || []).length + (project.backlog || []).length;
-    return Math.max(nodeCount, legacyCount) < 5;
+    };
   }
 
   function runChainStepNow(payload) {
-    var orchestrator = window.StructaOrchestrator;
-    if (!orchestrator || !orchestrator.runChainStep || !llm || !llm.executePreparedLLM) {
+    if (!orchestrator?.runChainStep || !llm?.executePreparedLLM) {
       return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
     return orchestrator.runChainStep(payload, llm.executePreparedLLM);
@@ -342,7 +204,7 @@
         payload: payload,
         origin: {
           screen: 'chain',
-          itemId: payload.phase || chain.currentPhase || 'observe'
+          itemId: payload?.focus?.id || payload?.focus?.branchId || 'main'
         },
         timeoutMs: 30000,
         onResolve: resolve,
@@ -351,268 +213,464 @@
     });
   }
 
-  function getBlockers() {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var pending = project.pending_decisions || [];
-    var openQuestions = project.open_questions || [];
+  function writeFocusStep(focusId, patch) {
+    var updated = null;
+    native?.touchProjectMemory?.(function(project) {
+      var focus = (project.focuses || []).find(function(entry) { return entry.id === focusId; });
+      if (!focus) return;
+      focus.steps = Array.isArray(focus.steps) ? focus.steps : [];
+      focus.steps.push({
+        at: new Date().toISOString(),
+        phase: lower(patch.phase || focus.phase || 'observe'),
+        jobId: patch.jobId || '',
+        producedClaimIds: Array.isArray(patch.producedClaimIds) ? patch.producedClaimIds.slice() : [],
+        producedQuestionIds: Array.isArray(patch.producedQuestionIds) ? patch.producedQuestionIds.slice() : [],
+        outcome: lower(patch.outcome || '')
+      });
+      focus.steps = focus.steps.slice(-16);
+      focus.lastStepAt = new Date().toISOString();
+      if (patch.phaseNext) focus.phase = patch.phaseNext;
+      if (typeof patch.plateauCount === 'number') focus.plateauCount = patch.plateauCount;
+      if (typeof patch.rejectCount === 'number') focus.rejectCount = patch.rejectCount;
+      updated = JSON.parse(JSON.stringify(focus));
+    });
+    return updated;
+  }
+
+  function extendClaimEvidence(project, normalizedText, kind, branchId, evidenceIds) {
+    var claims = Array.isArray(project?.claims) ? project.claims : [];
+    var existing = claims.find(function(entry) {
+      return lower(entry?.text || '') === lower(normalizedText || '')
+        && lower(entry?.kind || 'fact') === lower(kind || 'fact')
+        && String(entry?.branchId || 'main') === String(branchId || 'main');
+    }) || null;
+    if (!existing) return null;
+    existing.evidence = Array.isArray(existing.evidence) ? existing.evidence : [];
+    var appended = (evidenceIds || []).filter(function(ref) { return existing.evidence.indexOf(ref) === -1; });
+    if (appended.length) {
+      existing.evidence = existing.evidence.concat(appended);
+      native?.traceEvent?.('claim.evidence.extended', 'existing', existing.id, {
+        claimId: existing.id,
+        newEvidenceIds: appended
+      });
+    }
+    return existing;
+  }
+
+  function findDuplicateQuestion(project, question) {
+    var expected = lower(question.body || '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!expected) return null;
+    return (project.nodes || []).find(function(node) {
+      if (node?.type !== 'question' || node.status !== 'open') return false;
+      var current = lower(node.body || node.title || '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (current === expected) return true;
+      var semanticHash = lower(question.meta?.semantic_hash || '');
+      return !!semanticHash && semanticHash === lower(node.meta?.semantic_hash || '');
+    }) || null;
+  }
+
+  function mergeQuestionNode(question) {
+    var merged = null;
+    var created = null;
+    var questionId = '';
+    var project = currentProject();
+    var existing = findDuplicateQuestion(project, question);
+    if (existing) {
+      native?.touchProjectMemory?.(function(nextProject) {
+        var node = (nextProject.nodes || []).find(function(entry) { return entry.node_id === existing.node_id; });
+        if (!node) return;
+        node.meta = { ...(node.meta || {}) };
+        node.meta.rationales = Array.isArray(node.meta.rationales) ? node.meta.rationales : [];
+        var rationale = question.meta?.rationale || '';
+        if (rationale && node.meta.rationales.indexOf(rationale) === -1) {
+          node.meta.rationales.push(rationale);
+        }
+        var refs = Array.isArray(node.meta.evidence_claims) ? node.meta.evidence_claims : [];
+        (question.meta?.evidence_claims || []).forEach(function(ref) {
+          if (refs.indexOf(ref) === -1) refs.push(ref);
+        });
+        node.meta.evidence_claims = refs;
+        merged = JSON.parse(JSON.stringify(node));
+        questionId = node.node_id;
+      });
+    } else {
+      created = native?.addNode?.({
+        type: 'question',
+        status: 'open',
+        title: 'guided ask',
+        body: question.body,
+        source: 'chain',
+        meta: {
+          evidence_claims: question.meta?.evidence_claims || [],
+          rationale: question.meta?.rationale || '',
+          rationales: question.meta?.rationale ? [question.meta.rationale] : [],
+          priority: question.meta?.priority || 'normal',
+          branch_id: question.meta?.branch_id || 'main',
+          reasoning_generated: true,
+          semantic_hash: lower(question.body || '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+        }
+      });
+      questionId = created?.node_id || '';
+    }
+    if (merged) {
+      native?.traceEvent?.('question.dedup.merged', 'incoming', merged.node_id, {
+        intoId: merged.node_id,
+        rationale: question.meta?.rationale || ''
+      });
+    }
+    return questionId;
+  }
+
+  function createDecisionNode(item) {
+    var node = native?.addNode?.({
+      type: 'decision',
+      status: 'open',
+      title: item.body,
+      body: item.body,
+      source: 'chain',
+      decision_options: item.options || [],
+      meta: {
+        evidence_claims: item.evidence || [],
+        rationale: item.rationale || '',
+        recommended: item.recommended || '',
+        reasoning_generated: true
+      }
+    });
+    if (node) chain.totalDecisions += 1;
+    return node?.node_id || '';
+  }
+
+  function createTaskNode(item) {
+    var node = native?.addNode?.({
+      type: 'task',
+      status: 'open',
+      title: item.body,
+      body: item.body,
+      source: 'chain',
+      meta: {
+        evidence_claims: item.evidence || [],
+        reasoning_generated: true
+      }
+    });
+    return node?.node_id || '';
+  }
+
+  function maybeResurrectQuestions(storedClaims) {
+    if (!Array.isArray(storedClaims) || !storedClaims.length) return;
+    native?.touchProjectMemory?.(function(project) {
+      (project.nodes || []).forEach(function(node) {
+        if (node?.type !== 'question' || node.status !== 'open' || !node.meta?.skipped_until) return;
+        var skippedUntil = new Date(node.meta.skipped_until).getTime();
+        if (!Number.isFinite(skippedUntil) || skippedUntil <= Date.now()) return;
+        var questionText = lower(node.body || node.title || '');
+        var resurrected = storedClaims.find(function(claim) {
+          if (Number(claim.confidence || 0) <= 0.7) return false;
+          var claimText = lower(claim.text || '');
+          return claimText && questionText && (claimText.indexOf(questionText.slice(0, 18)) !== -1 || questionText.indexOf(claimText.slice(0, 18)) !== -1);
+        });
+        if (!resurrected) return;
+        delete node.meta.skipped_until;
+        native?.traceEvent?.('question.resurrect', 'cooldown', node.node_id, {
+          questionId: node.node_id,
+          reason: resurrected.id || resurrected.text || ''
+        });
+      });
+    });
+  }
+
+  function applyProduced(validated, focus) {
+    var produced = validated?.produced || {};
+    var branchId = focus?.target?.branchId || 'main';
+    var storedClaims = [];
+    if (Array.isArray(produced.claims) && produced.claims.length) {
+      var claimsPayload = produced.claims.map(function(item) {
+        return {
+          text: item.text,
+          kind: item.kind || 'fact',
+          branchId: item.branchId || branchId,
+          evidence: item.evidence || [],
+          source: 'chain',
+          confidence: item.confidence || validated?.step_metadata?.confidence || 0.64
+        };
+      });
+      storedClaims = native?.ingestClaims?.(claimsPayload, {
+        source: 'chain',
+        branchId: branchId,
+        dedupByBranchText: true
+      }) || [];
+      maybeResurrectQuestions(storedClaims);
+    }
+
+    var questionIds = [];
+    (produced.questions || []).forEach(function(question) {
+      questionIds.push(mergeQuestionNode(question));
+    });
+    questionIds = questionIds.filter(Boolean);
+
+    var decisionIds = [];
+    (produced.decisions || []).forEach(function(item) {
+      var nodeId = createDecisionNode(item);
+      if (nodeId) decisionIds.push(nodeId);
+    });
+
+    var taskIds = [];
+    (produced.tasks || []).forEach(function(item) {
+      var nodeId = createTaskNode(item);
+      if (nodeId) taskIds.push(nodeId);
+    });
+
+    chain.totalImpacts += 1;
+    chain.impacts.unshift({
+      impact_id: 'focus-' + Date.now(),
+      focus_id: focus?.id || '',
+      type: focus?.target?.kind || 'focus',
+      verb: focus?.phase || 'observe',
+      output: compact(validated?.step_metadata?.rationale || (questionIds[0] ? 'question created' : storedClaims[0]?.text || decisionIds[0] || taskIds[0] || 'no change'), 120),
+      created_at: new Date().toISOString()
+    });
+    chain.impacts = chain.impacts.slice(0, 24);
+
+    native?.touchProjectMemory?.(function(project) {
+      project.impact_chain = Array.isArray(project.impact_chain) ? project.impact_chain : [];
+      project.impact_chain.unshift({
+        focus_id: focus?.id || '',
+        phase: focus?.phase || 'observe',
+        summary: compact(validated?.step_metadata?.rationale || '', 120),
+        created_at: new Date().toISOString()
+      });
+      project.impact_chain = project.impact_chain.slice(0, 32);
+    });
+
+    window.dispatchEvent(new CustomEvent('structa-impact', {
+      detail: {
+        focusId: focus?.id || '',
+        summary: compact(validated?.step_metadata?.rationale || '', 120),
+        produced: producedCounts
+      }
+    }));
+    if (decisionIds.length) {
+      window.dispatchEvent(new CustomEvent('structa-decision-created', {
+        detail: {
+          ids: decisionIds.slice(),
+          count: decisionIds.length
+        }
+      }));
+    }
+
     return {
-      pendingCount: pending.length,
-      questionCount: openQuestions.length,
-      total: pending.length + openQuestions.length,
-      topDecision: pending.length ? (typeof pending[0] === 'string' ? pending[0] : (pending[0].text || 'decision waiting')) : '',
-      topQuestion: openQuestions.length ? String(openQuestions[0] || '') : ''
+      claimIds: storedClaims.map(function(entry) { return entry.id; }),
+      questionIds: questionIds,
+      decisionIds: decisionIds,
+      taskIds: taskIds,
+      count: storedClaims.length + questionIds.length + decisionIds.length + taskIds.length
     };
   }
 
-  function onboardingBlocked() {
-    var ui = native && native.getUIState ? native.getUIState() : {};
-    if (ui && ui.onboarded) return false;
-    if (ui && ui.onboarding_step === 'complete') return false;
-    if (ui && typeof ui.onboarding_step === 'number') return true;
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
-    var isUntitled = String(project?.name || '').toLowerCase() === 'untitled project';
-    var nodeCount = (project.nodes || []).length;
-    var legacyCount = (project.insights || []).length + (project.captures || []).length +
-      (project.decisions || []).length + (project.backlog || []).length +
-      (project.open_questions || []).length + (project.pending_decisions || []).length;
-    return isUntitled && nodeCount + legacyCount === 0;
+  function rejectCodeToTrace(code, detail) {
+    if (code === 'no_evidence') {
+      native?.traceEvent?.('chain.reject.no_evidence', 'validator', detail?.nodeKind || '', {
+        nodeKind: detail?.nodeKind || '',
+        nodeId: detail?.nodeId || ''
+      });
+      return;
+    }
+    if (code === 'illegal_phase') {
+      native?.traceEvent?.('chain.reject.illegal_phase', detail?.from || '', detail?.to || '', {
+        from: detail?.from || '',
+        to: detail?.to || ''
+      });
+      return;
+    }
+    if (code === 'orphan_evidence' || code === 'inactive_evidence') {
+      native?.traceEvent?.('chain.reject.orphan_evidence', 'validator', detail?.nodeId || '', {
+        nodeId: detail?.nodeId || '',
+        missingRef: detail?.missingRef || detail?.ref || ''
+      });
+    }
   }
 
-  // === Beat logic ===
+  function recordRejectedStep(focus, reason, errors) {
+    var nextRejectCount = Number(focus?.rejectCount || 0) + 1;
+    var nextPlateau = Number(focus?.plateauCount || 0) + 1;
+    writeFocusStep(focus.id, {
+      phase: focus.phase,
+      outcome: 'rejected',
+      rejectCount: nextRejectCount,
+      plateauCount: nextPlateau
+    });
+    native?.traceEvent?.('focus.step.rejected', focus.id, lower(reason || 'validator'), {
+      focusId: focus.id,
+      reason: lower(reason || 'validator')
+    });
+    (errors || []).forEach(function(error) {
+      rejectCodeToTrace(error.code, error);
+    });
+    if (nextRejectCount >= 3) {
+      native?.completeActiveFocus?.('blocked', { producedClaimCount: 0 });
+      chain.active = false;
+      syncPhaseWithFocus();
+      return true;
+    }
+    if (nextPlateau >= 3) {
+      native?.completeActiveFocus?.('plateau', { producedClaimCount: 0 });
+      chain.active = false;
+      syncPhaseWithFocus();
+      return true;
+    }
+    native?.updateActiveFocus?.({
+      rejectCount: nextRejectCount,
+      plateauCount: nextPlateau
+    });
+    return false;
+  }
+
+  function maybeResolveFocus(focus, validated, producedCounts) {
+    if (!focus) return false;
+    var decisionEvidenceStrong = (validated?.produced?.decisions || []).some(function(item) {
+      return Array.isArray(item.evidence) && item.evidence.length >= 2;
+    });
+    if (focus.phase === 'decision' && producedCounts.decisionIds.length && decisionEvidenceStrong) {
+      native?.completeActiveFocus?.('resolved', { producedClaimCount: producedCounts.claimIds.length });
+      return true;
+    }
+    return false;
+  }
+
+  function handleStepResult(focus, jobId, result) {
+    chain.stepInFlight = false;
+    var project = currentProject();
+    var verdict = contracts?.validateChainOutput
+      ? contracts.validateChainOutput(result || {}, {
+          project: project,
+          currentPhase: focus?.phase || 'observe',
+          currentState: focus?.state || 'active'
+        })
+      : { ok: true, value: result, errors: [] };
+
+    if (!result?.ok || !verdict.ok) {
+      var blocked = recordRejectedStep(focus, result?.error || 'validator', verdict.errors || []);
+      if (!blocked && !chain.manuallyStopped) scheduleNextBeat(Math.max(5000, Math.round(60000 / Math.max(1, chain.bpm))));
+      return;
+    }
+
+    var validated = verdict.value;
+    var producedCounts = applyProduced(validated, focus);
+    var nextPlateau = producedCounts.count > 0 ? 0 : Number(focus?.plateauCount || 0) + 1;
+    var updatedFocus = writeFocusStep(focus.id, {
+      phase: focus.phase,
+      phaseNext: validated.focus.phase_next || focus.phase,
+      outcome: producedCounts.count > 0 ? 'progress' : 'plateau',
+      jobId: jobId || '',
+      producedClaimIds: producedCounts.claimIds || [],
+      producedQuestionIds: producedCounts.questionIds || [],
+      plateauCount: nextPlateau,
+      rejectCount: 0
+    });
+    native?.traceEvent?.('focus.step.produced', focus.id, validated.focus.phase_next || focus.phase, {
+      focusId: focus.id,
+      claims: producedCounts.claimIds.length,
+      questions: producedCounts.questionIds.length,
+      decisions: producedCounts.decisionIds.length,
+      tasks: producedCounts.taskIds.length
+    });
+    native?.validateEvidenceIntegrity?.();
+    window.dispatchEvent(new CustomEvent('structa-chain-updated', {
+      detail: {
+        phase: validated.focus.phase_next || focus.phase,
+        focusId: focus.id
+      }
+    }));
+    if (maybeResolveFocus(updatedFocus || focus, validated, producedCounts)) {
+      chain.active = false;
+      syncPhaseWithFocus();
+      if (!native?.activateNextFocus?.()) {
+        native?.traceEvent?.('chain.idle', 'resolved', 'idle', {
+          resolvedCount: (currentProject()?.chainHistory || []).filter(function(entry) { return entry?.outcome === 'resolved'; }).length,
+          awaitingCount: (currentProject()?.open_question_nodes || []).length
+        });
+      }
+      return;
+    }
+    if (nextPlateau >= 3) {
+      native?.completeActiveFocus?.('plateau', { producedClaimCount: producedCounts.claimIds.length });
+      chain.active = false;
+      syncPhaseWithFocus();
+      return;
+    }
+    chain.beatCount += 1;
+    syncPhaseWithFocus();
+    if (!chain.manuallyStopped) scheduleNextBeat(Math.max(5000, Math.round(60000 / Math.max(1, chain.bpm))));
+  }
+
   function beat() {
-    if (!chain.active) return;
+    if (chain.stepInFlight || chain.manuallyStopped) return;
     if (onboardingBlocked()) {
       pause('onboarding');
       return;
     }
-    if (queue && queue.countByPriority && queue.countByPriority('P2') > 0 && chain.currentPhase !== 'cooldown') {
-      return;
-    }
-
-    // Check idle timeout
-    var idleMs = Date.now() - chain.lastUserActivity;
-    if (idleMs > chain.idleTimeoutMs) {
+    if (Date.now() - chain.lastUserActivity > chain.idleTimeoutMs) {
       pause('idle timeout');
       return;
     }
-
-    // Play audio heartbeat
-    if (window.StructaAudio && window.StructaAudio.initialized && !window.StructaAudio.muted) {
-      window.StructaAudio.heartbeat(chain.currentPhase);
-    }
-
-    // Dispatch visual heartbeat event for cascade
-    window.dispatchEvent(new CustomEvent('structa-heartbeat', {
-      detail: { phase: chain.currentPhase, beat: chain.beatCount }
-    }));
-
-    // Check cooldown
-    if (chain.currentPhase === 'cooldown') {
-      var cooldownMs = Date.now() - chain.lastDecisionAt;
-      if (cooldownMs < chain.cooldownMs) {
-        return; // still cooling
-      }
-      // Cooldown over — restart chain
-      stopCooldownTicker();
-      setPhase('observe');
-      chain.impacts = [];
-      chain.beatCount = 0;
-    }
-
-    var context = buildImpactContext();
-
-    if (!llm || !llm.sendToLLM) {
-      pause('no LLM bridge');
+    if (queueHasHigherPriorityWork()) {
+      scheduleNextBeat(1800);
       return;
     }
-
-    chain.beatCount++;
-
-    var blockers = getBlockers();
-    if (blockers.total > 0 && chain.currentPhase !== 'cooldown') {
-      setPhase('blocked');
-      window.dispatchEvent(new CustomEvent('structa-blocked', { detail: blockers }));
+    var focus = native?.getActiveFocus?.() || native?.activateNextFocus?.();
+    if (!focus) {
+      chain.active = false;
+      syncPhaseWithFocus();
       return;
     }
-
-    // === Discovery mode: ask shaping questions when project is new ===
-    if (isDiscoveryMode() && chain.currentPhase === 'observe') {
-      runChainStep(buildChainPayload('observe', { discoveryMode: true }))
-        .then(function(result) {
-          if (!chain.active) return;
-          if (result && result.ok && result.artifacts && result.artifacts.length) {
-            var questionText = result.artifacts[0].body || result.ui?.summary || '';
-            storeImpact('observe', 'inspect', context, 'discovery: ' + questionText);
-
-            // Store as open question
-            if (native && native.addNode) {
-              native.addNode({
-                type: 'question', status: 'open',
-                title: 'structa asks', body: questionText,
-                source: 'impact-chain'
-              });
-            } else if (native && native.touchProjectMemory) {
-              native.touchProjectMemory(function(project) {
-                project.open_questions = Array.isArray(project.open_questions) ? project.open_questions : [];
-                if (!project.open_questions.includes(questionText)) {
-                  project.open_questions.unshift(questionText);
-                  project.open_questions = project.open_questions.slice(0, 12);
-                }
-              });
-            }
-
-            setPhase('cooldown');
-            chain.lastDecisionAt = Date.now();
-            chain.cooldownMs = 35000;
-            startCooldownTicker();
-
-            // Notify
-            window.dispatchEvent(new CustomEvent('structa-discovery-question', {
-              detail: { question: questionText }
-            }));
-
-            emitUIUpdate({ phase: chain.currentPhase, source: 'discovery-question' });
-          }
-        });
-      return; // Skip normal flow
-    }
-
-    switch (chain.currentPhase) {
-      case 'idle':
-      case 'blocked':
-      case 'observe':
-        setPhase('observe');
-        runChainStep(buildChainPayload('observe'))
-          .then(function(result) {
-            if (!chain.active) return;
-            if (result && result.ok && result.ui && result.ui.summary) {
-              var impact = storeImpact('observe', 'inspect', context, result.ui.summary);
-              setPhase('clarify');
-              emitUIUpdate({ phase: chain.currentPhase, source: 'observe' });
-            }
-          });
-        break;
-
-      case 'clarify':
-        var lastObserve = chain.impacts.filter(function(i) { return i.type === 'observe'; });
-        var observation = lastObserve.length ? lastObserve[0].output : 'project status';
-
-        // Decide: continue clarifying or evaluate?
-        if (chain.impacts.length >= chain.maxImpactsPerChain) {
-          setPhase('evaluate');
-          // Fall through to evaluate
-        } else {
-          runChainStep(buildChainPayload('clarify'))
-            .then(function(result) {
-              if (!chain.active) return;
-              if (result && result.ok && result.ui && result.ui.summary) {
-                storeImpact('clarify', 'clarify', observation, result.ui.summary);
-
-                // After enough clarification, move to evaluate
-                if (chain.impacts.length >= chain.maxImpactsPerChain) {
-                  setPhase('evaluate');
-                }
-                emitUIUpdate({ phase: chain.currentPhase, source: 'clarify' });
-              }
-            });
-          break;
-        }
-        // Intentional fall-through to evaluate when max impacts reached
-
-      case 'evaluate':
-        if (!chain.impacts.some(function(impact) { return impact.type === 'clarify'; })) {
-          setPhase('clarify');
-          break;
-        }
-        runChainStep(buildChainPayload('evaluate'))
-          .then(function(result) {
-            if (!chain.active) return;
-            if (result && result.ok) {
-              var mainArtifact = result.artifacts && result.artifacts[0] ? result.artifacts[0] : null;
-
-              if (mainArtifact && mainArtifact.type === 'decision') {
-                storeImpact('decision', 'decide', chain.impacts.map(function(i) { return i.output; }).join('; '), mainArtifact.body || mainArtifact.title || 'decision ready');
-                storeDecision(mainArtifact.body || mainArtifact.title || 'decision ready', mainArtifact.options || []);
-                emitUIUpdate({ phase: chain.currentPhase, source: 'decision' });
-              } else if (result.ui && result.ui.summary) {
-                // LLM wants more clarification
-                storeImpact('evaluate', 'evaluate', chain.impacts.length + ' impacts', result.ui.summary);
-
-                // If we've been going too long, force a decision anyway
-                if (chain.impacts.length >= chain.maxImpactsPerChain + 2) {
-                  var fallback = result.ui.summary.slice(0, 60);
-                  storeDecision(fallback, ['approve', 'skip', 'revise']);
-                }
-
-                setPhase('clarify');
-                emitUIUpdate({ phase: chain.currentPhase, source: 'evaluate' });
-              }
-            }
-          });
-        break;
-
-      default:
-        break;
-    }
+    chain.active = true;
+    syncPhaseWithFocus();
+    var payload = buildChainPayload(focus);
+    native?.traceEvent?.('focus.step', focus.id, focus.phase || 'observe', {
+      focusId: focus.id,
+      phase: focus.phase || 'observe',
+      jobId: ''
+    });
+    chain.stepInFlight = true;
+    runChainStep(payload).then(function(result) {
+      handleStepResult(focus, result?.jobId || '', result || {});
+    }).catch(function(error) {
+      chain.stepInFlight = false;
+      recordRejectedStep(focus, error?.message || 'request failed', []);
+      if (!chain.manuallyStopped) scheduleNextBeat(Math.max(5000, Math.round(60000 / Math.max(1, chain.bpm))));
+    });
   }
 
-  // === Start / Stop ===
   function start(bpm) {
     if (onboardingBlocked()) return;
-    if (chain.active) return;
     chain.manuallyStopped = false;
     persistPauseState(false);
+    chain.bpm = Math.max(1, Math.min(20, bpm || chain.bpm || 2));
     chain.active = true;
-    chain.bpm = bpm || 4;
-    setPhase('observe');
-    chain.impacts = [];
-    chain.beatCount = 0;
-
-    var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
-    chain.timerId = setInterval(beat, intervalMs);
-
-    // Fire first beat immediately
-    beat();
+    scheduleNextBeat(120);
   }
 
   function pause(reason) {
-    if (!chain.active) return;
+    clearTimer();
+    chain.stepInFlight = false;
     chain.active = false;
-    stopCooldownTicker();
     if (reason === 'manual stop') {
       chain.manuallyStopped = true;
       persistPauseState(true);
       setPhase('paused');
     } else {
-      setPhase('idle');
-    }
-    if (chain.timerId) {
-      clearInterval(chain.timerId);
-      chain.timerId = null;
+      syncPhaseWithFocus();
     }
   }
 
   function stop() {
-    chain.manuallyStopped = true;
-    persistPauseState(true);
     pause('manual stop');
-    chain.impacts = [];
-    chain.awaitingFastTrack = false;
-    setPhase('idle');
   }
 
   function resume() {
     chain.lastUserActivity = Date.now();
-    if (onboardingBlocked()) return;
-    if (chain.manuallyStopped) return;
-    if (!chain.active && chain.currentPhase !== 'cooldown') {
-      start(chain.bpm);
-    } else if (!chain.active) {
-      // In cooldown — just mark active, beat will check cooldown timer
-      chain.active = true;
-      var intervalMs = Math.max(5000, Math.round(60000 / chain.bpm));
-      chain.timerId = setInterval(beat, intervalMs);
-    }
+    if (chain.manuallyStopped || onboardingBlocked()) return;
+    chain.active = true;
+    scheduleNextBeat(120);
   }
 
   function resumeManual() {
@@ -633,24 +691,17 @@
     chain.lastUserActivity = Date.now();
   }
 
-  var immediateBeatTimer = null;
   function requestImmediateBeat() {
-    if (onboardingBlocked()) return;
-    if (!chain.active) return;
-    chain.awaitingFastTrack = true;
-    clearTimeout(immediateBeatTimer);
-    immediateBeatTimer = setTimeout(function() {
-      immediateBeatTimer = null;
-      if (queue && queue.countByPriority && queue.countByPriority('P2') > 0) {
-        requestImmediateBeat();
-        return;
-      }
-      chain.awaitingFastTrack = false;
-      beat();
-    }, 120);
+    if (chain.manuallyStopped || onboardingBlocked()) return;
+    scheduleNextBeat(120);
   }
 
-  // === Public API ===
+  function focusLabel() {
+    var focus = currentFocus();
+    if (!focus) return '';
+    return compact((focus.target?.kind || 'focus') + ' · ' + (focus.target?.id || focus.target?.branchId || 'main'), 32);
+  }
+
   window.StructaImpactChain = Object.freeze({
     start: start,
     pause: pause,
@@ -661,26 +712,29 @@
     isPaused: isPaused,
     touchActivity: touchActivity,
     requestImmediateBeat: requestImmediateBeat,
-    get active() { return chain.active; },
+    get active() { return !!chain.active; },
     get phase() { return chain.currentPhase; },
     get bpm() { return chain.bpm; },
-    set bpm(val) { chain.bpm = Math.max(1, Math.min(20, val || 4)); },
+    set bpm(val) { chain.bpm = Math.max(1, Math.min(20, Number(val || 2))); },
     get impacts() { return chain.impacts.slice(); },
     get beatCount() { return chain.beatCount; },
     get totalImpacts() { return chain.totalImpacts; },
     get totalDecisions() { return chain.totalDecisions; },
-    get lastImpact() { return chain.impacts[chain.impacts.length - 1] || null; },
+    get lastImpact() { return chain.impacts[0] || null; },
     get manuallyStopped() { return !!chain.manuallyStopped; },
-    get cooldownRemaining() {
-      if (chain.currentPhase !== 'cooldown') return 0;
-      return Math.max(0, chain.cooldownMs - (Date.now() - chain.lastDecisionAt));
-    }
+    get cooldownRemaining() { return 0; },
+    get focusLabel() { return focusLabel(); },
+    get focusState() { return currentFocus()?.state || 'idle'; },
+    get focusStepCount() { return (currentFocus()?.steps || []).length; },
+    get focusPlateauCount() { return Number(currentFocus()?.plateauCount || 0); },
+    get historyCount() { return (currentProject()?.chainHistory || []).length; },
+    get awaitingCount() { return (currentProject()?.open_question_nodes || []).length; }
   });
 
   (function restorePauseState() {
     try {
       if (!window.creationStorage?.plain?.getItem) {
-        emitPhase();
+        syncPhaseWithFocus();
         return;
       }
       Promise.resolve(window.creationStorage.plain.getItem(PAUSE_KEY)).then(function(value) {
@@ -688,18 +742,16 @@
           chain.manuallyStopped = true;
           setPhase('paused');
         } else {
-          emitPhase();
+          syncPhaseWithFocus();
         }
       }).catch(function() {
-        emitPhase();
+        syncPhaseWithFocus();
       });
     } catch (_) {
-      emitPhase();
+      syncPhaseWithFocus();
     }
   })();
 
-  // === Auto-start on user activity ===
-  // Wire to hardware events so chain resumes on device wake
   ['sideClick', 'longPressStart'].forEach(function(evt) {
     window.addEventListener(evt, function() {
       if (onboardingBlocked()) return;
@@ -708,20 +760,21 @@
     });
   });
 
-  // Also resume on visibility change (device wake)
   document.addEventListener('visibilitychange', function() {
-    if (!document.hidden) {
-      if (onboardingBlocked()) return;
-      touchActivity();
-      if (!chain.active) resume();
-    }
+    if (document.hidden) return;
+    if (onboardingBlocked()) return;
+    touchActivity();
+    if (!chain.active && !chain.manuallyStopped) resume();
   });
 
   window.addEventListener('structa-fast-feedback', function() {
     if (onboardingBlocked()) return;
     touchActivity();
-    if (!chain.active) resume();
-    requestImmediateBeat();
+    if (!chain.manuallyStopped) requestImmediateBeat();
   });
 
+  window.addEventListener('structa-model-change', function() {
+    if (onboardingBlocked() || chain.manuallyStopped) return;
+    requestImmediateBeat();
+  });
 })();

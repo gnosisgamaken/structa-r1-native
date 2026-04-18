@@ -42,8 +42,9 @@
     'new-project': 3,
     'set-type': 4,
     'set-role': 5,
-    'export': 6,
-    'research': 7
+    'export-snapshot': 6,
+    'export': 7,
+    'research': 8
   };
 
   function lower(text) {
@@ -102,6 +103,7 @@
 
   // === Voice command patterns ===
   var VOICE_COMMANDS = [
+    { pattern: /^export snapshot$/i, type: 'export-snapshot' },
     { pattern: /^(?:research|look up|search for|find out about)\s+(.+)/i, type: 'research' },
     { pattern: /^export\s+(brief|decisions|research|summary)/i, type: 'export' },
     { pattern: /^(?:new project|create project|start project)\s+(.+)/i, type: 'new-project' },
@@ -152,6 +154,14 @@
               window.dispatchEvent(new CustomEvent('structa-memory-updated'));
             });
           }
+          return true;
+
+      case 'export-snapshot':
+          native?.appendLogEntry?.({ kind: 'voice', message: 'export snapshot' });
+          native?.dumpDebugSnapshot?.({ export: true });
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'export-snapshot-command' }
+          }));
           return true;
 
       case 'new-project':

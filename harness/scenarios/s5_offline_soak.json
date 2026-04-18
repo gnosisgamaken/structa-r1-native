@@ -1,7 +1,7 @@
 {
   "id": "s5_offline_soak",
   "title": "offline soak records blocked work without losing trace continuity",
-  "runtime_dump": "runtime/s5_offline_soak.json",
+  "runtime_dump": "runtime/synthetic/s5_offline_soak.json",
   "expect_tail": [
     { "flow": "image", "from": "pending", "to": "queued" },
     { "flow": "image", "from": "analyzing", "to": "blocked" },

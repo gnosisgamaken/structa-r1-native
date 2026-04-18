@@ -1,0 +1,17 @@
+{
+  "id": "u7_idle",
+  "title": "chain idles cleanly when no eligible focus exists",
+  "runtime_dump": "runtime/synthetic/u7_idle.json",
+  "expect_tail": [
+    { "flow": "chain.idle" }
+  ],
+  "expect_questions": {
+    "open_min": 0,
+    "open_max": 0
+  },
+  "expect_chain": {
+    "focus_state": "idle",
+    "history_entries_min": 0
+  },
+  "expect_no_orphan_evidence": true
+}

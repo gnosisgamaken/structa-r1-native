@@ -1,7 +1,7 @@
 {
   "id": "s4_capture_burst",
   "title": "capture burst stores image claims and analysis lifecycle",
-  "runtime_dump": "runtime/s4_capture_burst.json",
+  "runtime_dump": "runtime/synthetic/s4_capture_burst.json",
   "expect_tail": [
     { "flow": "image", "from": "captured", "to": "stored" },
     { "flow": "image", "from": "pending", "to": "queued" },

@@ -1,0 +1,20 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T14:18:00.000Z", "flow": "chain.idle", "from": "selection", "to": "idle", "ctx": { "resolvedCount": 2, "awaitingCount": 0 } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": [
+      { "focusId": "focus-a", "target": { "kind": "branch", "id": "main", "branchId": "main" }, "outcome": "resolved" },
+      { "focusId": "focus-b", "target": { "kind": "question", "id": "q-old", "branchId": "main" }, "outcome": "resolved" }
+    ]
+  }
+}

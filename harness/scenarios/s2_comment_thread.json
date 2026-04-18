@@ -1,7 +1,7 @@
 {
   "id": "s2_comment_thread",
   "title": "comment capture writes instantly and refines in background",
-  "runtime_dump": "runtime/s2_comment_thread.json",
+  "runtime_dump": "runtime/synthetic/s2_comment_thread.json",
   "expect_tail": [
     { "flow": "thread", "from": "captured", "to": "append-request" },
     { "flow": "thread", "from": "append-request", "to": "comment-added" },

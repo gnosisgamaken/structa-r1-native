@@ -17,7 +17,7 @@ ROOT = pathlib.Path(__file__).resolve().parent
 DEFAULT_SCENARIOS = ROOT / "scenarios" / "batch_v1.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs"
 DEFAULT_LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
-DEFAULT_TRACE_RUNTIME_DIR = ROOT / "runtime"
+DEFAULT_TRACE_RUNTIME_DIR = ROOT / "runtime" / "from_device"
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -45,7 +45,12 @@ def load_scenarios(path: pathlib.Path):
 def load_trace_scenarios(path: pathlib.Path):
     if path.is_dir():
         scenarios: list[dict] = []
-        for candidate in sorted(path.glob("s*.json")):
+        for candidate in sorted(path.glob("*.json")):
+            stem = candidate.stem.lower()
+            if not stem or stem[0] not in {"s", "u"}:
+                continue
+            if len(stem) < 2 or not stem[1].isdigit():
+                continue
             data = json.loads(candidate.read_text())
             if isinstance(data, list):
                 scenarios.extend(data)
@@ -298,12 +303,17 @@ def build_model_summary(snapshot: dict) -> dict:
     else:
         questions_open = sum(1 for node in nodes if node.get("type") == "question" and node.get("status") == "open")
     claims = project.get("claims") or []
+    focuses = project.get("focuses") or []
+    active_focus_id = project.get("activeFocusId") or ""
+    active_focus = next((focus for focus in focuses if focus.get("id") == active_focus_id), None)
     return {
         "questions_open": questions_open,
         "answers_count": len(project.get("answers") or []),
         "claims_count": len(claims),
         "disputed_claims": sum(1 for claim in claims if claim.get("status") == "disputed"),
         "blockers_live": questions_open,
+        "focus_state": active_focus.get("state", "idle") if active_focus else "idle",
+        "history_entries": len(project.get("chainHistory") or []),
     }
 
 
@@ -315,20 +325,96 @@ def match_expect_claims(snapshot: dict, expected_claims: list[dict]) -> list[dic
         source = expected.get("source")
         status = expected.get("status")
         branch_id = expected.get("branchId")
+        kind = expected.get("kind")
         matches = [
             claim for claim in claims
             if (not source or claim.get("source") == source)
             and (not status or claim.get("status") == status)
+            and (not kind or claim.get("kind") == kind)
             and (not branch_id or claim.get("branchId") == branch_id)
         ]
         min_count = int(expected.get("minCount", 0) or 0)
+        max_count = expected.get("maxCount")
         if len(matches) < min_count:
             mismatches.append({
                 "index": index,
                 "expected": expected,
                 "actualCount": len(matches),
             })
+        elif max_count is not None and len(matches) > int(max_count):
+            mismatches.append({
+                "index": index,
+                "expected": expected,
+                "actualCount": len(matches),
+            })
     return mismatches
+
+
+def match_expect_questions(snapshot: dict, expected: dict) -> list[dict]:
+    project = snapshot.get("project") or {}
+    nodes = project.get("nodes") or []
+    questions = [node for node in nodes if node.get("type") == "question" and node.get("status") == "open"]
+    mismatches = []
+    open_min = expected.get("open_min")
+    open_max = expected.get("open_max")
+    if open_min is not None and len(questions) < int(open_min):
+      mismatches.append({"index": "questions_open_min", "expected": open_min, "actual": len(questions)})
+    if open_max is not None and len(questions) > int(open_max):
+      mismatches.append({"index": "questions_open_max", "expected": open_max, "actual": len(questions)})
+    if expected.get("has_meta_evidence_claims"):
+      if not any(isinstance(node.get("meta"), dict) and (node.get("meta", {}).get("evidence_claims") or []) for node in questions):
+        mismatches.append({"index": "questions_meta_evidence", "expected": True, "actual": False})
+    return mismatches
+
+
+def match_expect_chain(snapshot: dict, expected: dict) -> list[dict]:
+    project = snapshot.get("project") or {}
+    history = project.get("chainHistory") or []
+    focuses = project.get("focuses") or []
+    active_focus_id = project.get("activeFocusId") or ""
+    active_focus = next((focus for focus in focuses if focus.get("id") == active_focus_id), None)
+    current_state = active_focus.get("state", "idle") if active_focus else "idle"
+    mismatches = []
+    focus_state = expected.get("focus_state")
+    if focus_state is not None and current_state != focus_state:
+        mismatches.append({"index": "chain_focus_state", "expected": focus_state, "actual": current_state})
+    history_min = expected.get("history_entries_min")
+    if history_min is not None and len(history) < int(history_min):
+        mismatches.append({"index": "chain_history_min", "expected": history_min, "actual": len(history)})
+    last_outcome = expected.get("last_outcome")
+    if last_outcome is not None:
+        actual = history[0].get("outcome") if history else None
+        if actual != last_outcome:
+            mismatches.append({"index": "chain_last_outcome", "expected": last_outcome, "actual": actual})
+    return mismatches
+
+
+def collect_orphan_evidence(snapshot: dict) -> list[dict]:
+    project = snapshot.get("project") or {}
+    claims = project.get("claims") or []
+    answers = project.get("answers") or []
+    nodes = project.get("nodes") or []
+    registry = {}
+    for claim in claims:
+        if claim.get("id"):
+            registry[claim["id"]] = claim
+    for answer in answers:
+        if answer.get("id"):
+            registry[answer["id"]] = answer
+    for node in nodes:
+        if node.get("type") == "question" and node.get("node_id"):
+            registry[node["node_id"]] = node
+    orphans = []
+    for claim in claims:
+        for ref in claim.get("evidence") or []:
+            if ref not in registry:
+                orphans.append({"nodeId": claim.get("id"), "missingRef": ref})
+    for node in nodes:
+        refs = (node.get("meta") or {}).get("evidence_claims") or []
+        for ref in refs:
+            if ref not in registry:
+                orphans.append({"nodeId": node.get("node_id"), "missingRef": ref})
+    return orphans
 
 
 def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
@@ -383,11 +469,21 @@ def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
     claim_expect = scenario.get("expect_claims") or []
     claim_mismatches = match_expect_claims(snapshot, claim_expect) if claim_expect else []
     mismatches.extend([{"index": f"claims:{item['index']}", "expected": item["expected"], "actual": {"count": item["actualCount"]}} for item in claim_mismatches])
+    question_expect = scenario.get("expect_questions") or {}
+    question_mismatches = match_expect_questions(snapshot, question_expect) if question_expect else []
+    mismatches.extend(question_mismatches)
+    chain_expect = scenario.get("expect_chain") or {}
+    chain_mismatches = match_expect_chain(snapshot, chain_expect) if chain_expect else []
+    mismatches.extend(chain_mismatches)
+    orphan_mismatches = []
+    if scenario.get("expect_no_orphan_evidence"):
+        orphan_mismatches = collect_orphan_evidence(snapshot)
+        mismatches.extend([{"index": "orphan_evidence", "expected": True, "actual": item} for item in orphan_mismatches])
     return {
         "id": scenario.get("id", "unknown"),
         "title": scenario.get("title", scenario.get("id", "trace scenario")),
         "kind": "trace",
-        "valid": bool(expected) and all(matched) and voice_ok and model_ok and not claim_mismatches,
+        "valid": bool(expected) and all(matched) and voice_ok and model_ok and not claim_mismatches and not question_mismatches and not chain_mismatches and not orphan_mismatches,
         "expected_count": len(expected),
         "actual_count": len(tail),
         "matched": matched,

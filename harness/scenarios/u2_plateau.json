@@ -1,0 +1,17 @@
+{
+  "id": "u2_plateau",
+  "title": "focus plateaus after three empty grounded steps",
+  "runtime_dump": "runtime/synthetic/u2_plateau.json",
+  "expect_tail": [
+    { "flow": "focus.start" },
+    { "flow": "focus.step" },
+    { "flow": "focus.step.rejected" },
+    { "flow": "focus.end", "to": "plateau" }
+  ],
+  "expect_chain": {
+    "focus_state": "idle",
+    "history_entries_min": 1,
+    "last_outcome": "plateau"
+  },
+  "expect_no_orphan_evidence": true
+}

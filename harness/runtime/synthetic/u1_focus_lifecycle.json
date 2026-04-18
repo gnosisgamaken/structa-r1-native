@@ -1,0 +1,43 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T14:00:00.000Z", "flow": "focus.select", "from": "idle", "to": "question", "ctx": { "targetKind": "question", "targetId": "q-1", "reason": "question-priority" } },
+      { "t": "2026-04-18T14:00:00.010Z", "flow": "focus.start", "from": "selected", "to": "focus-1", "ctx": { "focusId": "focus-1", "targetKind": "question", "targetId": "q-1" } },
+      { "t": "2026-04-18T14:00:01.000Z", "flow": "focus.step", "from": "focus-1", "to": "clarify", "ctx": { "focusId": "focus-1", "phase": "observe", "jobId": "job-1" } },
+      { "t": "2026-04-18T14:00:01.050Z", "flow": "focus.step.produced", "from": "focus-1", "to": "decision", "ctx": { "focusId": "focus-1", "claims": 1, "questions": 0, "decisions": 1, "tasks": 0 } },
+      { "t": "2026-04-18T14:00:01.220Z", "flow": "focus.end", "from": "focus-1", "to": "resolved", "ctx": { "focusId": "focus-1", "durationMs": 1220, "stepCount": 1 } }
+    ],
+    "voiceCalls": {
+      "total": 0,
+      "violations": 0,
+      "byKind": {}
+    }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-voice-1", "source": "voice", "kind": "intent", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-voice-2", "source": "voice", "kind": "constraint", "status": "active", "branchId": "main", "evidence": [] },
+      { "id": "claim-chain-1", "source": "chain", "kind": "intent", "status": "active", "branchId": "main", "evidence": ["claim-voice-1", "claim-voice-2"] }
+    ],
+    "answers": [],
+    "nodes": [
+      { "node_id": "dec-1", "type": "decision", "status": "open", "meta": { "evidence_claims": ["claim-chain-1", "claim-voice-2"] } }
+    ],
+    "open_question_nodes": [],
+    "focuses": [
+      {
+        "id": "focus-1",
+        "target": { "kind": "question", "id": "q-1", "branchId": "main" },
+        "phase": "decision",
+        "state": "resolved",
+        "steps": [
+          { "at": "2026-04-18T14:00:01.050Z", "phase": "observe", "jobId": "job-1", "producedClaimIds": ["claim-chain-1"], "producedQuestionIds": [], "outcome": "progress" }
+        ]
+      }
+    ],
+    "activeFocusId": null,
+    "chainHistory": [
+      { "focusId": "focus-1", "target": { "kind": "question", "id": "q-1", "branchId": "main" }, "outcome": "resolved" }
+    ]
+  }
+}

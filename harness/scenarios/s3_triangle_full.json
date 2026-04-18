@@ -1,7 +1,7 @@
 {
   "id": "s3_triangle_full",
   "title": "triangle arms, synthesizes, stores claims, and resolves",
-  "runtime_dump": "runtime/s3_triangle_full.json",
+  "runtime_dump": "runtime/synthetic/s3_triangle_full.json",
   "expect_tail": [
     { "flow": "triangle", "from": "empty", "to": "armed" },
     { "flow": "triangle", "from": "armed", "to": "synthesizing" },

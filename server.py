@@ -379,124 +379,281 @@ def image_normalize(payload):
     }
 
 
+def normalize_chain_focus(raw):
+    if not isinstance(raw, dict):
+        return None
+    target = raw.get("target") if isinstance(raw.get("target"), dict) else raw
+    kind = compact(target.get("kind") or raw.get("kind") or "branch", 32).lower()
+    target_id = compact(target.get("id") or raw.get("id") or "", 80)
+    branch_id = compact(target.get("branchId") or raw.get("branchId") or target_id or "main", 80)
+    phase = compact(raw.get("phase") or "observe", 32).lower()
+    if not target_id:
+      target_id = branch_id or "main"
+    return {
+        "kind": kind if kind in {"branch", "question", "claim"} else "branch",
+        "id": target_id,
+        "branchId": branch_id or "main",
+        "phase": phase if phase in {"observe", "clarify", "evaluate", "decision"} else "observe",
+    }
+
+
+def build_chain_digest(project, focus, history):
+    nodes = project.get("nodes") or []
+    claims = project.get("claims") or []
+    answers = project.get("answers") or []
+    branch_id = focus.get("branchId") or "main"
+
+    active_branch_claims = [
+        claim_item for claim_item in claims
+        if claim_item.get("status", "active") == "active"
+        and (claim_item.get("branchId") or "main") == branch_id
+    ]
+    disputed_claims = [
+        claim_item for claim_item in claims
+        if claim_item.get("status") == "disputed"
+    ]
+    open_questions = [
+        {
+            "id": node.get("node_id"),
+            "body": compact(node.get("body") or node.get("title") or "", 180),
+            "branchId": node.get("meta", {}).get("branch_id") or "main",
+            "priority": compact(node.get("meta", {}).get("priority") or "normal", 24).lower(),
+            "skippedUntil": node.get("meta", {}).get("skipped_until") or "",
+            "evidence_claims": (node.get("meta", {}).get("evidence_claims") or [])[:6],
+        }
+        for node in nodes
+        if node.get("type") == "question"
+        and node.get("status") == "open"
+        and not node.get("meta", {}).get("skipped_until")
+    ]
+    recent_answers = [{
+        "id": answer.get("id"),
+        "questionId": answer.get("questionId"),
+        "body": compact(answer.get("body") or "", 160),
+        "claims": (answer.get("claims") or [])[:6],
+        "at": answer.get("at"),
+    } for answer in answers[:8]]
+    recent_claims = active_branch_claims[:24]
+    cross_branch_disputed = [claim_item for claim_item in disputed_claims if (claim_item.get("branchId") or "main") != branch_id][:8]
+    truncated = {}
+    if len(active_branch_claims) > len(recent_claims):
+        truncated["recent_claims"] = len(active_branch_claims)
+    if len(open_questions) > 12:
+        truncated["open_questions"] = len(open_questions)
+        open_questions = open_questions[:12]
+    if len(answers) > 8:
+        truncated["recent_answers"] = len(answers)
+    if len(disputed_claims) > len(cross_branch_disputed):
+        truncated["disputed_claims"] = len(disputed_claims)
+
+    previous_steps = (history or {}).get("previous_steps") or []
+    previous_steps = previous_steps[:4]
+
+    branch_context = {
+        "id": branch_id,
+        "name": compact(branch_id.replace("-", " "), 48),
+        "parentBranchId": "",
+        "claim_count": len([claim_item for claim_item in claims if (claim_item.get("branchId") or "main") == branch_id]),
+        "open_question_count": len([item for item in open_questions if (item.get("branchId") or "main") == branch_id]),
+    }
+
+    digest = {
+        "recent_claims": recent_claims + cross_branch_disputed,
+        "open_questions": open_questions,
+        "recent_answers": recent_answers,
+        "skipped_questions": [
+            {
+                "id": node.get("node_id"),
+                "body": compact(node.get("body") or node.get("title") or "", 180),
+                "skippedUntil": node.get("meta", {}).get("skipped_until") or "",
+            }
+            for node in nodes
+            if node.get("type") == "question"
+            and node.get("status") == "open"
+            and node.get("meta", {}).get("skipped_until")
+        ][:12],
+        "disputed_claims": disputed_claims[:8],
+        "branch_context": branch_context,
+    }
+    if truncated:
+        digest["truncated"] = truncated
+    return {
+        "focus": focus,
+        "digest": digest,
+        "history": {
+            "previous_steps": previous_steps,
+            "plateau_count": int((history or {}).get("plateau_count") or 0),
+        },
+    }
+
+
+def extract_json_block(text):
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    if "```" in raw:
+        parts = [segment.strip() for segment in raw.split("```") if segment.strip()]
+        for part in parts:
+            candidate = part
+            if candidate.lower().startswith("json"):
+                candidate = candidate[4:].strip()
+            try:
+                return json.loads(candidate)
+            except Exception:
+                continue
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start:end + 1])
+        except Exception:
+            return {}
+    return {}
+
+
+def normalize_chain_evidence(value):
+    if isinstance(value, list):
+        return [compact(item, 64) for item in value if compact(item, 64)]
+    if isinstance(value, str):
+        return [compact(item, 64) for item in value.replace("|", ",").split(",") if compact(item, 64)]
+    return []
+
+
+def validate_chain_response_shape(data):
+    produced = data.get("produced") if isinstance(data.get("produced"), dict) else {}
+    errors = []
+    for kind in ("claims", "decisions", "tasks"):
+        for item in produced.get(kind) or []:
+            if not normalize_chain_evidence(item.get("evidence")):
+                errors.append(f"{kind}:missing evidence")
+    for item in produced.get("questions") or []:
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        if not normalize_chain_evidence(meta.get("evidence_claims")):
+            errors.append("questions:missing evidence")
+    return errors
+
+
 def chain_prepare(payload):
     project = payload.get("project") or {}
-    phase = (payload.get("phase") or "observe").strip().lower()
-    context = compact(payload.get("contextSummary") or project.get("summary") or "", 600)
-    recent = payload.get("recentArtifacts") or []
-    blockers = payload.get("blockers") or {}
-
+    focus = normalize_chain_focus(payload.get("focus"))
+    if not isinstance(project, dict) or not focus:
+        return {"ok": False, "error": "typed focus and project are required"}
+    digest_payload = build_chain_digest(project, focus, payload.get("history") or {})
     lines = [
-        "You are Structa's chain engine.",
-        "Work only from the supplied project state.",
+        "You are Structa's grounded reasoning engine.",
+        "Reason only from the typed digest below. Never use outside facts.",
+        "Every produced node must cite evidence ids from the digest.",
+        "Return strict JSON only.",
         "",
-        "PROJECT",
-    ] + build_project_lines(project)
-
-    if context:
-        lines.extend(["", "CONTEXT", context])
-
-    if blockers:
-        blocker_bits = []
-        if blockers.get("pendingCount"):
-            blocker_bits.append(f"pending decisions: {blockers['pendingCount']}")
-        if blockers.get("questionCount"):
-            blocker_bits.append(f"open questions: {blockers['questionCount']}")
-        if blocker_bits:
-            lines.extend(["", "BLOCKERS", " | ".join(blocker_bits)])
-
-    if recent:
-        lines.extend(["", "RECENT IMPACTS"])
-        for item in recent[:4]:
-            lines.append("- " + compact(item.get("output") or item.get("body") or "", 120))
-
-    if payload.get("discoveryMode"):
-        lines.extend([
-            "",
-            "Return exactly:",
-            "QUESTION: <one calm branch-opening prompt, max 12 words>",
-            "Tone: guiding, project-building, never harsh.",
-            "Avoid asking for specific help.",
-            "Prefer prompts about what matters first, what needs a place, or where this begins.",
-        ])
-    elif phase == "observe":
-        lines.extend([
-            "",
-            "Return exactly:",
-            "OBSERVE: <five to eight words describing what is most missing>",
-        ])
-    elif phase == "clarify":
-        lines.extend([
-            "",
-            "Return exactly:",
-            "CLARIFY: <one short clarification angle, max 8 words>",
-        ])
-    else:
-        lines.extend([
-            "",
-            "Return either:",
-            "DECISION: <one decision, max 10 words>",
-            "OPTIONS: <option one> | <option two> | <option three>",
-            "",
-            "or:",
-            "CLARIFY: <one short clarification angle, max 8 words>",
-        ])
-
+        json.dumps(digest_payload, ensure_ascii=False),
+        "",
+        "Return JSON with this shape:",
+        "{",
+        '  "focus": { "phase_next": "clarify", "state_next": "active" },',
+        '  "produced": {',
+        '    "claims": [{ "text": "...", "kind": "fact", "branchId": "main", "evidence": ["claim-id"] }],',
+        '    "questions": [{ "body": "...", "meta": { "evidence_claims": ["claim-id"], "rationale": "..." } }],',
+        '    "decisions": [{ "body": "...", "evidence": ["claim-id","claim-id"], "options": ["..."], "recommended": "..." }],',
+        '    "tasks": [{ "body": "...", "evidence": ["claim-id"] }]',
+        "  },",
+        '  "step_metadata": { "rationale": "...", "confidence": 0.0 }',
+        "}",
+        "If signal is insufficient, return produced as empty arrays and note: \"insufficient_signal\".",
+    ]
     return {
         "ok": True,
         "llm": {
             "prompt": "\n".join(lines),
-            "timeout": 24000 if phase == "evaluate" else 20000,
+            "timeout": 22000,
             "priority": payload.get("policy", {}).get("priority", "low"),
         },
         "ui": {
-            "summary": phase,
-            "logLine": f"chain {phase}",
+            "summary": focus.get("phase") or "observe",
+            "logLine": f"chain {focus.get('phase') or 'observe'}",
         },
         "meta": {
-            "phase": phase,
-            "discoveryMode": bool(payload.get("discoveryMode")),
+            "phase": focus.get("phase") or "observe",
+            "focus": focus,
+            "digest": digest_payload["digest"],
         },
     }
 
 
 def chain_normalize(payload):
-    raw = payload.get("rawResponse") or ""
-    parsed = parse_labeled_lines(raw)
-    if payload.get("discoveryMode"):
-        question = soften_branch_prompt(parsed.get("QUESTION") or compact(raw, 120))
+    focus = normalize_chain_focus(payload.get("focus"))
+    if not focus:
+        return {"ok": False, "error": "focus missing"}
+    parsed = extract_json_block(payload.get("rawResponse") or "")
+    if not isinstance(parsed, dict) or not parsed:
         return {
             "ok": True,
-            "artifacts": [artifact("question", question, title="structa asks", source="chain")],
-            "claims": [claim(question, kind="question", source="chain", confidence=0.62)],
-            "ui": {"summary": question, "logLine": "discovery question"},
-            "meta": {"action": "discovery", "phase": "cooldown"},
+            "focus": {"phase_next": focus.get("phase") or "observe", "state_next": "active"},
+            "produced": {"claims": [], "questions": [], "decisions": [], "tasks": []},
+            "step_metadata": {"rationale": "insufficient signal", "confidence": 0.0, "model": "", "latencyMs": 0},
+            "note": "insufficient_signal",
+            "ui": {"summary": focus.get("phase") or "observe", "logLine": "chain insufficient signal"},
         }
-    if parsed.get("DECISION"):
-        options = [compact(opt, 36) for opt in parsed.get("OPTIONS", "").split("|") if opt.strip()]
-        return {
-            "ok": True,
-            "artifacts": [artifact("decision", parsed["DECISION"], title=parsed["DECISION"], source="chain", options=options)],
-            "claims": [claim(parsed["DECISION"], kind="intent", source="chain", confidence=0.64)],
-            "ui": {"summary": parsed["DECISION"], "logLine": "decision ready"},
-            "meta": {"action": "decision", "phase": "cooldown"},
-        }
-    if parsed.get("CLARIFY"):
-        return {
-            "ok": True,
-            "artifacts": [artifact("signal", parsed["CLARIFY"], source="chain")],
-            "claims": [claim(parsed["CLARIFY"], kind="question", source="chain", confidence=0.6)],
-            "ui": {"summary": parsed["CLARIFY"], "logLine": "clarify"},
-            "meta": {"action": "clarify", "phase": "clarify"},
-        }
-    observe = parsed.get("OBSERVE") or compact(raw, 120)
-    return {
+    errors = validate_chain_response_shape(parsed)
+    if errors:
+        return {"ok": False, "error": "; ".join(errors)}
+
+    produced = parsed.get("produced") if isinstance(parsed.get("produced"), dict) else {}
+    normalized = {
         "ok": True,
-        "artifacts": [artifact("signal", observe, source="chain")],
-        "claims": [claim(observe, kind="fact", source="chain", confidence=0.6)],
-        "ui": {"summary": observe, "logLine": "observe"},
-        "meta": {"action": "observe", "phase": "clarify"},
+        "focus": {
+            "phase_next": compact((parsed.get("focus") or {}).get("phase_next") or focus.get("phase") or "observe", 24).lower(),
+            "state_next": compact((parsed.get("focus") or {}).get("state_next") or "active", 24).lower(),
+        },
+        "produced": {
+            "claims": [{
+                "text": compact(item.get("text") or "", 160),
+                "kind": compact(item.get("kind") or "fact", 24).lower(),
+                "branchId": compact(item.get("branchId") or focus.get("branchId") or "main", 48),
+                "evidence": normalize_chain_evidence(item.get("evidence")),
+                "source": "chain",
+                "confidence": float(item.get("confidence") or 0.64),
+            } for item in produced.get("claims") or [] if compact(item.get("text") or "", 160)],
+            "questions": [{
+                "id": compact(item.get("id") or "", 64),
+                "body": soften_branch_prompt(item.get("body") or ""),
+                "meta": {
+                    "evidence_claims": normalize_chain_evidence((item.get("meta") or {}).get("evidence_claims")),
+                    "rationale": compact((item.get("meta") or {}).get("rationale") or "", 180),
+                    "priority": compact((item.get("meta") or {}).get("priority") or "normal", 24).lower(),
+                    "branch_id": compact((item.get("meta") or {}).get("branch_id") or focus.get("branchId") or "main", 48),
+                    "source": "chain",
+                }
+            } for item in produced.get("questions") or [] if compact(item.get("body") or "", 160)],
+            "decisions": [{
+                "id": compact(item.get("id") or "", 64),
+                "body": compact(item.get("body") or "", 160),
+                "evidence": normalize_chain_evidence(item.get("evidence")),
+                "options": [compact(option, 48) for option in (item.get("options") or []) if compact(option, 48)],
+                "recommended": compact(item.get("recommended") or "", 48),
+            } for item in produced.get("decisions") or [] if compact(item.get("body") or "", 160)],
+            "tasks": [{
+                "id": compact(item.get("id") or "", 64),
+                "body": compact(item.get("body") or "", 160),
+                "evidence": normalize_chain_evidence(item.get("evidence")),
+            } for item in produced.get("tasks") or [] if compact(item.get("body") or "", 160)],
+        },
+        "step_metadata": {
+            "rationale": compact((parsed.get("step_metadata") or {}).get("rationale") or "", 220),
+            "confidence": float((parsed.get("step_metadata") or {}).get("confidence") or 0.0),
+            "model": compact((parsed.get("step_metadata") or {}).get("model") or "", 64),
+            "latencyMs": int((parsed.get("step_metadata") or {}).get("latencyMs") or 0),
+        },
+        "note": compact(parsed.get("note") or "", 120),
+        "ui": {
+            "summary": compact((parsed.get("step_metadata") or {}).get("rationale") or focus.get("phase") or "chain step", 72),
+            "logLine": "chain step",
+        },
     }
+    return normalized
 
 
 def triangle_prepare(payload):
@@ -777,6 +934,17 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             return
         if parsed.path == "/v1/thread/refine":
             self.send_json(410, {"ok": False, "error": "thread refine retired", "redirect": "/v1/thread/extract"})
+            return
+        if parsed.path == "/v1/chain/digest_preview":
+            debug_enabled = "debug=1" in (parsed.query or "") or bool(payload.get("debug"))
+            focus = normalize_chain_focus(payload.get("focus"))
+            if not debug_enabled:
+                self.send_json(403, {"ok": False, "error": "digest preview requires debug=1"})
+                return
+            if not isinstance(payload.get("project"), dict) or not focus:
+                self.send_json(400, {"ok": False, "error": "typed focus and project are required"})
+                return
+            self.send_json(200, {"ok": True, **build_chain_digest(payload.get("project") or {}, focus, payload.get("history") or {})})
             return
 
         handlers = {

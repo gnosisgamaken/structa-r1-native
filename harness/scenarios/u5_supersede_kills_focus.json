@@ -1,0 +1,18 @@
+{
+  "id": "u5_supersede_kills_focus",
+  "title": "superseding a focused claim ends the active focus",
+  "runtime_dump": "runtime/synthetic/u5_supersede_kills_focus.json",
+  "expect_tail": [
+    { "flow": "claim", "from": "active", "to": "superseded" },
+    { "flow": "focus.end", "to": "superseded" }
+  ],
+  "expect_claims": [
+    { "status": "superseded", "minCount": 1 }
+  ],
+  "expect_chain": {
+    "focus_state": "idle",
+    "history_entries_min": 1,
+    "last_outcome": "superseded"
+  },
+  "expect_no_orphan_evidence": true
+}

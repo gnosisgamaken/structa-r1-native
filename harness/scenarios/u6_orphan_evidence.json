@@ -1,0 +1,15 @@
+{
+  "id": "u6_orphan_evidence",
+  "title": "chain output with orphan evidence is rejected without state mutation",
+  "runtime_dump": "runtime/synthetic/u6_orphan_evidence.json",
+  "expect_tail": [
+    { "flow": "focus.step" },
+    { "flow": "chain.reject.no_evidence" },
+    { "flow": "focus.step.rejected" }
+  ],
+  "expect_chain": {
+    "focus_state": "active",
+    "history_entries_min": 0
+  },
+  "expect_no_orphan_evidence": true
+}

@@ -111,6 +111,7 @@
   let scrollWindowStartedAt = performance.now();
   let logHeaderTapCount = 0;
   let logHeaderTapWindowStartedAt = 0;
+  let logHeaderTapEvalTimer = null;
 
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
@@ -680,10 +681,12 @@
     const pendingJobs = getQueuePendingJobs();
     const total = pendingJobs.length;
     const running = pendingJobs.find(function(job) { return job.status === 'running'; });
-    const phase = lower(window.StructaImpactChain?.phase || 'idle');
-    if (!total) return `queue clear · ${phase}`;
+    const chain = window.StructaImpactChain || {};
+    const phase = lower(chain?.phase || 'idle');
+    const focus = lower(chain?.focusLabel || '');
+    if (!total) return focus ? `queue clear · ${focus}` : `queue clear · ${phase}`;
     if (running) return `${total} pending · ${formatQueueJob(running).replace(/^▸\s*/, '')}`;
-    return `${total} pending · ${phase}`;
+    return `${total} pending · ${focus || phase}`;
   }
 
   function invalidateDataCaches() {
@@ -754,13 +757,18 @@
     if (!logQueueRow || !logPhaseRow || !logStatsRow) return;
     const chain = window.StructaImpactChain;
     const phase = lower(detail?.phase || chain?.phase || 'idle');
-    const cooldown = Math.max(0, detail?.cooldownMs ?? chain?.cooldownRemaining ?? 0);
-    const cooldownLabel = cooldown > 0 ? ` · cool ${Math.ceil(cooldown / 1000)}s` : '';
     const jobs = getQueuePendingJobs();
     const queueHeader = jobs.length ? `queue · ${jobs.length} pending` : 'queue · clear';
     const queueRows = jobs.slice(0, 3).map(formatQueueJob);
     logQueueRow.textContent = [queueHeader].concat(queueRows).join('\n');
-    logPhaseRow.textContent = `chain ${phase} · ${getPhaseDots(phase)}${cooldownLabel}`;
+    if (!chain || phase === 'idle') {
+      logPhaseRow.textContent = `chain idle · ${chain?.historyCount || 0} resolved · ${chain?.awaitingCount || 0} awaiting input`;
+    } else {
+      const focusLabel = lower(chain?.focusLabel || 'focus');
+      const steps = Number(chain?.focusStepCount || 0);
+      const plateau = Number(chain?.focusPlateauCount || 0);
+      logPhaseRow.textContent = `chain ${phase} · ${focusLabel} · steps ${steps} · plateau ${plateau}`;
+    }
     logStatsRow.textContent = getOpsStatsLine();
     if (logOps) logOps.hidden = !logOpen;
   }
@@ -918,12 +926,26 @@
       logHeaderTapWindowStartedAt = now;
     }
     logHeaderTapCount += 1;
-    if (logHeaderTapCount < 3) return;
-    logHeaderTapCount = 0;
-    logHeaderTapWindowStartedAt = 0;
-    stateData.logTraceMode = !stateData.logTraceMode;
-    fireFeedback('touch-commit');
-    refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+    clearTimeout(logHeaderTapEvalTimer);
+    if (logHeaderTapCount >= 4) {
+      logHeaderTapCount = 0;
+      logHeaderTapWindowStartedAt = 0;
+      fireFeedback('touch-commit');
+      native?.dumpDebugSnapshot?.({ export: false });
+      pushLog('snapshot dumped', 'export');
+      scheduleLogRefresh({ jumpToLatest: true, forceFollow: true });
+      return;
+    }
+    logHeaderTapEvalTimer = setTimeout(function() {
+      if (logHeaderTapCount === 3) {
+        stateData.logTraceMode = !stateData.logTraceMode;
+        fireFeedback('touch-commit');
+        refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+      }
+      logHeaderTapCount = 0;
+      logHeaderTapWindowStartedAt = 0;
+      logHeaderTapEvalTimer = null;
+    }, 240);
   });
 
   // === State enter/exit handlers ===
@@ -1770,7 +1792,12 @@
       return item;
     };
 
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '' }) => classify({
+    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '' }) => {
+      const claimsForItem = node_id ? (native?.getClaimsForItem?.(node_id) || []) : [];
+      const evidenceStrength = claimsForItem.reduce(function(max, claim) {
+        return Math.max(max, Array.isArray(claim?.evidence) ? claim.evidence.length : 0);
+      }, 0);
+      return classify({
       lane,
       title: lower(normalizeTinyText(title || lane)),
       body: lower(normalizeTinyText(body || '')),
@@ -1784,8 +1811,10 @@
       triangulated: !!triangulated,
       thread: cloneThread(thread),
       threadDepth: Math.max(0, Number(providedThreadDepth !== null ? providedThreadDepth : threadDepth(thread))),
-      threadSummary: lower(normalizeTinyText(threadSummary || ''))
+      threadSummary: lower(normalizeTinyText(threadSummary || '')),
+      evidenceStrength: evidenceStrength
     });
+    };
 
     const questions = [];
     const signals = [];
@@ -2128,6 +2157,25 @@
         opacity: depth > 0 ? '1' : '0.22',
         stroke: active ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.10)',
         'stroke-width': active ? 0.4 : 0
+      }, group);
+    }
+    return group;
+  }
+
+  function drawKnowEvidenceGlyph(strength, x, y, parent = svg) {
+    const safe = Math.max(0, Number(strength || 0));
+    const opacity = safe >= 2 ? 0.88 : 0.30;
+    const group = mk('g', {}, parent);
+    for (let index = 0; index < 3; index += 1) {
+      mk('rect', {
+        x: x + (index * 3),
+        y: y + (index % 2 === 0 ? 0 : 2),
+        width: 2,
+        height: 5,
+        rx: 1,
+        ry: 1,
+        fill: safe >= 2 ? 'rgba(248,193,93,0.88)' : 'rgba(8,8,8,0.44)',
+        opacity: opacity
       }, group);
     }
     return group;
@@ -3628,7 +3676,8 @@
     } else if (data.projectCapNotice || data.openQuestions > 0) {
       const boxY = 78;
       mk('rect', { x: 10, y: boxY, width: 220, height: 170, rx: 12, fill: 'rgba(8,8,8,0.15)' });
-      text(18, boxY + 18, 'answer to continue', {
+      const reasoningLabel = lower(data.activeQuestionNode?.source || '') === 'chain' ? 'from reasoning' : 'answer to continue';
+      text(18, boxY + 18, reasoningLabel, {
         fill: 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3852,6 +3901,7 @@
         'font-size': '9'
       });
     }
+    drawKnowEvidenceGlyph(item?.evidenceStrength || 0, frame.x + frame.width - 42, frame.y + 10);
     drawKnowDepthGlyph(item?.threadDepth || 0, frame.x + frame.width - 22, frame.y + frame.height - 16);
     if (!(item?.threadDepth > 0) && !getUIState().depth_chevron_seen) {
       const chevron = text(frame.x + frame.width - 16, frame.y + frame.height - 30, '⌄', {
@@ -4990,6 +5040,7 @@
 
     if (!chain || chain.phase === 'idle') {
       badge.className = 'idle';
+      phaseText.textContent = 'idle';
       return;
     }
 
@@ -5002,7 +5053,8 @@
       decision: 'dec',
       cooldown: 'cool'
     };
-    phaseText.textContent = labels[chain.phase] || chain.phase;
+    const base = labels[chain.phase] || chain.phase;
+    phaseText.textContent = chain.focusLabel ? `${base} · ${lower(chain.focusLabel)}` : base;
   }
 
   // Re-render NOW panel on each impact + notify relevant cards

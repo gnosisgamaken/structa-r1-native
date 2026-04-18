@@ -1,7 +1,7 @@
 {
   "id": "s7_flush_reset",
   "title": "flush clears trace-bearing state cleanly",
-  "runtime_dump": "runtime/s7_flush_reset.json",
+  "runtime_dump": "runtime/synthetic/s7_flush_reset.json",
   "expect_tail": [
     { "flow": "queue", "from": "pending", "to": "blocked" },
     { "flow": "answer", "from": "stored", "to": "enriched" },

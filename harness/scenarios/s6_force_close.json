@@ -1,7 +1,7 @@
 {
   "id": "s6_force_close",
   "title": "force close leaves restorable trace for triangle recovery",
-  "runtime_dump": "runtime/s6_force_close.json",
+  "runtime_dump": "runtime/synthetic/s6_force_close.json",
   "expect_tail": [
     { "flow": "triangle", "from": "armed", "to": "synthesizing" },
     { "flow": "triangle", "from": "synthesizing", "to": "boot-rehydrate" },

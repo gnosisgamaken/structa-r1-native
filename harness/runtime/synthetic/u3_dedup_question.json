@@ -1,0 +1,26 @@
+{
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T14:10:01.000Z", "flow": "focus.step.produced", "from": "focus-3", "to": "clarify", "ctx": { "focusId": "focus-3", "claims": 0, "questions": 1, "decisions": 0, "tasks": 0 } },
+      { "t": "2026-04-18T14:10:01.100Z", "flow": "question.dedup.merged", "from": "incoming", "to": "q-merge", "ctx": { "intoId": "q-merge", "rationale": "same unknown, same branch" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-q1", "source": "voice", "kind": "intent", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [
+      { "node_id": "q-merge", "type": "question", "status": "open", "meta": { "evidence_claims": ["claim-q1"], "rationales": ["same unknown, same branch"] } }
+    ],
+    "open_question_nodes": [
+      { "node_id": "q-merge", "type": "question", "status": "open", "meta": { "evidence_claims": ["claim-q1"] } }
+    ],
+    "focuses": [
+      { "id": "focus-3", "target": { "kind": "branch", "id": "main", "branchId": "main" }, "phase": "clarify", "state": "active", "steps": [] }
+    ],
+    "activeFocusId": "focus-3",
+    "chainHistory": []
+  }
+}

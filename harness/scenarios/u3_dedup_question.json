@@ -1,0 +1,19 @@
+{
+  "id": "u3_dedup_question",
+  "title": "duplicate reasoning question merges into one live question",
+  "runtime_dump": "runtime/synthetic/u3_dedup_question.json",
+  "expect_tail": [
+    { "flow": "focus.step.produced", "ctx": { "questions": 1 } },
+    { "flow": "question.dedup.merged" }
+  ],
+  "expect_questions": {
+    "open_min": 1,
+    "open_max": 1,
+    "has_meta_evidence_claims": true
+  },
+  "expect_chain": {
+    "focus_state": "active",
+    "history_entries_min": 0
+  },
+  "expect_no_orphan_evidence": true
+}

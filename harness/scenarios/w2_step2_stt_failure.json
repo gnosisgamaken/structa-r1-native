@@ -1,0 +1,17 @@
+{
+  "id": "w2_step2_stt_failure",
+  "title": "step 2 surfaces fallback after STT failure and completes via wheel",
+  "runtime_dump": "runtime/synthetic/w2_step2_stt_failure.json",
+  "expect_tail": [
+    { "flow": "tutorial.step", "from": "stt_failed", "to": "2", "ctx": { "reason": "empty-transcript" } },
+    { "flow": "tutorial.step", "from": "advance", "to": "3", "ctx": { "via": "fallback_wheel" } }
+  ],
+  "expect_ui_state": {
+    "tutorial_step2_fallback_visible": true,
+    "tutorial_step2_fallback_reason": "wheel",
+    "onboarding_step": 3
+  },
+  "voice_calls": {
+    "violations": 0
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "w4_step4_camera_denied",
+  "title": "step 4 surfaces camera denial recovery and can be skipped",
+  "runtime_dump": "runtime/synthetic/w4_step4_camera_denied.json",
+  "expect_tail": [
+    { "flow": "tutorial.step", "from": "camera_denied", "to": "4" },
+    { "flow": "tutorial.step", "from": "skip", "to": "4", "ctx": { "reason": "long-press-home" } },
+    { "flow": "tutorial", "from": "completed", "to": "done", "ctx": { "stepsSkipped": [4] } }
+  ],
+  "expect_ui_state": {
+    "onboarded": true,
+    "onboarding_step": "complete",
+    "onboarding_step4_skipped": true
+  }
+}

@@ -441,6 +441,9 @@
         return;
       }
       setStatus('camera unavailable');
+      window.dispatchEvent(new CustomEvent('structa-camera-denied', {
+        detail: { reason: 'camera-unavailable' }
+      }));
       return;
     }
 
@@ -463,6 +466,9 @@
         streamAcquiring = false;
         killStream();
         setStatus('camera blocked');
+        window.dispatchEvent(new CustomEvent('structa-camera-denied', {
+          detail: { reason: err?.name || 'permission-denied' }
+        }));
       });
   }
 

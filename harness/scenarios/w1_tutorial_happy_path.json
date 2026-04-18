@@ -1,0 +1,19 @@
+{
+  "id": "w1_tutorial_happy_path",
+  "title": "tutorial completes through primary gestures",
+  "runtime_dump": "runtime/synthetic/w1_tutorial_happy_path.json",
+  "expect_tail": [
+    { "flow": "tutorial.step", "from": "advance", "to": "1" },
+    { "flow": "tutorial.step", "from": "advance", "to": "2" },
+    { "flow": "tutorial.step", "from": "advance", "to": "3" },
+    { "flow": "tutorial.step", "from": "advance", "to": "4" },
+    { "flow": "tutorial", "from": "completed", "to": "done" }
+  ],
+  "expect_ui_state": {
+    "onboarded": true,
+    "onboarding_step": "complete"
+  },
+  "voice_calls": {
+    "violations": 0
+  }
+}

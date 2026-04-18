@@ -1,0 +1,27 @@
+{
+  "memory": {
+    "uiState": {
+      "onboarded": false,
+      "onboarding_step": 2,
+      "flush_undo_available_until": 0
+    }
+  },
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T16:20:00.000Z", "flow": "flush", "from": "running", "to": "completed", "ctx": { "snapshotSaved": true } },
+      { "t": "2026-04-18T16:20:05.000Z", "flow": "flush", "from": "undo", "to": "restored", "ctx": { "projectId": "prj-structa-r1" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [
+      { "id": "claim-voice-1", "source": "voice", "kind": "intent", "status": "active", "branchId": "main", "evidence": [] }
+    ],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

@@ -67,6 +67,7 @@
   let stateData = {}; // per-state context
   let selectedIndex = 0;
   let logOpen = false;
+  let logReturnState = STATES.HOME;
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
   let transitionTargetState = null;
@@ -79,9 +80,20 @@
   const DOUBLE_SIDE_WINDOW_MS = 220;
   const TOUCH_LOG_LONG_PRESS_MS = 620;
   const TOUCH_LOG_MOVE_TOLERANCE = 12;
+  const TUTORIAL_SKIP_LONG_PRESS_MS = 3000;
+  const TUTORIAL_SKIP_MOVE_TOLERANCE = 12;
+  const TUTORIAL_STEP2_TIMEOUT_MS = 45000;
+  const TUTORIAL_STEP2_START_TIMEOUT_MS = 800;
+  const DOUBLE_SHAKE_WINDOW_MS = 600;
+  const FLUSH_CONFIRM_HOLD_MS = 1000;
   const LOG_FOLLOW_THRESHOLD = 24;
   const WHEEL_STEP_THRESHOLD = 36;
   const NATIVE_SCROLL_DEDUPE_MS = 75;
+  const TUTORIAL_FALLBACK_OPTIONS = [
+    'a project',
+    "something i'm figuring out",
+    'a decision to make'
+  ];
   const onNextFrame = window.requestAnimationFrame
     ? window.requestAnimationFrame.bind(window)
     : function(callback) { return setTimeout(callback, 16); };
@@ -112,6 +124,14 @@
   let logHeaderTapCount = 0;
   let logHeaderTapWindowStartedAt = 0;
   let logHeaderTapEvalTimer = null;
+  let tutorialSkipTimer = null;
+  let tutorialSkipPointerId = null;
+  let tutorialSkipStart = null;
+  let tutorialSkipTriggered = false;
+  let tutorialSkipSuppressClickUntil = 0;
+  let tutorialStep2HintTimer = null;
+  let flushConfirmTimer = null;
+  let lastShakePairAt = 0;
 
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
@@ -490,6 +510,104 @@
     return getOnboardingStep() !== 'complete';
   }
 
+  function onboardingPaused() {
+    return !!getUIState().onboarding_paused;
+  }
+
+  function skippedOnboardingSteps() {
+    const ui = getUIState();
+    const skipped = [];
+    if (ui.onboarding_step2_skipped) skipped.push(2);
+    if (ui.onboarding_step4_skipped) skipped.push(4);
+    return skipped;
+  }
+
+  function traceTutorial(flow, from, to, ctx) {
+    native?.traceEvent?.(flow, from, to, ctx || {});
+  }
+
+  function markTutorialStepEntered(step) {
+    if (step === 'complete') return;
+    const ui = getUIState();
+    if (ui.tutorial_last_entered_step === step && ui.tutorial_step_entered_at) return;
+    native?.updateUIState?.({
+      tutorial_last_entered_step: step,
+      tutorial_step_entered_at: Date.now()
+    });
+    traceTutorial('tutorial.step', 'enter', String(step), { step: step });
+  }
+
+  function clearTutorialStep2HintTimer() {
+    if (!tutorialStep2HintTimer) return;
+    clearTimeout(tutorialStep2HintTimer);
+    tutorialStep2HintTimer = null;
+  }
+
+  function clearFlushConfirmTimer() {
+    if (!flushConfirmTimer) return;
+    clearTimeout(flushConfirmTimer);
+    flushConfirmTimer = null;
+  }
+
+  function tutorialSkipEligible(step = getOnboardingStep()) {
+    if (!onboardingActive() || onboardingPaused()) return false;
+    return step === 2 || step === 4;
+  }
+
+  function showTutorialStep2Fallback(reason) {
+    if (!onboardingActive() || getOnboardingStep() !== 2) return;
+    native?.updateUIState?.({
+      tutorial_step2_fallback_visible: true,
+      tutorial_step2_fallback_reason: reason || 'retry',
+      tutorial_step2_fallback_index: Math.max(0, Math.min(Number(getUIState().tutorial_step2_fallback_index || 0), TUTORIAL_FALLBACK_OPTIONS.length - 1))
+    });
+    scheduleRender();
+  }
+
+  function armTutorialStep2HintTimer() {
+    clearTutorialStep2HintTimer();
+    if (!onboardingActive() || onboardingPaused() || getOnboardingStep() !== 2) return;
+    const enteredAt = Number(getUIState().tutorial_step_entered_at || Date.now());
+    const remaining = Math.max(0, TUTORIAL_STEP2_TIMEOUT_MS - (Date.now() - enteredAt));
+    tutorialStep2HintTimer = setTimeout(function() {
+      tutorialStep2HintTimer = null;
+      if (!onboardingActive() || onboardingPaused() || getOnboardingStep() !== 2) return;
+      traceTutorial('tutorial.step', 'timeout', '2', { step: 2 });
+      showTutorialStep2Fallback('timeout');
+    }, remaining || 1);
+  }
+
+  function completeOnboardingStep(step, options = {}) {
+    const via = options.via || 'primary';
+    const previous = getOnboardingStep();
+    if (previous === 'complete') return;
+    native?.updateUIState?.({
+      onboarding_step: step,
+      onboarded: step === 'complete',
+      tutorial_last_entered_step: step === 'complete' ? previous : step,
+      tutorial_step_entered_at: step === 'complete' ? null : Date.now(),
+      tutorial_step2_fallback_visible: step === 2 ? !!getUIState().tutorial_step2_fallback_visible : false,
+      tutorial_step2_fallback_reason: step === 2 ? String(getUIState().tutorial_step2_fallback_reason || '') : '',
+      tutorial_step2_ptt_attempted: step === 2 ? !!getUIState().tutorial_step2_ptt_attempted : false,
+      tutorial_step4_camera_denied: step === 4 ? !!getUIState().tutorial_step4_camera_denied : false,
+      onboarding_paused: false
+    });
+    traceTutorial('tutorial.step', 'advance', String(step), {
+      step: previous,
+      via: via
+    });
+    if (step === 'complete') {
+      traceTutorial('tutorial', 'completed', 'done', {
+        stepsSkipped: skippedOnboardingSteps()
+      });
+      clearTutorialStep2HintTimer();
+      return;
+    }
+    traceTutorial('tutorial.step', 'enter', String(step), { step: step });
+    if (step === 2) armTutorialStep2HintTimer();
+    else clearTutorialStep2HintTimer();
+  }
+
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
     if (step === 'complete') return cards.map(card => card.id);
     if (step >= 4) return ['now', 'know', 'show'];
@@ -498,22 +616,20 @@
   }
 
   function onboardingAllowsLogs() {
-    return !onboardingActive();
+    if (!onboardingActive()) return true;
+    return Number(getOnboardingStep()) >= 2;
   }
 
   function onboardingAllowsProjectSwitcher() {
-    return getOnboardingStep() === 1;
+    return getOnboardingStep() === 1 || onboardingPaused();
   }
 
-  function setOnboardingStep(step) {
-    native?.updateUIState?.({
-      onboarding_step: step,
-      onboarded: step === 'complete'
-    });
+  function setOnboardingStep(step, options = {}) {
+    completeOnboardingStep(step, options);
   }
 
   function completeOnboarding() {
-    setOnboardingStep('complete');
+    setOnboardingStep('complete', { via: 'primary' });
     pushLog('onboarding complete', 'system');
     if (window.StructaHeartbeat && window.StructaHeartbeat.bpm === 0 && projectHasMeaningfulContent()) {
       window.StructaHeartbeat.start(3);
@@ -959,6 +1075,7 @@
     document.body.classList.remove('input-locked');
     if (onboardingActive()) {
       const step = getOnboardingStep();
+      if (!onboardingPaused()) markTutorialStepEntered(step);
       const allowed = onboardingAllowedCardIds(step);
       const preferredCardId = step === 4 ? 'show' : (step === 3 ? 'know' : allowed[0]);
       if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
@@ -982,6 +1099,7 @@
     const activeIndex = Math.max(0, projects.findIndex(project => project.project_id === activeId));
     stateData.projectListIndex = typeof data.projectListIndex === 'number' ? data.projectListIndex : activeIndex;
     stateData.projectFlushConfirm = false;
+    if (onboardingActive() && !onboardingPaused()) markTutorialStepEntered(getOnboardingStep());
   };
 
   stateExitHandlers[STATES.PROJECT_SWITCHER] = function() {
@@ -1169,6 +1287,7 @@
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
     stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
+    if (onboardingActive() && !onboardingPaused()) markTutorialStepEntered(getOnboardingStep());
   };
 
   // --- KNOW_DETAIL ---
@@ -1196,6 +1315,12 @@
     setLogDrawer(false);
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
+    if (onboardingActive() && !onboardingPaused()) {
+      markTutorialStepEntered(getOnboardingStep());
+      armTutorialStep2HintTimer();
+    } else {
+      clearTutorialStep2HintTimer();
+    }
   };
 
   // --- LOG_OPEN ---
@@ -1436,9 +1561,22 @@
       fireFeedback('blocked');
       return false;
     }
+    if (onboardingPaused()) {
+      const resumedStep = getOnboardingStep();
+      native?.updateUIState?.({ onboarding_paused: false });
+      traceTutorial('tutorial', 'resumed', String(resumedStep), { step: resumedStep });
+      fireFeedback('touch-commit');
+      if (resumedStep >= 4) {
+        selectedIndex = cards.findIndex(function(card) { return card.id === 'know'; });
+        transition(STATES.KNOW_BROWSE);
+      } else {
+        transition(STATES.NOW_BROWSE);
+      }
+      return true;
+    }
     if (onboardingActive() && getOnboardingStep() === 1) {
       fireFeedback('touch-commit');
-      setOnboardingStep(2);
+      setOnboardingStep(2, { via: 'primary' });
       pushLog('lesson 1 complete', 'system');
       transition(STATES.NOW_BROWSE);
       return true;
@@ -1466,9 +1604,45 @@
     return true;
   }
 
-  function flushTestingMemory() {
+  function clearFlushRequest(options = {}) {
+    clearFlushConfirmTimer();
+    const source = stateData.flushRequestSource || '';
+    const step = onboardingActive() ? getOnboardingStep() : 'complete';
+    stateData.flushRequestSource = '';
+    stateData.flushConfirmHolding = false;
+    if (options.trace !== false && source) {
+      traceTutorial('flush', 'cancelled', source, { from: source, step: step });
+    }
+  }
+
+  function requestFlush(source = 'home') {
     if (!allowMenuFlush() || !native?.flushMemory) return false;
+    clearPendingSideClick();
+    clearFlushRequest({ trace: false });
+    stateData.projectFlushConfirm = false;
+    stateData.flushRequestSource = source;
+    stateData.flushConfirmHolding = false;
+    traceTutorial('flush', 'requested', source, {
+      from: source,
+      step: onboardingActive() ? getOnboardingStep() : 'complete'
+    });
+    selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
+    transition(STATES.NOW_BROWSE);
+    return true;
+  }
+
+  function confirmFlushRequest() {
+    if (!stateData.flushRequestSource || !native?.flushMemory) return false;
+    const source = stateData.flushRequestSource;
+    const step = onboardingActive() ? getOnboardingStep() : 'complete';
+    clearFlushConfirmTimer();
+    stateData.flushConfirmHolding = false;
+    traceTutorial('flush', 'confirmed', source, { from: source, step: step });
+    if (onboardingActive()) {
+      traceTutorial('tutorial', 'flushed_mid', String(step), { step: step, from: source });
+    }
     native.flushMemory().then(function() {
+      stateData.flushRequestSource = '';
       stateData.projectFlushConfirm = false;
       stateData.showCaptureEntryId = '';
       stateData.showCaptureIndex = 0;
@@ -1480,12 +1654,73 @@
       }
       chainStarted = false;
       selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
-      transition(STATES.HOME);
+      transition(STATES.NOW_BROWSE);
     }).catch(function() {
-      stateData.projectFlushConfirm = false;
+      clearFlushRequest({ trace: false });
       render();
     });
     return true;
+  }
+
+  function tutorialStep2FallbackIndex() {
+    return Math.max(0, Math.min(Number(getUIState().tutorial_step2_fallback_index || 0), TUTORIAL_FALLBACK_OPTIONS.length - 1));
+  }
+
+  function skipTutorialStep(step, reason = 'long-press-home') {
+    if (!tutorialSkipEligible(step)) return false;
+    if (step === 2) {
+      native?.updateUIState?.({
+        onboarding_step2_skipped: true,
+        tutorial_step2_fallback_visible: true,
+        tutorial_step2_fallback_reason: 'skip'
+      });
+      traceTutorial('tutorial.step', 'skip', '2', { step: 2, reason: reason });
+      setOnboardingStep(3, { via: 'skip' });
+      transition(STATES.NOW_BROWSE);
+      return true;
+    }
+    if (step === 4) {
+      native?.updateUIState?.({
+        onboarding_step4_skipped: true,
+        tutorial_step4_camera_denied: false
+      });
+      traceTutorial('tutorial.step', 'skip', '4', { step: 4, reason: reason });
+      completeOnboarding();
+      return true;
+    }
+    return false;
+  }
+
+  function submitTutorialWheelFallback() {
+    if (!onboardingActive() || getOnboardingStep() !== 2) return false;
+    const answer = TUTORIAL_FALLBACK_OPTIONS[tutorialStep2FallbackIndex()] || TUTORIAL_FALLBACK_OPTIONS[0];
+    native?.updateUIState?.({
+      tutorial_step2_fallback_visible: true,
+      tutorial_step2_fallback_reason: 'wheel'
+    });
+    window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
+      detail: {
+        answer: answer,
+        origin: 'tutorial_fallback_wheel',
+        inferredName: ''
+      }
+    }));
+    return true;
+  }
+
+  function pauseTutorial(reason = 'double-shake') {
+    if (!onboardingActive()) return false;
+    const step = getOnboardingStep();
+    clearTutorialStep2HintTimer();
+    native?.updateUIState?.({ onboarding_paused: true });
+    traceTutorial('tutorial', 'paused', String(step), { step: step, reason: reason });
+    selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
+    transition(STATES.NOW_BROWSE);
+    return true;
+  }
+
+  function flushTestingMemory() {
+    return requestFlush('switcher');
   }
 
   // === Surface identification (backward compat for render) ===
@@ -1567,6 +1802,7 @@
     const memory = getMemory();
     const project = getProjectMemory();
     const ui = getUIState();
+    const onboardingStep = getOnboardingStep();
     const captures = getCaptureList();
     const insights = project?.insights || [];
     const allQuestionNodes = project?.open_question_nodes || [];
@@ -1615,6 +1851,7 @@
     const activeQuestionNode = openQuestionNodes[0] || null;
     const activeThread = activePendingDecision?.thread || activeQuestionNode?.thread || [];
     const activeThreadSummary = activePendingDecision?.thread_summary || activeQuestionNode?.thread_summary || '';
+    const tutorialFallbackIndex = tutorialStep2FallbackIndex();
 
     return {
       title: project?.name || 'new project',
@@ -1648,7 +1885,18 @@
       totalImpacts,
       totalDecisions,
       cooldownRemaining,
-      storedImpacts: storedImpacts.slice(0, 5)
+      storedImpacts: storedImpacts.slice(0, 5),
+      onboardingStep,
+      onboardingPaused: !!ui.onboarding_paused,
+      flushRequested: !!stateData.flushRequestSource,
+      flushRequestSource: stateData.flushRequestSource || '',
+      tutorialStep2FallbackVisible: !!ui.tutorial_step2_fallback_visible,
+      tutorialStep2FallbackReason: ui.tutorial_step2_fallback_reason || '',
+      tutorialStep2FallbackIndex: tutorialFallbackIndex,
+      tutorialStep2FallbackOptions: TUTORIAL_FALLBACK_OPTIONS.slice(),
+      tutorialStep4CameraDenied: !!ui.tutorial_step4_camera_denied,
+      flushUndoAvailableUntil: Number(ui.flush_undo_available_until || 0),
+      flushUndoAvailable: Number(ui.flush_undo_available_until || 0) > Date.now()
     };
   }
 
@@ -1657,6 +1905,71 @@
     const inlineListening = recordingActive() && activeSurface() === 'project';
     const cardY = 84;
     mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
+
+    if (data.flushUndoAvailable) {
+      text(18, cardY + 18, 'flush complete', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      wrapTextBlock(undefined, 'hold ptt to undo and restore the last snapshot.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 4);
+      mk('rect', { x: 18, y: cardY + 110, width: 138, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      text(30, cardY + 126, 'hold ptt to undo', {
+        fill: 'rgba(244,239,228,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'undo stays for 120s', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    if (data.onboardingPaused) {
+      text(18, cardY + 18, 'tutorial paused', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      wrapTextBlock(undefined, 'shake to projects to resume, or use flush below to restart cleanly.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 5);
+      text(18, cardY + 132, 'double-shake paused safely', {
+        fill: 'rgba(8,8,8,0.54)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      });
+      text(226, 276, 'shake · resume | flush · restart', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
+
+    if (data.flushRequested) {
+      text(18, cardY + 18, 'flush tutorial state?', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17'
+      });
+      wrapTextBlock(undefined, 'flush clears this project and restarts tutorial.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 4);
+      mk('rect', { x: 18, y: cardY + 110, width: 154, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      text(30, cardY + 126, 'hold ptt to confirm', {
+        fill: 'rgba(244,239,228,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '12'
+      });
+      text(226, 276, 'side click cancels', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return true;
+    }
 
     if (step === 0) {
       text(18, cardY + 18, 'welcome to structa', {
@@ -1709,13 +2022,34 @@
       });
       mk('rect', { x: 14, y: cardY + 30, width: 3, height: 108, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.76)' });
       wrapTextBlock(undefined, 'what is this project about?', 20, cardY + 50, 190, 15, 'rgba(8,8,8,0.96)', '16', 4);
-      mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      if (data.tutorialStep2FallbackVisible) {
+        const baseY = cardY + 96;
+        data.tutorialStep2FallbackOptions.forEach(function(option, index) {
+          const selected = index === data.tutorialStep2FallbackIndex;
+          mk('rect', {
+            x: 18, y: baseY + (index * 20), width: 176, height: 16, rx: 6, ry: 6,
+            fill: selected ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.10)'
+          });
+          text(24, baseY + 11 + (index * 20), lower(option), {
+            fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.84)',
+            'font-family': 'PowerGrotesk-Regular, sans-serif',
+            'font-size': '10'
+          });
+        });
+        text(20, cardY + 156, 'voice did not catch — scroll, then click', {
+          fill: 'rgba(8,8,8,0.46)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '10'
+        });
+      } else {
+        mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+      }
       text(30, cardY + 134, inlineListening ? 'release to answer' : 'hold ptt → answer', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'lesson 3 unlocks after answer', {
+      text(226, 276, 'hold ptt → answer · long-press home to skip', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2491,6 +2825,27 @@
       'font-size': '15'
     });
     mk('rect', { x: 14, y: 62, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
+    if (allowMenuFlush()) {
+      const flushTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 182, y: 256, width: 44, height: 18, rx: 7, ry: 7,
+        fill: 'rgba(255,255,255,0.04)',
+        stroke: 'rgba(244,239,228,0.32)',
+        'stroke-width': 1
+      }, flushTap);
+      text(204, 268, 'flush', {
+        fill: 'rgba(244,239,228,0.76)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      }, flushTap);
+      flushTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        requestFlush('home');
+      });
+    }
 
   }
 
@@ -2529,16 +2884,15 @@
       'text-anchor': 'end'
     });
     if (allowMenuFlush()) {
-      const flushConfirm = !!stateData.projectFlushConfirm;
       const flushTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 180, y: 14, width: 46, height: 18, rx: 7, ry: 7,
-        fill: flushConfirm ? 'rgba(181,18,18,0.20)' : 'rgba(255,255,255,0.05)',
-        stroke: flushConfirm ? 'rgba(181,18,18,0.62)' : 'rgba(255,255,255,0.10)',
+        fill: 'rgba(255,255,255,0.05)',
+        stroke: 'rgba(255,255,255,0.10)',
         'stroke-width': 1
       }, flushTap);
-      text(203, 26, flushConfirm ? 'wipe' : 'flush', {
-        fill: flushConfirm ? 'rgba(255,199,199,0.96)' : 'rgba(244,239,228,0.76)',
+      text(203, 26, 'flush', {
+        fill: 'rgba(244,239,228,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
         'text-anchor': 'middle'
@@ -2547,12 +2901,7 @@
         event.preventDefault();
         event.stopPropagation();
         fireFeedback('touch-commit');
-        if (stateData.projectFlushConfirm) {
-          flushTestingMemory();
-          return;
-        }
-        stateData.projectFlushConfirm = true;
-        render();
+        flushTestingMemory();
       });
     }
     mk('rect', { x: 14, y: 60, width: 26, height: 2, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.78)' });
@@ -3045,12 +3394,13 @@
         'font-size': '10'
       });
     } else {
+      const cameraRecoveryCue = !model.captures.length && (getUIState().onboarding_step4_skipped || getUIState().tutorial_step4_camera_denied);
       text(20, 146, 'gallery starts here', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 168, 'click open lens to begin', {
+      text(20, 168, cameraRecoveryCue ? 'camera not enabled — tap shutter to allow' : 'click open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3835,19 +4185,23 @@
     drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
     if (onboardingActive() && getOnboardingStep() === 4) {
+      const cameraDenied = !!getUIState().tutorial_step4_camera_denied;
       mk('rect', { x: 10, y: 84, width: 220, height: 152, rx: 12, fill: 'rgba(8,8,8,0.12)' });
       text(18, 104, 'lesson 4 · show structa', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, 'shake home. show is ready. open it and capture your first frame. the first capture unlocks the full app.', 18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
-      text(18, 218, 'shake → show', {
+      wrapTextBlock(undefined, cameraDenied
+        ? 'camera needs permission first. tap the screen once to allow camera, or long-press home to skip.'
+        : 'shake home. show is ready. open it and capture your first frame. the first capture unlocks the full app.',
+      18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
+      text(18, 218, cameraDenied ? 'tap once → allow camera' : 'shake → show', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'capture completes onboarding', {
+      text(226, 276, 'shutter → capture · long-press home to skip', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4065,6 +4419,11 @@
 
   function handleScrollDirection(direction) {
     clearPendingSideClick();
+    if (stateData.flushRequestSource) {
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
     switch (currentState) {
       case STATES.PROJECT_SWITCHER: {
         if (onboardingActive() && !onboardingAllowsProjectSwitcher()) break;
@@ -4122,7 +4481,7 @@
           const activeChip = model.chips[stateData.knowChipIndex]?.id;
           const hasChipItems = newLane?.items?.some(item => item.chips.includes(activeChip));
           if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
-          setOnboardingStep(4);
+          setOnboardingStep(4, { via: 'primary' });
           pushLog('lesson 3 complete', 'system');
           render();
           break;
@@ -4156,6 +4515,13 @@
       }
 
       case STATES.NOW_BROWSE: {
+        if (onboardingActive() && getOnboardingStep() === 2 && getUIState().tutorial_step2_fallback_visible) {
+          const currentIndex = tutorialStep2FallbackIndex();
+          const nextIndex = (currentIndex + (direction > 0 ? 1 : -1) + TUTORIAL_FALLBACK_OPTIONS.length) % TUTORIAL_FALLBACK_OPTIONS.length;
+          native?.updateUIState?.({ tutorial_step2_fallback_index: nextIndex });
+          render();
+          break;
+        }
         const project = getProjectMemory();
         const pending = project?.pending_decisions || [];
         const current = pending[stateData.decisionIndex || 0];
@@ -4228,6 +4594,11 @@
   }
 
   function handleDoubleSideClick() {
+    if (stateData.flushRequestSource) {
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
     switch (currentState) {
       case STATES.HOME:
       case STATES.PROJECT_SWITCHER: {
@@ -4264,6 +4635,17 @@
   }
 
   function handleSideClick() {
+    if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
+      native?.updateUIState?.({ flush_undo_available_until: 0 });
+      scheduleRender();
+      return;
+    }
+    if (stateData.flushRequestSource) {
+      fireFeedback('touch-commit');
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         if (!activateSelectedProject()) fireFeedback('blocked');
@@ -4343,11 +4725,20 @@
       case STATES.NOW_BROWSE: {
         if (onboardingActive()) {
           const step = getOnboardingStep();
+          if (onboardingPaused()) {
+            fireFeedback('blocked');
+            return;
+          }
           if (step === 0) {
             fireFeedback('touch-commit');
-            setOnboardingStep(1);
+            setOnboardingStep(1, { via: 'primary' });
             pushLog('lesson 0 complete', 'system');
             render();
+            return;
+          }
+          if (step === 2 && getUIState().tutorial_step2_fallback_visible) {
+            fireFeedback('touch-commit');
+            submitTutorialWheelFallback();
             return;
           }
           fireFeedback('blocked');
@@ -4423,7 +4814,17 @@
     touchLogPressStart = null;
   }
 
+  function clearTutorialSkipTouch() {
+    if (tutorialSkipTimer) {
+      clearTimeout(tutorialSkipTimer);
+      tutorialSkipTimer = null;
+    }
+    tutorialSkipPointerId = null;
+    tutorialSkipStart = null;
+  }
+
   function touchLogAllowed() {
+    if (tutorialSkipEligible()) return false;
     switch (currentState) {
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
@@ -4438,12 +4839,77 @@
   function forceOpenDebugLogs() {
     if (!touchLogAllowed() || currentState === STATES.LOG_OPEN) return false;
     clearPendingSideClick();
+    logReturnState = currentState;
     transition(STATES.LOG_OPEN);
     return true;
   }
 
+  function onTutorialSkipPointerDown(event) {
+    if (event.pointerType !== 'touch') return;
+    if (!tutorialSkipEligible()) return;
+    clearTutorialSkipTouch();
+    tutorialSkipTriggered = false;
+    tutorialSkipPointerId = event.pointerId;
+    tutorialSkipStart = { x: event.clientX, y: event.clientY };
+    tutorialSkipTimer = setTimeout(function() {
+      if (tutorialSkipPointerId !== event.pointerId) return;
+      tutorialSkipTriggered = skipTutorialStep(getOnboardingStep(), 'long-press-home');
+      if (tutorialSkipTriggered) tutorialSkipSuppressClickUntil = Date.now() + 450;
+      clearTutorialSkipTouch();
+    }, TUTORIAL_SKIP_LONG_PRESS_MS);
+  }
+
+  function onTutorialSkipPointerMove(event) {
+    if (event.pointerType !== 'touch') return;
+    if (tutorialSkipPointerId !== event.pointerId || !tutorialSkipStart) return;
+    var dx = Math.abs((event.clientX || 0) - tutorialSkipStart.x);
+    var dy = Math.abs((event.clientY || 0) - tutorialSkipStart.y);
+    if (dx > TUTORIAL_SKIP_MOVE_TOLERANCE || dy > TUTORIAL_SKIP_MOVE_TOLERANCE) {
+      clearTutorialSkipTouch();
+    }
+  }
+
+  function onTutorialSkipPointerEnd(event) {
+    if (event.pointerType !== 'touch') return;
+    if (tutorialSkipPointerId !== null && event.pointerId === tutorialSkipPointerId) {
+      clearTutorialSkipTouch();
+    }
+    if (!tutorialSkipTriggered) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    tutorialSkipTriggered = false;
+  }
+
   function handleLongPressStart() {
     clearPendingSideClick();
+    if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE && native?.restoreLastFlushSnapshot) {
+      clearFlushConfirmTimer();
+      stateData.flushConfirmHolding = true;
+      flushConfirmTimer = setTimeout(function() {
+        flushConfirmTimer = null;
+        native.restoreLastFlushSnapshot().then(function(result) {
+          stateData.flushConfirmHolding = false;
+          if (result?.ok) {
+            transition(STATES.HOME);
+          } else {
+            scheduleRender();
+          }
+        }).catch(function() {
+          stateData.flushConfirmHolding = false;
+          scheduleRender();
+        });
+      }, FLUSH_CONFIRM_HOLD_MS);
+      return;
+    }
+    if (stateData.flushRequestSource && currentState === STATES.NOW_BROWSE) {
+      clearFlushConfirmTimer();
+      stateData.flushConfirmHolding = true;
+      flushConfirmTimer = setTimeout(function() {
+        flushConfirmTimer = null;
+        confirmFlushRequest();
+      }, FLUSH_CONFIRM_HOLD_MS);
+      return;
+    }
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         break;
@@ -4493,6 +4959,9 @@
       case STATES.NOW_BROWSE: {
         if (onboardingActive() && getOnboardingStep() !== 2) {
           break;
+        }
+        if (onboardingActive() && getOnboardingStep() === 2) {
+          native?.updateUIState?.({ tutorial_step2_ptt_attempted: true });
         }
         const project = getProjectMemory();
         const openQuestionNodes = project?.open_question_nodes || [];
@@ -4607,6 +5076,12 @@
   function handleLongPressEnd() {
     clearPendingSideClick();
     document.body.classList.remove('input-locked');
+    if (stateData.flushConfirmHolding) {
+      stateData.flushConfirmHolding = false;
+      clearFlushConfirmTimer();
+      scheduleRender();
+      return;
+    }
 
     switch (currentState) {
       case STATES.SHOW_PRIMED:
@@ -4648,11 +5123,20 @@
   }
 
   function goHome() {
+    if (stateData.flushRequestSource) {
+      clearFlushRequest();
+    }
     transition(STATES.HOME);
   }
 
   function handleNativeBack(event) {
     clearPendingSideClick();
+    if (stateData.flushRequestSource) {
+      if (event) event.preventDefault?.();
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         if (event) event.preventDefault?.();
@@ -4686,7 +5170,7 @@
 
       case STATES.LOG_OPEN:
         if (event) event.preventDefault?.();
-        transition(STATES.HOME);
+        transition(logReturnState || STATES.HOME);
         return;
 
       case STATES.TRIANGLE_OPEN:
@@ -4767,14 +5251,19 @@
   }
 
   function onTouchDebugClickCapture(event) {
-    if (Date.now() > touchLogSuppressClickUntil) return;
+    const suppressUntil = Math.max(touchLogSuppressClickUntil, tutorialSkipSuppressClickUntil);
+    if (Date.now() > suppressUntil) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
 
   svg.addEventListener('wheel', onWheel, { passive: false });
+  svg.addEventListener('pointerdown', onTutorialSkipPointerDown, { passive: true });
+  svg.addEventListener('pointermove', onTutorialSkipPointerMove, { passive: true });
   svg.addEventListener('pointerdown', onTouchDebugPointerDown, { passive: true });
   svg.addEventListener('pointermove', onTouchDebugPointerMove, { passive: true });
+  window.addEventListener('pointerup', onTutorialSkipPointerEnd, true);
+  window.addEventListener('pointercancel', onTutorialSkipPointerEnd, true);
   window.addEventListener('pointerup', onTouchDebugPointerEnd, true);
   window.addEventListener('pointercancel', onTouchDebugPointerEnd, true);
   window.addEventListener('click', onTouchDebugClickCapture, true);
@@ -4785,12 +5274,18 @@
 
   logHandle.addEventListener('click', event => {
     event.preventDefault();
+    if (stateData.flushRequestSource) {
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
     if (!onboardingAllowsLogs()) return;
     if (isCaptureState()) return;
     fireFeedback('touch-commit');
     if (currentState === STATES.LOG_OPEN) {
-      transition(STATES.HOME);
-    } else if (currentState === STATES.HOME) {
+      transition(logReturnState || STATES.HOME);
+    } else {
+      logReturnState = currentState;
       transition(STATES.LOG_OPEN);
     }
   });
@@ -4835,7 +5330,9 @@
       stateData.showStatus = 'processing visual note';
       render();
     }
+    native?.updateUIState?.({ tutorial_step4_camera_denied: false });
     if (onboardingActive() && getOnboardingStep() === 4) {
+      traceTutorial('tutorial.step', 'advance', '4', { step: 4, via: 'primary' });
       completeOnboarding();
     }
     scheduleLogRefresh({ forceFollow: true });
@@ -4846,8 +5343,9 @@
     const step = getOnboardingStep();
     if (step !== 2 && step !== 3) return;
     const inferredName = event?.detail?.inferredName || '';
+    const via = event?.detail?.origin === 'tutorial_fallback_wheel' ? 'fallback_wheel' : 'primary';
     if (inferredName) native?.setProjectName?.(inferredName);
-    setOnboardingStep(3);
+    setOnboardingStep(3, { via: via });
     pushLog('lesson 2 complete', 'system');
     if (currentState === STATES.VOICE_PROCESSING || currentState === STATES.VOICE_OPEN) {
       voiceReturnState = STATES.NOW_BROWSE;
@@ -4856,6 +5354,21 @@
     } else if (currentState === STATES.NOW_BROWSE) {
       render();
     }
+  });
+
+  window.addEventListener('structa-onboarding-stt-failed', function(event) {
+    if (!onboardingActive() || getOnboardingStep() !== 2) return;
+    const reason = event?.detail?.reason || 'empty';
+    traceTutorial('tutorial.step', 'stt_failed', '2', { step: 2, reason: reason });
+    showTutorialStep2Fallback(reason);
+  });
+
+  window.addEventListener('structa-camera-denied', function(event) {
+    if (!onboardingActive() || getOnboardingStep() !== 4) return;
+    native?.updateUIState?.({ tutorial_step4_camera_denied: true });
+    traceTutorial('tutorial.step', 'camera_denied', '4', { step: 4 });
+    stateData.showStatus = 'tap once to allow camera · long-press home to skip';
+    scheduleRender();
   });
 
   window.addEventListener('structa-voice-open', () => {
@@ -5047,7 +5560,21 @@
     if (!accel) return;
     const magnitude = Math.abs(accel.x || 0) + Math.abs(accel.y || 0) + Math.abs(accel.z || 0);
     const now = Date.now();
-    if (magnitude < 55 || now - lastShakeAt < 2500) return;
+    if (magnitude < 55) return;
+    if (stateData.flushRequestSource) {
+      clearFlushRequest();
+      scheduleRender();
+      return;
+    }
+    if (onboardingActive() && now - lastShakeAt < DOUBLE_SHAKE_WINDOW_MS) {
+      lastShakePairAt = 0;
+      lastShakeAt = now;
+      clearPendingSideClick();
+      pauseTutorial('double-shake');
+      return;
+    }
+    if (now - lastShakeAt < 2500) return;
+    lastShakePairAt = now;
     lastShakeAt = now;
     clearPendingSideClick();
     if (currentState === STATES.TRIANGLE_OPEN) {

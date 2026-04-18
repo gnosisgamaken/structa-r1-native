@@ -1,0 +1,15 @@
+{
+  "id": "w6_home_flush_during_tutorial",
+  "title": "home flush works during tutorial and resets to step 0",
+  "runtime_dump": "runtime/synthetic/w6_home_flush_during_tutorial.json",
+  "expect_tail": [
+    { "flow": "flush", "from": "requested", "to": "home" },
+    { "flow": "flush", "from": "confirmed", "to": "home" },
+    { "flow": "tutorial", "from": "flushed_mid", "to": "2" },
+    { "flow": "flush", "from": "running", "to": "completed" }
+  ],
+  "expect_ui_state": {
+    "onboarding_step": 0,
+    "flush_undo_available_until": 1776528000000
+  }
+}

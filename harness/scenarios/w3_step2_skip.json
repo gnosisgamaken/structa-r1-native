@@ -1,0 +1,13 @@
+{
+  "id": "w3_step2_skip",
+  "title": "step 2 can be skipped with long-press home",
+  "runtime_dump": "runtime/synthetic/w3_step2_skip.json",
+  "expect_tail": [
+    { "flow": "tutorial.step", "from": "skip", "to": "2", "ctx": { "reason": "long-press-home" } },
+    { "flow": "tutorial.step", "from": "advance", "to": "3", "ctx": { "via": "skip" } }
+  ],
+  "expect_ui_state": {
+    "onboarding_step2_skipped": true,
+    "onboarding_step": 3
+  }
+}

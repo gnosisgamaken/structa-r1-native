@@ -1,0 +1,15 @@
+{
+  "id": "w7_flush_undo",
+  "title": "flush undo restores the last snapshot within the grace window",
+  "runtime_dump": "runtime/synthetic/w7_flush_undo.json",
+  "expect_tail": [
+    { "flow": "flush", "from": "running", "to": "completed" },
+    { "flow": "flush", "from": "undo", "to": "restored" }
+  ],
+  "expect_ui_state": {
+    "flush_undo_available_until": 0
+  },
+  "expect_claims": [
+    { "source": "voice", "minCount": 1 }
+  ]
+}

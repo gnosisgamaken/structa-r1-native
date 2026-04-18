@@ -1,0 +1,24 @@
+{
+  "memory": {
+    "uiState": {
+      "onboarded": false,
+      "onboarding_step": 2,
+      "onboarding_paused": true
+    }
+  },
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T16:16:00.000Z", "flow": "tutorial", "from": "paused", "to": "2", "ctx": { "step": 2, "reason": "double-shake" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

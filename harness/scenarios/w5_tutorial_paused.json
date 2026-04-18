@@ -1,0 +1,12 @@
+{
+  "id": "w5_tutorial_paused",
+  "title": "double-shake pauses tutorial without losing progress",
+  "runtime_dump": "runtime/synthetic/w5_tutorial_paused.json",
+  "expect_tail": [
+    { "flow": "tutorial", "from": "paused", "to": "2" }
+  ],
+  "expect_ui_state": {
+    "onboarding_paused": true,
+    "onboarding_step": 2
+  }
+}

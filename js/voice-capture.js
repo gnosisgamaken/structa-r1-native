@@ -35,6 +35,7 @@
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
   let activeTriangleContext = null; // { label }
+  let onboardingStartTimer = null;
   const COMMAND_PRIORITY = {
     'delete-project': 0,
     'archive-project': 1,
@@ -49,6 +50,20 @@
 
   function lower(text) {
     return String(text || '').toLowerCase();
+  }
+
+  function clearOnboardingStartTimer() {
+    if (!onboardingStartTimer) return;
+    clearTimeout(onboardingStartTimer);
+    onboardingStartTimer = null;
+  }
+
+  function reportOnboardingSTTFailure(reason, question) {
+    var context = question || activeQuestion;
+    if (!context?.onboarding) return;
+    window.dispatchEvent(new CustomEvent('structa-onboarding-stt-failed', {
+      detail: { reason: reason || 'empty' }
+    }));
   }
 
   function inlineMode() {
@@ -668,10 +683,6 @@
         onboardingFinalized = true;
         var currentProject = native?.getProjectMemory?.();
         var heuristicName = inferProjectName(text);
-        native?.updateUIState?.({
-          onboarding_step: 3,
-          onboarded: false
-        });
         window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
           detail: {
             answer: text,
@@ -902,6 +913,7 @@
     if (audioRecorder && audioRecorder.state !== 'inactive') {
       try { audioRecorder.stop(); } catch (_) {}
     }
+    clearOnboardingStartTimer();
     stopAudioStream();
     overlay?.classList.remove('listening');
     if (wave) wave.hidden = true;
@@ -921,6 +933,8 @@
           activeBuildContext: pendingBuildContext,
           activeTriangleContext: pendingTriangleContext
         });
+      } else if (pendingQuestion?.onboarding) {
+        reportOnboardingSTTFailure('empty-transcript', pendingQuestion);
       } else if (pendingAudioAsset) {
         native?.addVoiceEntry?.({
           title: 'voice note',
@@ -1047,9 +1061,19 @@
     if (typeof CreationVoiceHandler !== 'undefined') {
       try {
         CreationVoiceHandler.postMessage('start');
+        if (activeQuestion?.onboarding) {
+          clearOnboardingStartTimer();
+          onboardingStartTimer = setTimeout(function() {
+            onboardingStartTimer = null;
+            if (!listening) return;
+            var heard = (transcriptEl && transcriptEl.textContent || '').trim();
+            if (!heard) reportOnboardingSTTFailure('start-timeout');
+          }, 800);
+        }
         return;
       } catch (err) {
         native?.appendLogEntry?.({ kind: 'voice', message: 'stt err: ' + (err?.message || 'failed') });
+        if (activeQuestion?.onboarding) reportOnboardingSTTFailure('bridge-error');
       }
     }
 
@@ -1058,6 +1082,7 @@
       if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
         setStatus('mic unavailable');
         listening = false;
+        if (activeQuestion?.onboarding) reportOnboardingSTTFailure('mic-unavailable');
         return;
       }
       try {
@@ -1096,6 +1121,7 @@
         listening = false;
         overlay?.classList.remove('listening');
         if (wave) wave.hidden = true;
+        if (activeQuestion?.onboarding) reportOnboardingSTTFailure('mic-unavailable');
         return;
       }
     }
@@ -1126,16 +1152,20 @@
       listening = false;
       overlay?.classList.remove('listening');
       if (wave) wave.hidden = true;
+      if (activeQuestion?.onboarding) reportOnboardingSTTFailure('mic-unavailable');
     }
   }
 
   // Listen for STT transcript from R1 native bridge.
   window.addEventListener('structa-stt-ended', function(event) {
     var data = event && event.detail;
+    clearOnboardingStartTimer();
     if (data && data.transcript) {
       if (transcriptEl) transcriptEl.textContent = data.transcript;
       handleTranscript(data.transcript);
       stopListening(false);
+    } else if (activeQuestion?.onboarding) {
+      reportOnboardingSTTFailure('empty-transcript');
     }
   });
 

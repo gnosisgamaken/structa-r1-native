@@ -1769,9 +1769,17 @@
   }
 
   function flushMemory() {
+    var secureSnapshot = null;
+    try {
+      secureSnapshot = snapshotState();
+      if (window.creationStorage?.secure?.setItem) {
+        Promise.resolve(window.creationStorage.secure.setItem('structa.snapshot.last', JSON.stringify(secureSnapshot))).catch(function() {});
+      }
+    } catch (_) {}
     const fresh = buildInitialMemory();
     Object.keys(memory).forEach(function(key) { delete memory[key]; });
     Object.assign(memory, fresh);
+    memory.uiState.flush_undo_available_until = Date.now() + 120000;
     runtimeEvents.splice(0, runtimeEvents.length);
     syncActiveProjectAlias();
     rebuildLegacyViews();
@@ -1797,6 +1805,10 @@
 
     return Promise.resolve(clearPromise).then(function(cleared) {
       persist();
+      traceEvent('flush', 'running', 'completed', {
+        projectId: memory.active_project_id,
+        snapshotSaved: !!secureSnapshot
+      });
       traceEvent('system', 'flush', 'complete', {
         projectId: memory.active_project_id,
         cleared: Array.isArray(cleared) ? cleared.length : 0
@@ -1804,6 +1816,42 @@
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       emitModelChange({ scope: 'all' });
       return { ok: true, cleared: cleared, project_id: memory.active_project_id };
+    });
+  }
+
+  function restoreLastFlushSnapshot() {
+    if (!window.creationStorage?.secure?.getItem) {
+      return Promise.resolve({ ok: false, error: 'secure storage unavailable' });
+    }
+    return Promise.resolve(window.creationStorage.secure.getItem('structa.snapshot.last')).then(function(raw) {
+      if (!raw) return { ok: false, error: 'no snapshot' };
+      var snapshot = null;
+      try {
+        snapshot = JSON.parse(String(raw));
+      } catch (_) {
+        return { ok: false, error: 'invalid snapshot' };
+      }
+      var restored = snapshot?.memory || snapshot;
+      if (!restored || typeof restored !== 'object') {
+        return { ok: false, error: 'invalid snapshot' };
+      }
+      Object.keys(memory).forEach(function(key) { delete memory[key]; });
+      Object.assign(memory, cloneValue(restored));
+      ensureProjectRegistry();
+      syncActiveProjectAlias();
+      rebuildLegacyViews();
+      ensureTraceStore();
+      memory.uiState = {
+        ...(memory.uiState || {}),
+        flush_undo_available_until: 0
+      };
+      persist();
+      traceEvent('flush', 'undo', 'restored', {
+        projectId: memory.active_project_id
+      });
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      emitModelChange({ scope: 'all' });
+      return { ok: true, project_id: memory.active_project_id };
     });
   }
 
@@ -2724,6 +2772,7 @@
     archiveProject,
     deleteProject,
     flushMemory,
+    restoreLastFlushSnapshot,
     getMemory,
     getTriangleSlot,
     setTriangleSlot,

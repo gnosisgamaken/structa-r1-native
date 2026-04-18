@@ -47,7 +47,7 @@ def load_trace_scenarios(path: pathlib.Path):
         scenarios: list[dict] = []
         for candidate in sorted(path.glob("*.json")):
             stem = candidate.stem.lower()
-            if not stem or stem[0] not in {"s", "u", "v"}:
+            if not stem or stem[0] not in {"s", "u", "v", "w"}:
                 continue
             if len(stem) < 2 or not stem[1].isdigit():
                 continue
@@ -317,6 +317,12 @@ def build_model_summary(snapshot: dict) -> dict:
     }
 
 
+def build_ui_state_summary(snapshot: dict) -> dict:
+    memory = snapshot.get("memory") or {}
+    ui = memory.get("uiState") or {}
+    return dict(ui)
+
+
 def match_expect_claims(snapshot: dict, expected_claims: list[dict]) -> list[dict]:
     project = snapshot.get("project") or {}
     claims = project.get("claims") or []
@@ -466,6 +472,17 @@ def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
                 "expected": model_expect,
                 "actual": model_observed,
             })
+    ui_expect = scenario.get("expect_ui_state") or {}
+    ui_observed = build_ui_state_summary(snapshot) if snapshot else {}
+    ui_ok = True
+    if ui_expect:
+      ui_ok = match_trace_event(ui_observed, ui_expect)
+      if not ui_ok:
+          mismatches.append({
+              "index": "ui_state",
+              "expected": ui_expect,
+              "actual": ui_observed,
+          })
     claim_expect = scenario.get("expect_claims") or []
     claim_mismatches = match_expect_claims(snapshot, claim_expect) if claim_expect else []
     mismatches.extend([{"index": f"claims:{item['index']}", "expected": item["expected"], "actual": {"count": item["actualCount"]}} for item in claim_mismatches])
@@ -483,7 +500,7 @@ def run_trace_scenario(scenario: dict, runtime_dir: pathlib.Path) -> dict:
         "id": scenario.get("id", "unknown"),
         "title": scenario.get("title", scenario.get("id", "trace scenario")),
         "kind": "trace",
-        "valid": bool(expected) and all(matched) and voice_ok and model_ok and not claim_mismatches and not question_mismatches and not chain_mismatches and not orphan_mismatches,
+        "valid": bool(expected) and all(matched) and voice_ok and model_ok and ui_ok and not claim_mismatches and not question_mismatches and not chain_mismatches and not orphan_mismatches,
         "expected_count": len(expected),
         "actual_count": len(tail),
         "matched": matched,

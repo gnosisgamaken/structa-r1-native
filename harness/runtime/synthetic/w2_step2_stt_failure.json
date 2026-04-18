@@ -1,0 +1,26 @@
+{
+  "memory": {
+    "uiState": {
+      "onboarded": false,
+      "onboarding_step": 3,
+      "tutorial_step2_fallback_visible": true,
+      "tutorial_step2_fallback_reason": "wheel"
+    }
+  },
+  "trace": {
+    "events": [
+      { "t": "2026-04-18T16:10:00.000Z", "flow": "tutorial.step", "from": "stt_failed", "to": "2", "ctx": { "step": 2, "reason": "empty-transcript" } },
+      { "t": "2026-04-18T16:10:05.000Z", "flow": "tutorial.step", "from": "advance", "to": "3", "ctx": { "step": 2, "via": "fallback_wheel" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "claims": [],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": []
+  }
+}

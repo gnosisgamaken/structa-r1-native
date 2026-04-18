@@ -616,6 +616,7 @@
   }
 
   function onboardingAllowsLogs() {
+    if (Number(getUIState().flush_undo_available_until || 0) > Date.now()) return true;
     if (!onboardingActive()) return true;
     return Number(getOnboardingStep()) >= 2;
   }
@@ -1642,6 +1643,7 @@
       traceTutorial('tutorial', 'flushed_mid', String(step), { step: step, from: source });
     }
     native.flushMemory().then(function() {
+      const undoAvailable = Number(native?.getUIState?.()?.flush_undo_available_until || 0) > Date.now();
       stateData.flushRequestSource = '';
       stateData.projectFlushConfirm = false;
       stateData.showCaptureEntryId = '';
@@ -1654,7 +1656,7 @@
       }
       chainStarted = false;
       selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
-      transition(STATES.NOW_BROWSE);
+      transition(undoAvailable ? STATES.NOW_BROWSE : STATES.HOME);
     }).catch(function() {
       clearFlushRequest({ trace: false });
       render();
@@ -1902,7 +1904,6 @@
 
   function drawOnboardingNowPanel(nowCard, data) {
     const step = getOnboardingStep();
-    const inlineListening = recordingActive() && activeSurface() === 'project';
     const cardY = 84;
     mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
 
@@ -2044,7 +2045,7 @@
       } else {
         mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
       }
-      text(30, cardY + 134, inlineListening ? 'release to answer' : 'hold ptt → answer', {
+      text(30, cardY + 134, 'hold ptt → answer', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -3037,7 +3038,8 @@
 
   function drawSurfaceHeader(card, options = {}) {
     const project = getProjectMemory();
-    if (recordingActive() && activeSurface() !== 'home') {
+    const suppressTutorialRecordingChrome = onboardingActive() && (getOnboardingStep() === 2 || getOnboardingStep() === 4);
+    if (recordingActive() && activeSurface() !== 'home' && !suppressTutorialRecordingChrome) {
       recordingDot(23, 26, 10, svg);
     } else if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
@@ -4637,7 +4639,7 @@
   function handleSideClick() {
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       native?.updateUIState?.({ flush_undo_available_until: 0 });
-      scheduleRender();
+      transition(STATES.HOME);
       return;
     }
     if (stateData.flushRequestSource) {
@@ -4892,11 +4894,13 @@
           if (result?.ok) {
             transition(STATES.HOME);
           } else {
-            scheduleRender();
+            native?.updateUIState?.({ flush_undo_available_until: 0 });
+            transition(STATES.HOME);
           }
         }).catch(function() {
           stateData.flushConfirmHolding = false;
-          scheduleRender();
+          native?.updateUIState?.({ flush_undo_available_until: 0 });
+          transition(STATES.HOME);
         });
       }, FLUSH_CONFIRM_HOLD_MS);
       return;
@@ -5131,6 +5135,12 @@
 
   function handleNativeBack(event) {
     clearPendingSideClick();
+    if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
+      if (event) event.preventDefault?.();
+      native?.updateUIState?.({ flush_undo_available_until: 0 });
+      transition(STATES.HOME);
+      return;
+    }
     if (stateData.flushRequestSource) {
       if (event) event.preventDefault?.();
       clearFlushRequest();
@@ -5564,6 +5574,12 @@
     if (stateData.flushRequestSource) {
       clearFlushRequest();
       scheduleRender();
+      return;
+    }
+    if (getUIState().flush_undo_available_until > now && currentState === STATES.NOW_BROWSE) {
+      native?.updateUIState?.({ flush_undo_available_until: 0 });
+      transition(STATES.HOME);
+      lastShakeAt = now;
       return;
     }
     if (onboardingActive() && now - lastShakeAt < DOUBLE_SHAKE_WINDOW_MS) {

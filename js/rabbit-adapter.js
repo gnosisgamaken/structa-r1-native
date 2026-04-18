@@ -1770,16 +1770,20 @@
 
   function flushMemory() {
     var secureSnapshot = null;
+    var snapshotSave = Promise.resolve(false);
     try {
       secureSnapshot = snapshotState();
       if (window.creationStorage?.secure?.setItem) {
-        Promise.resolve(window.creationStorage.secure.setItem('structa.snapshot.last', JSON.stringify(secureSnapshot))).catch(function() {});
+        snapshotSave = Promise.resolve(window.creationStorage.secure.setItem('structa.snapshot.last', JSON.stringify(secureSnapshot))).then(function() {
+          return true;
+        }).catch(function() {
+          return false;
+        });
       }
     } catch (_) {}
     const fresh = buildInitialMemory();
     Object.keys(memory).forEach(function(key) { delete memory[key]; });
     Object.assign(memory, fresh);
-    memory.uiState.flush_undo_available_until = Date.now() + 120000;
     runtimeEvents.splice(0, runtimeEvents.length);
     syncActiveProjectAlias();
     rebuildLegacyViews();
@@ -1803,11 +1807,14 @@
       ? window.StructaStorage.clear().catch(function() { return []; })
       : Promise.resolve([]);
 
-    return Promise.resolve(clearPromise).then(function(cleared) {
+    return Promise.all([Promise.resolve(clearPromise), snapshotSave]).then(function(results) {
+      var cleared = results[0];
+      var snapshotSaved = !!results[1];
+      memory.uiState.flush_undo_available_until = snapshotSaved ? (Date.now() + 120000) : 0;
       persist();
       traceEvent('flush', 'running', 'completed', {
         projectId: memory.active_project_id,
-        snapshotSaved: !!secureSnapshot
+        snapshotSaved: snapshotSaved
       });
       traceEvent('system', 'flush', 'complete', {
         projectId: memory.active_project_id,
@@ -1815,7 +1822,7 @@
       });
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       emitModelChange({ scope: 'all' });
-      return { ok: true, cleared: cleared, project_id: memory.active_project_id };
+      return { ok: true, cleared: cleared, project_id: memory.active_project_id, snapshot_saved: snapshotSaved };
     });
   }
 

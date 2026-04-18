@@ -718,6 +718,7 @@
       const nextDetail = pendingOpsDetail || {};
       pendingOpsDetail = null;
       updateLogOps(nextDetail);
+      updateChainBadge();
     });
   }
 
@@ -4576,10 +4577,12 @@
       window.StructaImpactChain.start(2);
     }
   });
-  window.addEventListener('structa-ui-state-updated', () => {
-    invalidateUICaches();
+  window.addEventListener('structa-ui-state-updated', event => {
+    const patch = event?.detail?.patch || {};
+    if ('last_capture_summary' in patch || 'last_insight_summary' in patch) {
+      invalidateUICaches();
+    }
     scheduleRender();
-    scheduleOpsRefresh();
   });
   window.addEventListener('structa-thread-comment-appended', function(event) {
     const detail = event?.detail || {};
@@ -4824,7 +4827,7 @@
 
   // Re-render NOW panel on each impact + notify relevant cards
   window.addEventListener('structa-impact', function(e) {
-    updateChainBadge();
+    scheduleOpsRefresh();
     if (currentState === STATES.NOW_BROWSE) scheduleRender();
     // Soft notification on home to show app is working
     if (currentState === STATES.HOME) {
@@ -4834,7 +4837,7 @@
 
   // Show spring notification when decision created
   window.addEventListener('structa-decision-created', function(e) {
-    updateChainBadge();
+    scheduleOpsRefresh();
     notifyCard('now', 'urgent');
     if (currentState === STATES.NOW_BROWSE) scheduleRender();
   });
@@ -4842,15 +4845,18 @@
   // Start chain after first user interaction + init audio
   let chainStarted = false;
   function startChainOnInteraction() {
-    // Init audio engine on first user gesture (required by browsers)
-    if (window.StructaAudio) window.StructaAudio.init();
     if (onboardingActive() || chainStarted || !projectHasMeaningfulContent()) return;
     chainStarted = true;
     if (window.StructaImpactChain && !window.StructaImpactChain.active) {
       window.StructaImpactChain.start(2); // 2bpm = every 30s
     }
   }
-  ['sideClick', 'pointerup', 'longPressStart'].forEach(function(evt) {
+  window.addEventListener('pointerup', function initAudioOnFirstTouch() {
+    if (window.StructaAudio && !window.StructaAudio.initialized) {
+      window.StructaAudio.init();
+    }
+  }, { once: true, passive: true });
+  ['sideClick', 'longPressStart'].forEach(function(evt) {
     window.addEventListener(evt, startChainOnInteraction);
   });
 
@@ -4921,7 +4927,7 @@
   });
 
   window.addEventListener('structa-chain-updated', function() {
-    updateChainBadge();
+    scheduleOpsRefresh();
     if (currentState === STATES.NOW_BROWSE) scheduleRender();
   });
 

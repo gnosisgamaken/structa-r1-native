@@ -9,6 +9,7 @@
   const MAX_LOG_ITEMS = 240;
   const MAX_PROBE_EVENTS = 240;
   const EXPORT_BATCH_SIZE = 33;
+  const UI_STATE_PERSIST_DELAY_MS = 120;
 
   function pushLimited(list, item, limit = MAX_MEMORY_ITEMS) {
     list.push(item);
@@ -118,6 +119,30 @@
   }
 
   const memory = buildInitialMemory();
+  let uiStatePersistTimer = null;
+
+  function flushPendingUIStatePersist() {
+    if (!uiStatePersistTimer) return;
+    clearTimeout(uiStatePersistTimer);
+    uiStatePersistTimer = null;
+    persist();
+  }
+
+  function scheduleUIStatePersist(immediate) {
+    if (immediate) {
+      if (uiStatePersistTimer) {
+        clearTimeout(uiStatePersistTimer);
+        uiStatePersistTimer = null;
+      }
+      persist();
+      return;
+    }
+    if (uiStatePersistTimer) return;
+    uiStatePersistTimer = setTimeout(function() {
+      uiStatePersistTimer = null;
+      persist();
+    }, UI_STATE_PERSIST_DELAY_MS);
+  }
 
   function syncActiveProjectAlias() {
     var active = Array.isArray(memory.projects)
@@ -635,6 +660,10 @@
   }
 
   function persist() {
+    if (uiStatePersistTimer) {
+      clearTimeout(uiStatePersistTimer);
+      uiStatePersistTimer = null;
+    }
     const blob = {
       deviceId,
       deviceScopeKey,
@@ -687,6 +716,7 @@
 
   // Emergency snapshot on beforeunload
   window.addEventListener('beforeunload', function() {
+    flushPendingUIStatePersist();
     if (window.StructaStorage) {
       window.StructaStorage.snapshot({ deviceId, deviceScopeKey, memory, runtimeEvents });
     }
@@ -901,9 +931,15 @@
     });
   }
 
-  function updateUIState(patch = {}) {
-    memory.uiState = { ...(memory.uiState || {}), ...patch };
-    persist();
+  function updateUIState(patch = {}, options = {}) {
+    var current = memory.uiState || {};
+    var keys = Object.keys(patch || {});
+    var changed = keys.some(function(key) {
+      return current[key] !== patch[key];
+    });
+    if (!changed) return { ...current };
+    memory.uiState = { ...current, ...patch };
+    scheduleUIStatePersist(!!options.immediate);
     window.dispatchEvent(new CustomEvent('structa-ui-state-updated', {
       detail: { patch: { ...patch } }
     }));

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "A1",
+    "archetype": "founder-new",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "user_input": "I want this to stop feeling vague and start showing me what matters.",
+    "mode": "summarize"
+  },
+  {
+    "id": "A2",
+    "archetype": "founder-new",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "user_input": "help me begin this right",
+    "mode": "clarify"
+  },
+  {
+    "id": "A3",
+    "archetype": "operator-midflight",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "user_input": "we keep capturing things but nothing moves",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "A4",
+    "archetype": "operator-midflight",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "user_input": "give me something I can hand off without inventing anything",
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "B1",
+    "archetype": "manager-blocked",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, routing low confidence, approvals active, one unsafe mutation concern",
+    "user_input": "where is this actually stuck right now",
+    "mode": "summarize"
+  },
+  {
+    "id": "B2",
+    "archetype": "creative-director",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "messy capture flow, strong visual instinct, weak structure",
+    "user_input": "shape this into a cleaner capture flow without overbuilding it",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "B3",
+    "archetype": "manager-conflict",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "two competing directions, no explicit decision yet",
+    "user_input": "I need one sharp question that decides which branch wins",
+    "mode": "clarify"
+  },
+  {
+    "id": "B4",
+    "archetype": "operator-cleanup",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "duplicate stale branch in rabbit-hole memory, deletion requested but not approved",
+    "user_input": "delete the dead branch",
+    "mode": "delete"
+  },
+  {
+    "id": "C1",
+    "archetype": "operator-repair",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "duplicated backlog threads, weak routing, no mutation approval yet",
+    "user_input": "solve the duplicate backlog problem without changing state silently",
+    "mode": "solve"
+  },
+  {
+    "id": "C2",
+    "archetype": "auditor",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "source chain thin, outcome needs grounding",
+    "user_input": "inspect what we can safely conclude from this project right now",
+    "mode": "inspect"
+  },
+  {
+    "id": "C3",
+    "archetype": "founder-structure",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active, wants strict first structure",
+    "user_input": "build the first structure for this so it can stop being shapeless",
+    "mode": "build"
+  },
+  {
+    "id": "C4",
+    "archetype": "operator-handoff",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "blocked by unclear structure and approval gating",
+    "user_input": "withdraw this into a handoff card with only grounded facts",
+    "mode": "withdraw_export"
+  }
+]

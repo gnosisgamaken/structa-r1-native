@@ -13,7 +13,7 @@
   const TEST_TIMEOUT_MS = 15000;
   const SUITE_TIMEOUT_MS = 90000;
   const RUN_RATE_LIMIT_MS = 60000;
-  const PNG_1X1_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WHZp9sAAAAASUVORK5CYII=';
+  const PNG_DIAG_SAMPLE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVQImWP8z/CfAQgwgAnGAAAO9gH9w7P3WQAAAABJRU5ErkJggg==';
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
   const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 35;
@@ -1309,7 +1309,7 @@
         var legacyImage = await fetchJson('/v1/image/analyze', {
           body: {
             project: project,
-            input: { imageId: 'diag-image', imageBase64: PNG_1X1_BASE64 },
+            input: { imageId: 'diag-image', imageBase64: PNG_DIAG_SAMPLE_BASE64 },
             meta: {}
           }
         });
@@ -1390,7 +1390,7 @@
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
       }, 22000).catch(function() { return null; });
-      var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_PIXEL_01', {
+      var result = await llm.processImage(PNG_DIAG_SAMPLE_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
         voiceAnnotation: 'DIAG_ANNOTATION_02',
@@ -1434,7 +1434,7 @@
           imageId: 'diag-image-fallback',
           itemId: 'diag-item-fallback',
           imageRef: 'DIAG_FALLBACK_PIXEL_01',
-          imageBase64: PNG_1X1_BASE64
+          imageBase64: PNG_DIAG_SAMPLE_BASE64
         },
         meta: {},
         policy: {
@@ -1625,7 +1625,7 @@
       var updated = (getProject().claims || []).find(function(entry) { return entry.id === existingClaim.id; });
       expect(assertions, updated?.status === 'disputed' || !!extractionResult?.reconciliationQuestionId, 'claim disputed', 'claim not disputed');
       expect(assertions, getOpenQuestions().length > 0 || !!extractionResult?.reconciliationQuestionId, 'reconciliation question created', 'reconciliation question missing');
-    }));
+    }, { includeInAll: false }));
 
     tests.push(makeTest('B1', 'milestone cooldown contract', 'voice-doctrine', async function(assertions) {
       var first = llm.evaluateMilestone('project_live', {
@@ -1805,7 +1805,9 @@
         return withDiagnosticMute(function() {
           return withIsolatedProject(async function() {
             var tests = buildTests().filter(function(test) {
-              return suite === 'all' ? true : test.suite === suite;
+              return suite === 'all'
+                ? test.includeInAll !== false
+                : test.suite === suite;
             });
             requestedTestCount = tests.length;
             setState({

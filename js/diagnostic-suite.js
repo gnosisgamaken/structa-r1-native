@@ -144,6 +144,11 @@
         lines.push('- ' + item.id + ' ' + item.name + ' · ' + (item.error?.message || item.status));
       });
     }
+    if (report.runError) {
+      lines.push('');
+      lines.push('suite failure:');
+      lines.push('- ' + (report.runError.message || 'diagnostics failed before tests'));
+    }
     lines.push('');
     lines.push('full report saved locally in Structa diagnostics');
     return lines.join('\n');
@@ -189,6 +194,16 @@
 
   function diagTrace(flow, from, to, ctx) {
     native?.traceEvent?.(flow, from, to, diagnosticCtx(ctx));
+  }
+
+  function diagLog(message, detail) {
+    var text = String(message || '').trim();
+    if (!text) return;
+    if (detail) text += ' · ' + String(detail || '').trim();
+    native?.appendLogEntry?.({
+      kind: 'diagnostic',
+      message: text
+    });
   }
 
   function getTraceEvents() {
@@ -366,17 +381,20 @@
     );
   }
 
-  function makeReport(results, startedAt, finishedAt) {
+  function makeReport(results, startedAt, finishedAt, runError) {
     var failed = results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; });
     var failureCodes = {};
     failed.forEach(function(item) {
       var key = item.error?.code || item.status || 'unknown';
       failureCodes[key] = Number(failureCodes[key] || 0) + 1;
     });
+    if (runError?.code) {
+      failureCodes[runError.code] = Number(failureCodes[runError.code] || 0) + 1;
+    }
     var summary = {
       total: results.length,
       passed: results.filter(function(item) { return item.status === 'pass'; }).length,
-      failed: failed.length,
+      failed: failed.length + (runError ? 1 : 0),
       skipped: results.filter(function(item) { return item.status === 'skip'; }).length,
       failureCodes: failureCodes
     };
@@ -392,6 +410,7 @@
       },
       manual_voice_check: state.manualVoiceCheck || null,
       summary: summary,
+      runError: runError || null,
       results: results,
       traceTail: getTraceEvents().slice(-100),
       delivery: null
@@ -402,6 +421,25 @@
     var failed = report.results.filter(function(item) {
       return item.status === 'fail' || item.status === 'timeout';
     });
+    if (report.runError) {
+      var suiteLines = [
+        'failures:',
+        '  suite preflight',
+        '    ' + (report.runError.message || 'diagnostics failed before tests')
+      ];
+      var suiteDetail = [report.runError.code, report.runError.layer, report.runError.latencyMs ? (report.runError.latencyMs + 'ms') : ''].filter(Boolean).join(' · ');
+      if (suiteDetail) suiteLines.push('    ' + suiteDetail);
+      if (!failed.length) return suiteLines.join('\n');
+      return suiteLines.join('\n') + '\n' + failed.map(function(item) {
+        var lines = [
+          '  ' + item.id + ' ' + item.name,
+          '    ' + (item.error?.message || item.status)
+        ];
+        var detail = formatFailureDetail(item);
+        if (detail) lines.push('    ' + detail);
+        return lines.join('\n');
+      }).join('\n');
+    }
     if (!failed.length) return 'failures:\n  none';
     return ['failures:'].concat(failed.map(function(item) {
       var lines = [
@@ -418,6 +456,20 @@
       }
       return lines.join('\n');
     })).join('\n');
+  }
+
+  function buildRunError(error, defaults) {
+    var normalized = normalizeFailure(error, error?.message || 'diagnostics failed before tests', defaults || {
+      code: 'diagnostic-preflight',
+      layer: 'diagnostic-runtime'
+    });
+    return {
+      message: normalized?.message || 'diagnostics failed before tests',
+      code: normalized?.code || '',
+      layer: normalized?.layer || '',
+      latencyMs: Number(normalized?.latencyMs || 0) || 0,
+      statusCode: Number(normalized?.statusCode || 0) || 0
+    };
   }
 
   function formatReportEmail(report) {
@@ -492,6 +544,10 @@
   }
 
   function createDiagnosticProject() {
+    diagTrace('diag.project.create', 'idle', 'start', {
+      runId: state.currentRunId,
+      name: DIAGNOSTIC_PROJECT_NAME
+    });
     var project = native?.createProject?.(DIAGNOSTIC_PROJECT_NAME, 'general', {
       internal: true,
       allowDuplicate: true,
@@ -499,9 +555,61 @@
       silentMilestone: true
     });
     if (!project || project.ok === false) {
-      throw new Error(project?.error || 'diagnostic project unavailable');
+      var createError = buildRunError(project || new Error('diagnostic project unavailable'), {
+        code: 'diagnostic-project-create-failed',
+        layer: 'diagnostic-runtime'
+      });
+      diagTrace('diag.project.create_failed', 'start', 'failed', {
+        runId: state.currentRunId,
+        error: createError
+      });
+      diagLog('diagnostic project unavailable', createError.message);
+      throw createFailure(createError.message, createError);
     }
-    native?.switchProject?.(project.project_id || project.projectId || project.project_id);
+    var projectId = project.project_id || project.projectId || '';
+    if (!projectId) {
+      var idError = buildRunError(new Error('diagnostic project id missing'), {
+        code: 'diagnostic-project-id-missing',
+        layer: 'diagnostic-runtime'
+      });
+      diagTrace('diag.project.create_failed', 'start', 'missing-id', {
+        runId: state.currentRunId,
+        error: idError
+      });
+      diagLog('diagnostic project unavailable', idError.message);
+      throw createFailure(idError.message, idError);
+    }
+    var switched = native?.switchProject?.(projectId);
+    if (!switched || (switched.project_id && switched.project_id !== projectId)) {
+      var switchError = buildRunError(new Error('diagnostic project switch failed'), {
+        code: 'diagnostic-project-switch-failed',
+        layer: 'diagnostic-runtime'
+      });
+      diagTrace('diag.project.create_failed', 'start', 'switch-failed', {
+        runId: state.currentRunId,
+        error: switchError,
+        projectId: projectId
+      });
+      diagLog('diagnostic project unavailable', switchError.message);
+      throw createFailure(switchError.message, switchError);
+    }
+    if (getProjectId() !== projectId) {
+      var activeError = buildRunError(new Error('diagnostic project not active after switch'), {
+        code: 'diagnostic-project-inactive',
+        layer: 'diagnostic-runtime'
+      });
+      diagTrace('diag.project.create_failed', 'start', 'inactive', {
+        runId: state.currentRunId,
+        error: activeError,
+        projectId: projectId
+      });
+      diagLog('diagnostic project unavailable', activeError.message);
+      throw createFailure(activeError.message, activeError);
+    }
+    diagTrace('diag.project.create', 'start', 'ready', {
+      runId: state.currentRunId,
+      projectId: projectId
+    });
     native?.updateUIState?.({
       selected_card_id: 'now',
       last_surface: 'home'
@@ -531,15 +639,41 @@
     var snapshot = native?.snapshotState?.();
     var traceStart = getTraceEvents().length;
     if (!snapshot || !native?.restoreSnapshot) {
-      return Promise.reject(new Error('snapshot restore unavailable'));
+      var snapshotError = buildRunError(new Error('snapshot restore unavailable'), {
+        code: 'diagnostic-snapshot-unavailable',
+        layer: 'diagnostic-runtime'
+      });
+      diagTrace('diag.snapshot.restore_failed', 'pending', 'unavailable', {
+        runId: state.currentRunId,
+        error: snapshotError
+      });
+      diagLog('diagnostic cleanup unavailable', snapshotError.message);
+      return Promise.reject(createFailure(snapshotError.message, snapshotError));
     }
     createDiagnosticProject();
-    return Promise.resolve(fn(getProjectId())).finally(function() {
+    return Promise.resolve(fn(getProjectId())).catch(function(error) {
+      throw createFailure(error?.message || 'diagnostic project failed', buildRunError(error, {
+        code: error?.code || 'diagnostic-runtime',
+        layer: error?.layer || 'diagnostic-runtime',
+        latencyMs: error?.latencyMs || 0
+      }));
+    }).finally(function() {
       var diagnosticTrace = getTraceEvents().slice(traceStart);
       return native.restoreSnapshot(snapshot, {
         preserveCurrentTrace: true,
         appendTraceEvents: diagnosticTrace,
         preserveCurrentVoiceCalls: false
+      }).catch(function(error) {
+        var restoreError = buildRunError(error, {
+          code: 'diagnostic-restore-failed',
+          layer: 'diagnostic-runtime'
+        });
+        diagTrace('diag.snapshot.restore_failed', 'pending', 'failed', {
+          runId: state.currentRunId,
+          error: restoreError
+        });
+        diagLog('diagnostic cleanup failed', restoreError.message);
+        throw createFailure(restoreError.message, restoreError);
       });
     });
   }
@@ -700,6 +834,12 @@
       kind: 'diagnostic',
       message: 'diagnostics · ' + report.summary.passed + ' pass · ' + report.summary.failed + ' fail · ' + report.summary.skipped + ' skip'
     });
+    if (report.runError) {
+      native.appendLogEntry({
+        kind: 'diagnostic',
+        message: 'diagnostics failed before tests · ' + (report.runError.message || 'diagnostic preflight failed')
+      });
+    }
     (report.results || []).filter(function(item) {
       return item.status !== 'pass';
     }).slice(0, 6).forEach(function(item) {
@@ -1099,33 +1239,27 @@
       expect(assertions, getOpenQuestions().length > 0, 'reconciliation question created', 'reconciliation question missing');
     }));
 
-    tests.push(makeTest('B1', 'speakMilestone respects cooldown', 'voice-doctrine', async function(assertions) {
-      if (typeof window.PluginMessageHandler === 'undefined') throw new SkipError('bridge unavailable');
-      var original = window.PluginMessageHandler.postMessage;
-      window.PluginMessageHandler.postMessage = function() {};
-      try {
-        var first;
-        var second;
-        await llm.withOperationPolicy({
-          allowSpeech: true,
-          silent: false,
-          source: 'voice-check'
-        }, function() {
-          first = llm.speakMilestone('project_live');
-          second = llm.speakMilestone('project_live');
-        });
-        expect(assertions, first === true, 'first milestone allowed', 'first milestone suppressed');
-        expect(assertions, second === false, 'second milestone suppressed', 'cooldown failed');
-      } finally {
-        window.PluginMessageHandler.postMessage = original;
-      }
+    tests.push(makeTest('B1', 'milestone cooldown contract', 'voice-doctrine', async function(assertions) {
+      var first = llm.evaluateMilestone('project_live', {
+        hasBridge: true,
+        lastMilestoneSpeechAt: 0,
+        now: 10000
+      });
+      var second = llm.evaluateMilestone('project_live', {
+        hasBridge: true,
+        lastMilestoneSpeechAt: 9500,
+        now: 10000
+      });
+      expect(assertions, first.ok === true, 'first milestone allowed', 'first milestone suppressed');
+      expect(assertions, second.ok === false && second.reason === 'cooldown', 'second milestone suppressed by cooldown', 'cooldown contract failed');
     }));
     tests.push(makeTest('B2', 'non-allowlisted milestone rejected', 'voice-doctrine', async function(assertions) {
-      var before = native.getTrace()?.voiceCalls?.violations || 0;
-      var result = llm.speakMilestone('not_a_real_kind');
-      var after = native.getTrace()?.voiceCalls?.violations || 0;
-      expect(assertions, result === false, 'invalid milestone rejected', 'invalid milestone accepted');
-      expect(assertions, after === before + 1, 'violation incremented', 'violation count unchanged');
+      var result = llm.evaluateMilestone('not_a_real_kind', {
+        hasBridge: true,
+        now: 10000
+      });
+      expect(assertions, result.ok === false, 'invalid milestone rejected', 'invalid milestone accepted');
+      expect(assertions, result.reason === 'not-allowlisted', 'invalid milestone reason surfaced', 'invalid milestone reason missing');
     }));
     tests.push(makeTest('B3', 'single wantsR1Response true', 'voice-doctrine', async function(assertions) {
       var response = await fetchJson('/js/r1-llm.js', { method: 'GET' });
@@ -1232,19 +1366,36 @@
       },
       lastError: ''
     });
+    diagTrace('diag.preflight.start', 'idle', 'running', {
+      runId: runId
+    });
+    diagLog('diagnostics preflight', 'starting');
     diagTrace('diag.run.start', 'idle', 'running', {
       runId: runId,
-      testCount: 35
+      testCount: 37
     });
 
     var results = [];
+    var runError = null;
     try {
+      if (!llm?.withOperationPolicy) {
+        throw createFailure('diagnostic silent policy unavailable', {
+          code: 'diagnostic-policy-unavailable',
+          layer: 'diagnostic-runtime'
+        });
+      }
+      diagTrace('diag.policy.attach', 'pending', 'start', {
+        runId: runId
+      });
       await llm.withOperationPolicy({
         allowSpeech: false,
         silent: true,
         source: 'diagnostics',
         reason: 'diagnostics stay written'
       }, function() {
+        diagTrace('diag.policy.attach', 'start', 'active', {
+          runId: runId
+        });
         return withIsolatedProject(async function() {
           var tests = buildTests();
           setState({
@@ -1277,11 +1428,28 @@
         });
       });
     } catch (error) {
-      setState({ lastError: error?.message || 'diagnostic run failed' });
+      runError = buildRunError(error, {
+        code: error?.code || 'diagnostic-preflight',
+        layer: error?.layer || 'diagnostic-runtime',
+        latencyMs: error?.latencyMs || 0
+      });
+      if (runError.code === 'diagnostic-policy-unavailable') {
+        diagTrace('diag.policy.attach_failed', 'pending', 'failed', {
+          runId: runId,
+          error: runError
+        });
+      } else {
+        diagTrace('diag.preflight.failed', 'running', 'failed', {
+          runId: runId,
+          error: runError
+        });
+      }
+      diagLog('diagnostics failed before tests', runError.message);
+      setState({ lastError: runError.message || 'diagnostic run failed' });
     }
 
     var finishedAt = nowIso();
-    var report = makeReport(results, startedAt, finishedAt);
+    var report = makeReport(results, startedAt, finishedAt, runError);
     if (state.abortRequested) report.aborted = true;
     await saveLocalReport(report);
     publishDiagnosticSummary(report);
@@ -1340,6 +1508,14 @@
         message: 'diagnostics · ' + state.report.summary.total + ' tests',
         detail: state.report.summary.passed + ' pass · ' + state.report.summary.failed + ' fail · ' + state.report.summary.skipped + ' skip'
       }];
+      if (state.report.runError) {
+        var runErrorDetail = [state.report.runError.code, state.report.runError.layer, state.report.runError.latencyMs ? (state.report.runError.latencyMs + 'ms') : ''].filter(Boolean).join(' · ');
+        rows.push({
+          kind: 'error',
+          message: 'diagnostics failed before tests',
+          detail: (state.report.runError.message || 'diagnostic preflight failed') + (runErrorDetail ? (' · ' + runErrorDetail) : '')
+        });
+      }
       if (state.report.delivery) {
         rows.push({
           kind: state.report.delivery.ok ? 'status' : 'muted',

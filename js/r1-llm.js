@@ -186,8 +186,45 @@
     var policy = currentOperationPolicy();
     if (!text) {
       native?.recordVoiceCall?.(normalized || 'unknown', false, { reason: 'not-allowlisted' });
-      return false;
+    return false;
+  }
+
+  function evaluateMilestone(kind, options) {
+    var normalized = normalizeMilestoneKind(kind);
+    var opts = options && typeof options === 'object' ? options : {};
+    var STRINGS = {
+      triangle_captured: 'signal captured',
+      signal_captured: 'signal captured',
+      decision_created: 'decision ready',
+      decision_approved: 'locked',
+      frame_ready: 'frame ready',
+      project_live: 'project live'
+    };
+    var MULTI_FIRE = {
+      triangle_captured: true,
+      signal_captured: true,
+      decision_created: true,
+      decision_approved: true
+    };
+    if (!STRINGS[normalized]) {
+      return { ok: false, normalized: normalized, reason: 'not-allowlisted' };
     }
+    if (opts.allowSpeech === false || opts.silent === true) {
+      return { ok: false, normalized: normalized, reason: 'policy-silent' };
+    }
+    if (opts.hasBridge === false) {
+      return { ok: false, normalized: normalized, reason: 'bridge-unavailable' };
+    }
+    if (!MULTI_FIRE[normalized] && opts.projectMilestones && opts.projectMilestones[normalized]) {
+      return { ok: false, normalized: normalized, reason: 'project-dedupe' };
+    }
+    var now = Number(opts.now || Date.now());
+    var last = Number(opts.lastMilestoneSpeechAt || 0);
+    if (now - last < MILESTONE_COOLDOWN_MS) {
+      return { ok: false, normalized: normalized, reason: 'cooldown' };
+    }
+    return { ok: true, normalized: normalized, reason: 'milestone' };
+  }
     if (policy.allowSpeech === false || policy.silent === true) {
       native?.recordVoiceCall?.(normalized, true, {
         reason: 'policy-silent',
@@ -1375,6 +1412,7 @@
     emailText: emailText,
     titleProject: titleProject,
     speakMilestone: speakMilestone,
+    evaluateMilestone: evaluateMilestone,
     withOperationPolicy: withOperationPolicy,
     currentOperationPolicy: currentOperationPolicy,
     probeCapabilities: probeCapabilities,

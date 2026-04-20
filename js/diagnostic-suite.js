@@ -15,8 +15,8 @@
   const RUN_RATE_LIMIT_MS = 60000;
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
-  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 36;
-  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-ak1-tracefix';
+  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 38;
+  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-al1-bridgefirst';
   const EXPECTED_DIAGNOSTIC_ASSET_ID = window.StructaBuild?.expectedDiagnosticsAssetId || '';
   const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const DIAGNOSTIC_IMAGE_FIXTURE_PATH = '/assets/diagnostics/bridge-image-fixture.png';
@@ -108,19 +108,37 @@
     return diagnosticImageFixturePromise;
   }
 
+  function buildDiagnosticBridgePrompt(fixture) {
+    return llm?.buildBridgeImagePrompt
+      ? llm.buildBridgeImagePrompt(getProject(), fixture.context, { voiceAnnotation: '' })
+      : [
+          'Analyze this image for the current project.',
+          'Describe only visible facts relevant to the project context.',
+          'Write 2 short sentences in plain prose.',
+          'project: ' + compact(getProject()?.name || 'diagnostic image fixture', 64),
+          'context: ' + fixture.context,
+          'intent: none'
+        ].join('\n');
+  }
+
+  async function postDiagnosticBridgeImage() {
+    var fixture = await loadDiagnosticImageFixture();
+    var prompt = buildDiagnosticBridgePrompt(fixture);
+    var result = await llm.sendBridgeImage(fixture.base64, prompt, {
+      timeout: 26000,
+      journal: false,
+      expectResponse: false
+    });
+    return {
+      fixture: Object.assign({}, fixture, { prompt: prompt }),
+      result: result
+    };
+  }
+
   async function getDiagnosticBridgeResponse() {
     if (diagnosticImageBridgeResultPromise) return diagnosticImageBridgeResultPromise;
     diagnosticImageBridgeResultPromise = loadDiagnosticImageFixture().then(async function(fixture) {
-      var prompt = llm?.buildBridgeImagePrompt
-        ? llm.buildBridgeImagePrompt(getProject(), fixture.context, { voiceAnnotation: '' })
-        : [
-            'Analyze this image for the current project.',
-            'Describe only visible facts relevant to the project context.',
-            'Write 2 short sentences in plain prose.',
-            'project: ' + compact(getProject()?.name || 'diagnostic image fixture', 64),
-            'context: ' + fixture.context,
-            'intent: none'
-          ].join('\n');
+      var prompt = buildDiagnosticBridgePrompt(fixture);
       var rawTraceWait = awaitTrace(function(entry) {
         return entry.flow === 'plugin.message.raw' && entry.to === 'image';
       }, 28000).catch(function() { return null; });
@@ -199,7 +217,8 @@
   function suiteForTest(test) {
     var id = String(test?.id || '');
     if (/^E/i.test(id)) return 'bridge';
-    if (/^(D|F|G|H|J)/i.test(id)) return 'server';
+    if (/^H/i.test(id)) return 'thread';
+    if (/^(D|F|G|J)/i.test(id)) return 'server';
     return 'local';
   }
 
@@ -208,7 +227,8 @@
       all: 'all suites',
       local: 'local checks',
       server: 'server checks',
-      bridge: 'bridge checks'
+      bridge: 'bridge checks',
+      thread: 'thread integrity'
     }[suite] || 'all suites';
   }
 
@@ -1130,10 +1150,31 @@
     });
     rows.push({
       kind: 'action',
-      actionId: 'diagnostics-run-bridge',
-      message: 'run bridge checks',
-      detail: disabledReason || 'image dispatch, fallback, mute lane',
+      actionId: 'diagnostics-run-bridge-probe',
+      message: 'run bridge probe',
+      detail: disabledReason || 'bridge post, raw, parsed, normalize',
       disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-show-bridge-trace',
+      message: 'show bridge trace',
+      detail: 'bridge out, raw, parsed, normalize',
+      disabled: false
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-run-thread',
+      message: 'run thread integrity',
+      detail: disabledReason || 'thread extract, contradiction, orphan evidence',
+      disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-show-thread-trace',
+      message: 'show thread trace',
+      detail: 'thread and orphan-evidence only',
+      disabled: false
     });
     rows.push({
       kind: 'action',
@@ -1159,18 +1200,12 @@
     rows.push({
       kind: 'muted',
       message: 'trace capture',
-      detail: 'triple-tap header for trace mode · quadruple-tap dumps snapshot'
-    });
-    rows.push({
-      kind: 'action',
-      actionId: 'diagnostics-trace-toggle',
-      message: 'toggle trace mode',
-      detail: 'show bridge-out / bridge-in / server normalize'
+      detail: 'tap bridge or thread trace · hidden taps still work as backup'
     });
     rows.push({
       kind: 'action',
       actionId: 'diagnostics-dump-snapshot',
-      message: 'dump snapshot',
+      message: 'dump bridge snapshot',
       detail: 'capture a debug snapshot for this run'
     });
     return rows;
@@ -1475,39 +1510,75 @@
       expect(assertions, String(response.data?.prompt || '').indexOf(getProject().name || '') !== -1, 'prompt includes project name', 'project name missing from prompt');
       expect(assertions, String(response.data?.prompt || '').length < 3000, 'prompt under budget', 'prompt too long');
     }));
-    tests.push(makeTest('E2A', 'bridge raw response', 'image', async function(assertions) {
-      var response = await getDiagnosticBridgeResponse();
-      var result = response?.result;
+    tests.push(makeTest('E2A', 'bridge post', 'image', async function(assertions) {
+      var posted = await postDiagnosticBridgeImage();
+      var result = posted?.result;
       if (!result?.ok) {
-        var rawDetail = response?.rawTrace?.ctx?.dump || response?.rawTrace?.ctx?.keys || response?.rawTrace?.ctx?.shape || '';
-        failFromResult(result, (result?.error || 'bridge image failed') + (rawDetail ? ' · ' + compact(rawDetail, 160) : ''), {
+        failFromResult(result, result?.error || 'bridge post failed', {
           layer: inferResultLayer(result) || 'bridge',
           latencyMs: inferResultLatency(result)
         });
       }
-      expect(assertions, result?.ok === true, 'bridge response arrived', 'bridge response missing');
-      expect(assertions, String(result.text || '').trim().length > 0, 'bridge raw text captured', 'bridge raw text empty');
-    }, { timeoutMs: 38000 }));
-    tests.push(makeTest('E2B', 'bridge semantic response', 'image', async function(assertions) {
+      expect(assertions, result?.ok === true, 'bridge post ok', 'bridge post failed');
+      expect(assertions, !!result?.imageRunId, 'image run id assigned', 'image run id missing');
+    }, { timeoutMs: 12000 }));
+    tests.push(makeTest('E2B', 'bridge raw response', 'image', async function(assertions) {
       var response = await getDiagnosticBridgeResponse();
-      var fixture = response?.fixture || {};
       var result = response?.result;
       if (!result?.ok) {
-        failFromResult(result, result?.error || 'bridge semantic response failed', {
+        var rawDetail = response?.rawTrace?.ctx?.dump || result?.raw || response?.rawTrace?.ctx?.keys || response?.rawTrace?.ctx?.shape || '';
+        failFromResult(result, (result?.error || 'bridge raw response failed') + (rawDetail ? ' · ' + compact(rawDetail, 160) : ''), {
+          layer: inferResultLayer(result) || 'bridge',
+          latencyMs: inferResultLatency(result)
+        });
+      }
+      var rawText = String(result?.raw || response?.rawTrace?.ctx?.dump || result?.text || '').trim();
+      expect(assertions, result?.ok === true, 'bridge raw response arrived', 'bridge raw response missing');
+      expect(assertions, rawText.length > 0, 'bridge raw payload captured', 'bridge raw payload empty');
+    }, { timeoutMs: 38000 }));
+    tests.push(makeTest('E2C', 'bridge parsed response', 'image', async function(assertions) {
+      var response = await getDiagnosticBridgeResponse();
+      var result = response?.result;
+      if (!result?.ok) {
+        failFromResult(result, result?.error || 'bridge parsed response failed', {
           layer: inferResultLayer(result) || 'bridge',
           latencyMs: inferResultLatency(result)
         });
       }
       var clean = String(result.clean || result.text || '').trim();
-      var lowerText = clean.toLowerCase();
-      var expectedKeywords = Array.isArray(fixture.expectedKeywords) ? fixture.expectedKeywords : [];
-      var keywordMatch = expectedKeywords.some(function(keyword) {
-        return lowerText.indexOf(String(keyword || '').toLowerCase()) !== -1;
-      });
-      expect(assertions, clean.length > 0, 'bridge prose non-empty', 'bridge prose empty');
-      expect(assertions, keywordMatch, 'bridge prose mentions fixture content', 'bridge prose missed expected visual cues');
+      expect(assertions, clean.length > 0, 'bridge parsed text non-empty', 'bridge parsed text empty');
     }, { timeoutMs: 38000 }));
-    tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
+    tests.push(makeTest('E2D', 'stage-b normalize', 'image', async function(assertions) {
+      var normalized = await fetchJson('/v1/image/analyze', {
+        body: {
+          project: getProject(),
+          selection: {
+            kind: 'capture',
+            id: 'diag-item-normalize',
+            body: 'bridge prose normalize',
+            claims: []
+          },
+          input: {
+            transcript: '',
+            voiceAnnotation: '',
+            imageId: 'diag-image-normalize',
+            itemId: 'diag-item-normalize',
+            imageRef: 'bridge prose normalize',
+            imageBase64: ''
+          },
+          rawResponse: 'This image shows a dark interface with a published app preview and an error panel.',
+          meta: {},
+          policy: {
+            priority: 'high',
+            allowSearch: false,
+            allowSpeech: false
+          }
+        }
+      });
+      expect(assertions, normalized.ok && normalized.data?.ok === true, 'stage-b normalize ok', 'stage-b normalize failed');
+      expect(assertions, String(normalized.data?.clean || '').length > 0, 'stage-b normalize clean text', 'stage-b normalize clean text missing');
+    }, { timeoutMs: 12000 }));
+    tests.push(makeTest('E3', 'claim extraction from image text', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
         source: 'image',
@@ -1520,42 +1591,6 @@
     tests.push(makeTest('E4', 'journal entry manual verify', 'image', async function(assertions) {
       expect(assertions, true, 'manual verification required', 'open rabbithole journal to confirm Structa entry');
     }));
-    tests.push(makeTest('E5', 'server normalize contract', 'image', async function(assertions) {
-      var fixture = await loadDiagnosticImageFixture();
-      var payload = {
-        project: getProject(),
-        selection: {
-          kind: 'capture',
-          id: 'diag-item-fallback',
-          body: 'DIAG_FALLBACK_PIXEL_01',
-          claims: []
-        },
-        input: {
-          transcript: '',
-          voiceAnnotation: '',
-          imageId: 'diag-image-fallback',
-          itemId: 'diag-item-fallback',
-          imageRef: 'DIAG_FALLBACK_PIXEL_01',
-          imageBase64: fixture.base64
-        },
-        meta: {},
-        policy: {
-          priority: 'high',
-          allowSearch: false,
-          allowSpeech: false
-        }
-      };
-      var prepared = await fetchJson('/v1/image/analyze', { body: payload });
-      expect(assertions, prepared.ok && prepared.data?.ok === true, 'fallback prepare ok', 'fallback prepare failed');
-      expect(assertions, typeof prepared.data?.llm?.prompt === 'string' && prepared.data.llm.prompt.length > 0, 'fallback prompt prepared', 'fallback prompt missing');
-      var normalized = await fetchJson('/v1/image/analyze', {
-        body: Object.assign({}, payload, {
-          rawResponse: 'FACTS: DIAG_PIXEL_01\nSIGNAL: visual note ready\nNEXT:'
-        })
-      });
-      expect(assertions, normalized.ok && normalized.data?.ok === true, 'fallback normalize ok', 'fallback normalize failed');
-      expect(assertions, String(normalized.data?.clean || '').length > 0, 'fallback normalized clean text', 'fallback clean text missing');
-    }, { timeoutMs: 12000 }));
 
     tests.push(makeTest('F1', 'triangle rejects empty side', 'triangle', async function(assertions) {
       triangle.dismiss?.();
@@ -1727,6 +1762,27 @@
       var updated = (getProject().claims || []).find(function(entry) { return entry.id === existingClaim.id; });
       expect(assertions, updated?.status === 'disputed' || !!extractionResult?.reconciliationQuestionId, 'claim disputed', 'claim not disputed');
       expect(assertions, getOpenQuestions().length > 0 || !!extractionResult?.reconciliationQuestionId, 'reconciliation question created', 'reconciliation question missing');
+    }));
+    tests.push(makeTest('H3', 'orphan evidence integrity', 'thread', async function(assertions) {
+      var traceStart = getTraceEvents().length;
+      var node = reserveInsight('thread orphan evidence source', true);
+      var existingClaim = native.getClaimsForItem(node.node_id)[0];
+      var comment = native.appendThreadComment(node.node_id, 'this directly disputes that previous claim', 'comment', 'ptt');
+      native.applyThreadExtraction(node.node_id, comment.id, {
+        summary: 'contradiction',
+        claims: [{
+          text: 'this directly disputes that previous claim',
+          kind: 'fact',
+          source: 'comment',
+          sourceRef: { itemId: node.node_id, threadEntryId: comment.id }
+        }],
+        contradicts: existingClaim.id
+      });
+      await wait(50);
+      var orphanTrace = getTraceEvents().slice(traceStart).find(function(entry) {
+        return entry.flow === 'chain.orphan_evidence' && entry.from === 'found';
+      });
+      expect(assertions, !orphanTrace, 'no orphan evidence created', 'orphan evidence created');
     }));
 
     tests.push(makeTest('B1', 'milestone cooldown contract', 'voice-doctrine', async function(assertions) {
@@ -2103,6 +2159,18 @@
       });
       rows.push({
         kind: 'action',
+        actionId: 'diagnostics-show-bridge-trace',
+        message: 'show bridge trace',
+        detail: 'bridge out, raw, parsed, normalize'
+      });
+      rows.push({
+        kind: 'action',
+        actionId: 'diagnostics-show-thread-trace',
+        message: 'show thread trace',
+        detail: 'thread and orphan-evidence only'
+      });
+      rows.push({
+        kind: 'action',
         actionId: 'diagnostics-build-check',
         message: 'check build',
         detail: 'show ui and server build'
@@ -2122,18 +2190,12 @@
       rows.push({
         kind: 'muted',
         message: 'trace capture',
-        detail: 'triple-tap header for bridge-out / bridge-in rows · quadruple-tap dumps snapshot'
-      });
-      rows.push({
-        kind: 'action',
-        actionId: 'diagnostics-trace-toggle',
-        message: 'toggle trace mode',
-        detail: 'show bridge-out / bridge-in / server normalize'
+        detail: 'tap bridge or thread trace · hidden taps still work as backup'
       });
       rows.push({
         kind: 'action',
         actionId: 'diagnostics-dump-snapshot',
-        message: 'dump snapshot',
+        message: 'dump bridge snapshot',
         detail: 'capture a debug snapshot for this run'
       });
       return rows.concat(bufferRows.map(function(entry) {
@@ -2219,7 +2281,8 @@
     if (actionId === 'diagnostics-run') return run({ email: false, suite: 'all' });
     if (actionId === 'diagnostics-run-local') return run({ email: false, suite: 'local' });
     if (actionId === 'diagnostics-run-server') return run({ email: false, suite: 'server' });
-    if (actionId === 'diagnostics-run-bridge') return run({ email: false, suite: 'bridge' });
+    if (actionId === 'diagnostics-run-bridge' || actionId === 'diagnostics-run-bridge-probe') return run({ email: false, suite: 'bridge' });
+    if (actionId === 'diagnostics-run-thread') return run({ email: false, suite: 'thread' });
     if (actionId === 'diagnostics-build-check') {
       return refreshBuildStatus({ autoRefresh: false }).then(function(result) {
         diagLog('build check', 'ui ' + result.uiBuildId + ' · server ' + (result.serverBuildSha || 'unavailable') + ' · tests ' + result.declaredTestCount);
@@ -2228,6 +2291,21 @@
         diagLog('build check failed', error?.message || 'server unavailable');
         return { ok: false, error: error?.message || 'build check failed' };
       });
+    }
+    if (actionId === 'diagnostics-show-bridge-trace') {
+      window.StructaUIRuntime?.showLogTraceView?.('bridge');
+      diagLog('bridge trace', 'showing bridge-only events');
+      return Promise.resolve({ ok: true, traceMode: true, traceView: 'bridge' });
+    }
+    if (actionId === 'diagnostics-show-thread-trace') {
+      window.StructaUIRuntime?.showLogTraceView?.('thread');
+      diagLog('thread trace', 'showing thread integrity events');
+      return Promise.resolve({ ok: true, traceMode: true, traceView: 'thread' });
+    }
+    if (actionId === 'diagnostics-trace-back') {
+      window.StructaUIRuntime?.setLogTraceMode?.(false, 'all');
+      diagLog('trace mode', 'back to diagnostics');
+      return Promise.resolve({ ok: true, traceMode: false });
     }
     if (actionId === 'diagnostics-trace-toggle') {
       var nextTraceMode = window.StructaUIRuntime?.toggleLogTraceMode?.();

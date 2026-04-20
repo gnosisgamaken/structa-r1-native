@@ -1068,18 +1068,87 @@
     log.replaceChildren(fragment);
   }
 
-  function getTraceEntries(limit = 20) {
+  function formatTraceCtx(ctx) {
+    return ctx && typeof ctx === 'object'
+      ? Object.keys(ctx).map(function(key) {
+          return key + ':' + String(ctx[key]);
+        }).join(' · ')
+      : '';
+  }
+
+  function getTraceEntries(limit = 20, filter = 'all') {
     const trace = native?.getTrace?.() || {};
-    const events = Array.isArray(trace.events) ? trace.events.slice(-limit) : [];
-    return events.map(function(entry) {
-      const ctx = entry && entry.ctx ? Object.keys(entry.ctx).map(function(key) {
-        return key + ':' + String(entry.ctx[key]);
-      }).join(' · ') : '';
-      return {
+    const traceEvents = Array.isArray(trace.events) ? trace.events : [];
+    const probeEvents = native?.getProbeEvents?.() || [];
+    const normalized = [];
+
+    function includeTrace(entry) {
+      const flow = lower(entry?.flow || '');
+      if (filter === 'bridge') {
+        return flow === 'plugin.message.raw'
+          || flow === 'plugin.message.parsed'
+          || flow === 'image.bridge'
+          || (flow === 'bridge' && lower(entry?.to || '') === 'timeout');
+      }
+      if (filter === 'thread') {
+        return flow === 'thread' || flow === 'chain.orphan_evidence' || flow === 'claim';
+      }
+      return true;
+    }
+
+    function includeProbe(entry) {
+      const source = lower(entry?.source || '');
+      if (filter === 'bridge') {
+        return source === 'bridge-out'
+          || source === 'bridge-in-raw'
+          || source === 'bridge-in-parsed'
+          || source === 'server-normalize'
+          || source === 'bridge-timeout';
+      }
+      if (filter === 'thread') return false;
+      return true;
+    }
+
+    traceEvents.forEach(function(entry) {
+      if (!includeTrace(entry)) return;
+      normalized.push({
         created_at: entry?.t || new Date().toISOString(),
-        message: [entry?.flow || 'trace', entry?.from || '', entry?.to || '', ctx].filter(Boolean).join(' · ')
-      };
+        message: [entry?.flow || 'trace', entry?.from || '', entry?.to || '', formatTraceCtx(entry?.ctx)].filter(Boolean).join(' · ')
+      });
     });
+    probeEvents.forEach(function(entry) {
+      if (!includeProbe(entry)) return;
+      const payloadText = entry?.payload && typeof entry.payload === 'object'
+        ? Object.keys(entry.payload).map(function(key) {
+            return key + ':' + String(entry.payload[key]);
+          }).join(' · ')
+        : '';
+      normalized.push({
+        created_at: entry?.created_at || new Date().toISOString(),
+        message: [entry?.source || 'probe', entry?.name || 'event', payloadText].filter(Boolean).join(' · ')
+      });
+    });
+
+    normalized.sort(function(a, b) {
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+    const rows = normalized.slice(-limit);
+    const traceRows = [];
+    if (filter !== 'all') {
+      traceRows.push({
+        kind: 'action',
+        actionId: 'diagnostics-trace-back',
+        message: 'back to diagnostics',
+        detail: 'return to suite controls'
+      });
+      traceRows.push({
+        kind: 'action',
+        actionId: 'diagnostics-dump-snapshot',
+        message: 'dump snapshot',
+        detail: filter + ' trace snapshot'
+      });
+    }
+    return traceRows.concat(rows);
   }
 
   // === Transition ===
@@ -1117,23 +1186,24 @@
     const previousBottomOffset = Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight));
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
     const traceMode = !!stateData.logTraceMode;
+    const traceFilter = stateData.logTraceFilter || 'all';
     const diagnosticRows = logOpen && diagnostics?.getDrawerRows ? diagnostics.getDrawerRows() : null;
     const entries = traceMode
-      ? getTraceEntries(logOpen ? 20 : 5)
+      ? getTraceEntries(logOpen ? 20 : 5, traceFilter)
       : (diagnosticRows && diagnosticRows.length
         ? diagnosticRows
         : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
-      logPreview.textContent = traceMode ? 'trace empty' : (diagnosticRows ? 'diagnostics ready' : getQueueLine());
+      logPreview.textContent = traceMode ? ((traceFilter === 'all' ? 'trace' : traceFilter + ' trace') + ' empty') : (diagnosticRows ? 'diagnostics ready' : getQueueLine());
       updateLogOps();
       if (logOpen) logPinnedToBottom = true;
       return;
     }
     renderLogRows(entries);
     if (traceMode) {
-      logPreview.textContent = 'trace · ' + entries.length;
+      logPreview.textContent = (traceFilter === 'all' ? 'trace' : traceFilter + ' trace') + ' · ' + entries.length;
     } else if (diagnosticRows) {
       logPreview.textContent = diagnostics?.getState?.()?.running ? 'diagnostics running' : 'diagnostics';
     } else {
@@ -1155,14 +1225,24 @@
     }
   }
 
-  function setLogTraceMode(enabled) {
+  function setLogTraceMode(enabled, filter) {
     stateData.logTraceMode = !!enabled;
+    if (filter !== undefined) {
+      stateData.logTraceFilter = filter || 'all';
+    } else if (!stateData.logTraceFilter) {
+      stateData.logTraceFilter = 'all';
+    }
     refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     return stateData.logTraceMode;
   }
 
   function toggleLogTraceMode() {
     return setLogTraceMode(!stateData.logTraceMode);
+  }
+
+  function showLogTraceView(filter) {
+    stateData.logTraceFilter = filter || 'all';
+    return setLogTraceMode(true, stateData.logTraceFilter);
   }
 
   function dumpLogDebugSnapshot() {
@@ -1183,6 +1263,7 @@
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     } else {
       stateData.logTraceMode = false;
+      stateData.logTraceFilter = 'all';
       scheduleLogRefresh();
     }
   }
@@ -6034,6 +6115,7 @@
       scheduleRender();
     },
     refreshBundle: refreshBundle,
+    showLogTraceView: showLogTraceView,
     setLogTraceMode: setLogTraceMode,
     toggleLogTraceMode: toggleLogTraceMode,
     dumpLogDebugSnapshot: dumpLogDebugSnapshot

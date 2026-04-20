@@ -34,6 +34,7 @@
   var MILESTONE_COOLDOWN_MS = 6000;
   var pendingBridgeRequests = new Map();
   var pendingImageBridgeRequest = null;
+  var imageRunSequence = 0;
   var operationPolicyStack = [{ allowSpeech: true, silent: false, source: 'default' }];
   var runtimeCaps = window.__structaCaps || {
     hasBridge: typeof PluginMessageHandler !== 'undefined',
@@ -493,47 +494,89 @@
         layer: 'bridge'
       });
     }
+    var imageRunId = 'image-' + Date.now() + '-' + (++imageRunSequence);
+    var timeoutMs = Number(opts.timeout || 30000);
+    var expectResponse = opts.expectResponse !== false;
+    var payload = {
+      message: String(prompt || '').trim() || 'Describe what you see in this image',
+      imageBase64: imageBase64,
+      useLLM: true
+    };
+    if (opts.journal === true) payload.wantsJournalEntry = true;
+    if (native && native.probeMode && native.appendProbeEvent) {
+      native.appendProbeEvent({
+        source: 'bridge-out',
+        name: 'image request',
+        payload: {
+          imageRunId: imageRunId,
+          message: compactText(payload.message, 140),
+          journal: payload.wantsJournalEntry === true,
+          timeoutMs: timeoutMs
+        }
+      });
+    }
+    native?.traceEvent?.('image.bridge', 'prepare', 'post', {
+      imageRunId: imageRunId,
+      timeoutMs: timeoutMs,
+      journal: payload.wantsJournalEntry === true
+    });
+    if (!expectResponse) {
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify(payload));
+        return Promise.resolve({
+          ok: true,
+          posted: true,
+          imageRunId: imageRunId,
+          latencyMs: 0
+        });
+      } catch (err) {
+        return Promise.resolve({
+          ok: false,
+          error: 'postMessage failed: ' + err.message,
+          code: 'bridge-post-failed',
+          layer: 'bridge',
+          imageRunId: imageRunId,
+          latencyMs: 0
+        });
+      }
+    }
     return new Promise(function(resolve) {
       var request = {
         id: getNextId(),
         startedAt: Date.now(),
         resolve: resolve,
-        timeout: null
+        timeout: null,
+        imageRunId: imageRunId
       };
       pendingImageBridgeRequest = request;
       request.timeout = setTimeout(function() {
         if (!pendingImageBridgeRequest || pendingImageBridgeRequest.id !== request.id) return;
         clearImageBridgeRequest(request);
+        if (native && native.probeMode && native.appendProbeEvent) {
+          native.appendProbeEvent({
+            source: 'bridge-timeout',
+            name: 'image response missing',
+            payload: {
+              imageRunId: request.imageRunId,
+              timeoutMs: timeoutMs
+            }
+          });
+        }
         native?.traceEvent?.('bridge', 'pending', 'timeout', {
           requestId: request.id,
-          mode: 'image'
+          mode: 'image',
+          imageRunId: request.imageRunId,
+          timeoutMs: timeoutMs
         });
         resolve({
           ok: false,
           error: 'BridgeTimeout',
           code: BRIDGE_TIMEOUT_CODE,
           layer: 'bridge',
+          imageRunId: request.imageRunId,
           latencyMs: Date.now() - request.startedAt
         });
-      }, opts.timeout || 30000);
-
-      var payload = {
-        message: String(prompt || '').trim() || 'Describe what you see in this image',
-        imageBase64: imageBase64,
-        useLLM: true
-      };
-      if (opts.journal === true) payload.wantsJournalEntry = true;
-
-      if (native && native.probeMode && native.appendProbeEvent) {
-        native.appendProbeEvent({
-          source: 'bridge-out',
-          name: 'image request',
-          payload: {
-            message: compactText(payload.message, 140),
-            journal: payload.wantsJournalEntry === true
-          }
-        });
-      }
+      }, timeoutMs);
 
       try {
         PluginMessageHandler.postMessage(JSON.stringify(payload));
@@ -544,6 +587,7 @@
           error: 'postMessage failed: ' + err.message,
           code: 'bridge-post-failed',
           layer: 'bridge',
+          imageRunId: request.imageRunId,
           latencyMs: Date.now() - request.startedAt
         });
       }
@@ -632,10 +676,15 @@
         native.appendProbeEvent({
           source: 'bridge-in-raw',
           name: 'image response' +
-            (rawDump ? ' raw=' + compactText(rawDump, 120) : '')
+            (rawDump ? ' raw=' + compactText(rawDump, 120) : ''),
+          payload: {
+            imageRunId: imageRequest.imageRunId,
+            raw: compactText(rawDump, 240)
+          }
         });
       }
       native?.traceEvent?.('plugin.message.raw', 'in', 'image', {
+        imageRunId: imageRequest.imageRunId,
         dump: compactText(rawDump, 800),
         hasText: !!imageText
       });
@@ -649,6 +698,8 @@
             error: 'image bridge empty response',
             code: 'bridge-empty-response',
             layer: 'bridge',
+            imageRunId: imageRequest.imageRunId,
+            raw: rawDump,
             latencyMs: Date.now() - imageRequest.startedAt
           });
           return;
@@ -659,16 +710,23 @@
         native.appendProbeEvent({
           source: 'bridge-in-parsed',
           name: 'image text' +
-            (imageClean ? ' text=' + compactText(imageClean, 120) : '')
+            (imageClean ? ' text=' + compactText(imageClean, 120) : ''),
+          payload: {
+            imageRunId: imageRequest.imageRunId,
+            text: compactText(imageClean, 240)
+          }
         });
       }
       native?.traceEvent?.('plugin.message.parsed', 'in', 'image', {
+        imageRunId: imageRequest.imageRunId,
         text: compactText(imageClean, 240)
       });
       imageRequest.resolve({
         ok: true,
+        imageRunId: imageRequest.imageRunId,
         text: imageText,
         clean: imageClean,
+        raw: rawDump,
         structured: extractFields(imageClean),
         latencyMs: Date.now() - imageRequest.startedAt
       });
@@ -1133,9 +1191,6 @@
    */
   function processImage(rawBase64, description, meta) {
     var orchestrator = window.StructaOrchestrator;
-    if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
-      return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
-    }
     var options = meta || {};
     var priority = 'high';
     var projectEnvelope = buildProjectEnvelope('show');
@@ -1166,6 +1221,9 @@
     var startedAt = Date.now();
 
     if (options.forceFallbackServer || !runtimeCaps.hasBridge) {
+      if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
+        return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
+      }
       native?.traceEvent?.('image.dispatch', 'bridge-unavailable', 'fallback-server', {
         entryId: options.imageId || '',
         reason: options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
@@ -1196,8 +1254,19 @@
         timeout: Number(options.timeout || 12000)
       }).then(function(bridgeResult) {
           if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
+            if (!bridgeResult?.ok) {
+              native?.traceEvent?.('image.bridge', 'pending', 'failed', {
+                entryId: options.imageId || '',
+                imageRunId: bridgeResult?.imageRunId || '',
+                code: bridgeResult?.code || '',
+                error: bridgeResult?.error || ''
+              });
+            }
             if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
               return bridgeResult;
+            }
+            if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
+              return bridgeResult || { ok: false, error: 'orchestrator unavailable' };
             }
             if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
               return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
@@ -1206,6 +1275,7 @@
           }
           native?.traceEvent?.('image.bridge', 'pending', 'response', {
             entryId: options.imageId || '',
+            imageRunId: bridgeResult?.imageRunId || '',
             textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
             latencyMs: Date.now() - startedAt
           });
@@ -1214,6 +1284,7 @@
               source: 'server-normalize',
               name: 'claims extraction',
               payload: {
+                imageRunId: bridgeResult?.imageRunId || '',
                 imageId: options.imageId || '',
                 chars: String(bridgeResult.clean || bridgeResult.text || '').length
               }

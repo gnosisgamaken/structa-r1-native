@@ -653,10 +653,10 @@
   <script>
     const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
-      uiBuildId: 'ui-20260420-ak1-tracefix',
-      declaredDiagnosticTests: 36,
+      uiBuildId: 'ui-20260420-al1-bridgefirst',
+      declaredDiagnosticTests: 38,
       assetEpoch: __structaAssetEpoch,
-      expectedDiagnosticsAssetId: 'diag-20260420-ak1-tracefix'
+      expectedDiagnosticsAssetId: 'diag-20260420-al1-bridgefirst'
     });
   </script>
   <script>
@@ -675,11 +675,11 @@
         'js/voice-capture.js?v=20260420a',
         'js/camera-capture.js?v=20260420a',
         'js/orchestrator.js?v=20260417',
-        'js/r1-llm.js?v=20260420i',
+        'js/r1-llm.js?v=20260420j',
         'js/impact-chain-engine.js?v=20260420b',
         'js/triangle-engine.js?v=20260418',
-        'js/diagnostic-suite.js?v=20260420n',
-        'structa-cascade.js?v=20260420f'
+        'js/diagnostic-suite.js?v=20260420o',
+        'structa-cascade.js?v=20260420g'
       ].forEach(function(src) {
         document.write('<script src="' + assetRoot + '/' + src + '&ae=' + epoch + '"><\/script>');
       });

@@ -936,6 +936,7 @@
       try {
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('ui_refresh', String(stamp));
+        nextUrl.searchParams.set('asset_epoch', String(stamp));
         if (reason) nextUrl.searchParams.set('ui_reason', String(reason));
         window.location.replace(nextUrl.toString());
       } catch (_) {

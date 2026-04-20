@@ -651,26 +651,37 @@
   </div>
 
   <script>
+    const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
       uiBuildId: 'ui-20260420-af1-ab77ee1',
-      declaredDiagnosticTests: 37
+      declaredDiagnosticTests: 37,
+      assetEpoch: __structaAssetEpoch
     });
   </script>
-  <script src="js/icons.js?v=20260418"></script>
-  <script src="js/contracts.js?v=20260417"></script>
-  <script src="js/validation.js?v=20260417"></script>
-  <script src="js/storage-manager.js?v=20260417"></script>
-  <script src="js/rabbit-adapter.js?v=20260420e"></script>
-  <script src="js/processing-queue.js?v=20260420a"></script>
-  <script src="js/context-router.js?v=20260417"></script>
-  <script src="js/audio-engine.js?v=20260418"></script>
-  <script src="js/voice-capture.js?v=20260420a"></script>
-  <script src="js/camera-capture.js?v=20260420a"></script>
-  <script src="js/orchestrator.js?v=20260417"></script>
-  <script src="js/r1-llm.js?v=20260420g"></script>
-  <script src="js/impact-chain-engine.js?v=20260420b"></script>
-  <script src="js/triangle-engine.js?v=20260418"></script>
-  <script src="js/diagnostic-suite.js?v=20260420k"></script>
-  <script src="structa-cascade.js?v=20260420e"></script>
+  <script>
+    (function() {
+      var epoch = encodeURIComponent(window.StructaBuild.assetEpoch || 'base');
+      [
+        'js/icons.js?v=20260418',
+        'js/contracts.js?v=20260417',
+        'js/validation.js?v=20260417',
+        'js/storage-manager.js?v=20260417',
+        'js/rabbit-adapter.js?v=20260420e',
+        'js/processing-queue.js?v=20260420a',
+        'js/context-router.js?v=20260417',
+        'js/audio-engine.js?v=20260418',
+        'js/voice-capture.js?v=20260420a',
+        'js/camera-capture.js?v=20260420a',
+        'js/orchestrator.js?v=20260417',
+        'js/r1-llm.js?v=20260420g',
+        'js/impact-chain-engine.js?v=20260420b',
+        'js/triangle-engine.js?v=20260418',
+        'js/diagnostic-suite.js?v=20260420k',
+        'structa-cascade.js?v=20260420e'
+      ].forEach(function(src) {
+        document.write('<script src="' + src + '&ae=' + epoch + '"><\/script>');
+      });
+    })();
+  </script>
 </body>
 </html>

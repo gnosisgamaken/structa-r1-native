@@ -141,6 +141,17 @@
     return operationPolicyStack[operationPolicyStack.length - 1] || { allowSpeech: true, silent: false, source: 'default' };
   }
 
+  function protectSilentPrompt(prompt) {
+    var text = String(prompt || '').trim();
+    if (!text) return text;
+    if (/DO NOT SEARCH/i.test(text) && /DO NOT SPEAK/i.test(text)) return text;
+    return '🚫 DO NOT SEARCH.\n' +
+      '🚫 DO NOT SPEAK.\n' +
+      '🚫 DO NOT SAVE NOTES.\n' +
+      '🚫 DO NOT CREATE JOURNAL ENTRIES.\n' +
+      'ONLY PROCESS THE PROVIDED INPUT.\n\n' + text;
+  }
+
   function diagnosticsMuteActive() {
     return !!window.__STRUCTA_DIAGNOSTICS_RUNNING__ || !!window.__STRUCTA_FORCE_SILENT__;
   }
@@ -1014,6 +1025,10 @@
           });
         }
 
+        if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
+          prompt = protectSilentPrompt(prompt);
+        }
+
         native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
           entryId: options.imageId || '',
           projectId: projectEnvelope.id || '',
@@ -1440,7 +1455,11 @@
       if (!prepared || !prepared.llm) {
         return Promise.resolve({ ok: false, error: 'llm payload unavailable' });
       }
-      return sendToLLM(prepared.llm.prompt || '', {
+      var prompt = prepared.llm.prompt || '';
+      if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
+        prompt = protectSilentPrompt(prompt);
+      }
+      return sendToLLM(prompt, {
         journal: false,
         timeout: Math.min(prepared.llm.timeout || 3000, 3000),
         priority: prepared.llm.priority || 'high',

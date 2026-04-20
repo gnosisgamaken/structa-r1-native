@@ -906,6 +906,44 @@
     scheduleRender();
   }
 
+  function refreshBundle(reason = 'manual') {
+    const stamp = Date.now();
+    try {
+      const session = window.sessionStorage;
+      const previous = Number(session?.getItem('structa-ui-refresh-at') || 0);
+      if (previous && (stamp - previous) < 10000) return Promise.resolve(false);
+      session?.setItem('structa-ui-refresh-at', String(stamp));
+    } catch (_) {}
+    const clearCaches = (async function() {
+      try {
+        if (window.caches?.keys) {
+          const names = await window.caches.keys();
+          await Promise.all(names.map(function(name) {
+            return window.caches.delete(name).catch(function() { return false; });
+          }));
+        }
+      } catch (_) {}
+      try {
+        if (navigator.serviceWorker?.getRegistrations) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all((registrations || []).map(function(registration) {
+            return registration.unregister().catch(function() { return false; });
+          }));
+        }
+      } catch (_) {}
+    })();
+    return Promise.resolve(clearCaches).finally(function() {
+      try {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('ui_refresh', String(stamp));
+        if (reason) nextUrl.searchParams.set('ui_reason', String(reason));
+        window.location.replace(nextUrl.toString());
+      } catch (_) {
+        window.location.reload();
+      }
+    });
+  }
+
   function scheduleRender() {
     if (renderScheduled) return;
     renderScheduled = true;
@@ -1778,6 +1816,9 @@
       chainStarted = false;
       selectedIndex = cards.findIndex(function(card) { return card.id === 'now'; });
       transition(undoAvailable ? STATES.NOW_BROWSE : STATES.HOME);
+      setTimeout(function() {
+        window.StructaUIRuntime?.refreshBundle?.('flush');
+      }, 40);
     }).catch(function() {
       clearFlushRequest({ trace: false });
       render();
@@ -5974,7 +6015,8 @@
       invalidateDataCaches();
       invalidateUICaches();
       scheduleRender();
-    }
+    },
+    refreshBundle: refreshBundle
   });
 
   window.StructaPanel = Object.freeze({

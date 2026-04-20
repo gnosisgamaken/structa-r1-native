@@ -15,6 +15,8 @@
   const RUN_RATE_LIMIT_MS = 60000;
   const PNG_1X1_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WHZp9sAAAAASUVORK5CYII=';
   const APP_BUILD_SHA = 'workspace';
+  const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
+  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 37;
 
   const listeners = [];
   const handlerRegistry = { ready: false };
@@ -397,6 +399,25 @@
     );
   }
 
+  function getBuildMeta() {
+    return {
+      uiBuildId: UI_BUILD_ID,
+      declaredTestCount: DECLARED_TEST_COUNT
+    };
+  }
+
+  async function fetchBuildStatus() {
+    var meta = getBuildMeta();
+    var response = await fetchJson('/buildinfo', { method: 'GET' });
+    return {
+      uiBuildId: meta.uiBuildId,
+      declaredTestCount: meta.declaredTestCount,
+      serverBuildSha: response.ok && response.data?.ok === true ? String(response.data.sha || '') : '',
+      serverBuiltAt: response.ok && response.data?.ok === true ? String(response.data.built_at || '') : '',
+      status: response.ok && response.data?.ok === true ? 'current' : 'server-unavailable'
+    };
+  }
+
   function makeReport(results, startedAt, finishedAt, runError) {
     var failed = results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; });
     var failureCodes = {};
@@ -424,6 +445,8 @@
         runtimeCaps: currentCaps(),
         appVersion: APP_BUILD_SHA
       },
+      uiBuildId: UI_BUILD_ID,
+      declaredTestCount: DECLARED_TEST_COUNT,
       manual_voice_check: state.manualVoiceCheck || null,
       summary: summary,
       runError: runError || null,
@@ -794,7 +817,13 @@
         latencyMs: inferResultLatency(prepared)
       });
     }
-    var llmResult = await llm.sendToLLM(prepared.data?.llm?.prompt || '', {
+    var rawPrompt = String(prepared.data?.llm?.prompt || '');
+    var protectedPrompt = '🚫 DO NOT SEARCH.\n' +
+      '🚫 DO NOT SPEAK.\n' +
+      '🚫 DO NOT SAVE NOTES.\n' +
+      '🚫 DO NOT CREATE JOURNAL ENTRIES.\n' +
+      'ONLY PROCESS THE PROVIDED INPUT.\n\n' + rawPrompt;
+    var llmResult = await llm.sendToLLM(protectedPrompt, {
       journal: false,
       timeout: prepared.data?.llm?.timeout || TEST_TIMEOUT_MS,
       priority: prepared.data?.llm?.priority || 'high',
@@ -834,11 +863,23 @@
     });
     var disabledReason = queueBusy ? 'wait for queue to drain' : '';
     rows.push({
+      kind: 'muted',
+      message: 'build · ' + UI_BUILD_ID,
+      detail: DECLARED_TEST_COUNT + ' declared tests'
+    });
+    rows.push({
       kind: 'action',
       actionId: 'diagnostics-run',
       message: 'run diagnostics',
       detail: disabledReason || 'written report in log drawer',
       disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-build-check',
+      message: 'check build',
+      detail: 'show ui and server build',
+      disabled: false
     });
     rows.push({
       kind: 'action',
@@ -1094,7 +1135,7 @@
     tests.push(makeTest('D1', 'synthetic transcript ingest', 'voice', async function(assertions) {
       var result = await runPreparedBridgeEndpoint('/v1/voice/interpret', {
         project: getProject(),
-        input: { transcript: 'there is a queue blocker in show' },
+        input: { transcript: 'DIAG_TRANSCRIPT_VOICE_01' },
         policy: { priority: 'high' }
       });
       var stored = native.ingestClaims(result.claims || [], { source: 'voice', sourceRef: { itemId: 'diag-voice' } });
@@ -1102,28 +1143,28 @@
       expect(assertions, stored.every(function(entry) { return entry.source === 'voice'; }), 'voice source tagged', 'voice source wrong');
     }));
     tests.push(makeTest('D2', 'answer mode produces answer node', 'voice', async function(assertions) {
-      var question = reserveQuestion('what matters most first?');
+      var question = reserveQuestion('DIAG_QUESTION_ANSWER_01');
       var result = await runPreparedBridgeEndpoint('/v1/voice/interpret', {
         project: getProject(),
-        input: { transcript: 'the queue health matters first', questionText: question.body },
+        input: { transcript: 'DIAG_ANSWER_01', questionText: question.body },
         answeringQuestion: true,
         questionText: question.body,
         policy: { priority: 'high' }
       });
-      var answer = native.addAnswerNode(question.node_id, 'the queue health matters first', {
+      var answer = native.addAnswerNode(question.node_id, 'DIAG_ANSWER_01', {
         claims: (result.answerNode?.claims || []),
         sttConfidence: result.answerNode?.sttConfidence || null
       });
       native.enrichAnswerNode(answer.id, {
         claims: (result.claims || []).map(function(entry) { return entry.text; })
       });
-      native.resolveQuestion({ nodeId: question.node_id }, 'the queue health matters first');
+      native.resolveQuestion({ nodeId: question.node_id }, 'DIAG_ANSWER_01');
       expect(assertions, !!answer?.id, 'answer node stored', 'answer node missing');
       var updatedQuestion = (getProject().nodes || []).find(function(node) { return node.node_id === question.node_id; });
       expect(assertions, updatedQuestion?.status === 'resolved', 'question resolved', 'question not resolved');
     }));
     tests.push(makeTest('D3', 'project title endpoint', 'voice', async function(assertions) {
-      var result = await llm.titleProject('designing the faster claim graph', getProject());
+      var result = await llm.titleProject('DIAG_TITLE_20260420', getProject());
       if (!result?.ok) failFromResult(result, result?.error || 'title endpoint failed', {
         layer: inferResultLayer(result) || 'server',
         latencyMs: inferResultLatency(result)
@@ -1137,7 +1178,7 @@
       var response = await fetchJson('/v1/image/context_prompt', {
         body: {
           project: getProject(),
-          input: { imageId: 'diag-image', itemId: 'diag-item', voiceAnnotation: 'show the bottleneck' },
+          input: { imageId: 'diag-image', itemId: 'diag-item', voiceAnnotation: 'DIAG_ANNOTATION_01' },
           meta: {}
         }
       });
@@ -1149,10 +1190,10 @@
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
       }, 9000).catch(function() { return null; });
-      var result = await llm.processImage(PNG_1X1_BASE64, 'diagnostic pixel', {
+      var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
-        voiceAnnotation: 'test pixel',
+        voiceAnnotation: 'DIAG_ANNOTATION_02',
         forceBridgeOnly: true
       });
       if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
@@ -1165,7 +1206,7 @@
     }, { timeoutMs: 10000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
-        input: { text: 'diagnostic frame\n- there is a visual bottleneck', deviceId: native?.deviceId || '' },
+        input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
         source: 'image',
         sourceRef: { imageId: 'diag-image-stage-b' },
         meta: { deviceId: native?.deviceId || '' }
@@ -1180,7 +1221,7 @@
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.dispatch' && entry.to === 'fallback-server';
       }, 3000);
-      var result = await llm.processImage(PNG_1X1_BASE64, 'fallback pixel', {
+      var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_FALLBACK_PIXEL_01', {
         imageId: 'diag-image-fallback',
         itemId: 'diag-item-fallback',
         forceFallbackServer: true
@@ -1194,16 +1235,16 @@
     }, { timeoutMs: 22000 }));
 
     tests.push(makeTest('F1', 'triangle rejects empty side', 'triangle', async function(assertions) {
-      var noClaimNode = reserveInsight('diagnostic empty triangle side', false);
-      var claimNode = reserveInsight('diagnostic claim side', true);
+      var noClaimNode = reserveInsight('DIAG_EMPTY_TRIANGLE_SIDE', false);
+      var claimNode = reserveInsight('DIAG_TRIANGLE_SIDE_B', true);
       triangle.copy({ type: 'know', id: noClaimNode.node_id, body: noClaimNode.body, project_id: getProjectId() });
       triangle.complete({ type: 'know', id: claimNode.node_id, body: claimNode.body, project_id: getProjectId() });
       var result = await triangle.submit('join these');
       expect(assertions, result?.ok === false, 'empty side rejected', 'triangle did not reject empty side');
     }));
     tests.push(makeTest('F2', 'triangle round trip', 'triangle', async function(assertions) {
-      var a = reserveInsight('first diagnostic source', true);
-      var b = reserveInsight('second diagnostic source', true);
+      var a = reserveInsight('DIAG_TRIANGLE_SOURCE_A', true);
+      var b = reserveInsight('DIAG_TRIANGLE_SOURCE_B', true);
       triangle.copy({ type: 'know', id: a.node_id, body: a.body, project_id: getProjectId() });
       triangle.complete({ type: 'know', id: b.node_id, body: b.body, project_id: getProjectId() });
       var queued = await triangle.submit('what pattern links them');
@@ -1220,7 +1261,7 @@
     tests.push(makeTest('F3', 'triangle validator orphan evidence', 'triangle', async function(assertions) {
       var verdict = contracts.validateTriangleOutput({
         status: 'synthesized',
-        title: 'diagnostic triangle',
+        title: 'DIAG_TRIANGLE_TITLE',
         derived_claims: [{ text: 'invalid child', kind: 'fact', branchId: 'main', evidence: ['missing-parent-a', 'missing-parent-b'] }],
         unresolved_tensions: []
       }, {
@@ -1245,7 +1286,7 @@
       expect(assertions, typeof response.data?.digest === 'object', 'digest typed', 'digest missing');
     }));
     tests.push(makeTest('G2', 'chain step round trip', 'chain', async function(assertions) {
-      var claimNode = reserveInsight('diagnostic chain source', true);
+      var claimNode = reserveInsight('DIAG_CHAIN_SOURCE', true);
       var focus = native.activateNextFocus() || native.getActiveFocus();
       if (!focus) throw new SkipError('no focus available');
       var result = await runPreparedBridgeEndpoint('/v1/chain/step', {
@@ -1451,7 +1492,7 @@
     diagLog('diagnostics preflight', 'starting');
     diagTrace('diag.run.start', 'idle', 'running', {
       runId: runId,
-      testCount: 37
+      testCount: DECLARED_TEST_COUNT
     });
 
     var results = [];
@@ -1567,6 +1608,10 @@
         kind: 'status',
         message: 'diagnostics · running',
         detail: state.progress.done + ' done · ' + state.progress.total + ' total'
+      }, {
+        kind: 'muted',
+        message: 'build · ' + UI_BUILD_ID,
+        detail: DECLARED_TEST_COUNT + ' declared tests'
       }];
       if (state.progress.current) {
         reportRows.push({
@@ -1586,8 +1631,12 @@
     if (state.mode === 'report' && state.report) {
       var rows = [{
         kind: 'status',
-        message: 'diagnostics · ' + state.report.summary.total + ' tests',
+        message: 'diagnostics · ' + state.report.summary.total + '/' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' tests',
         detail: state.report.summary.passed + ' pass · ' + state.report.summary.failed + ' fail · ' + state.report.summary.skipped + ' skip'
+      }, {
+        kind: 'muted',
+        message: 'build · ' + (state.report.uiBuildId || UI_BUILD_ID),
+        detail: 'declared ' + (state.report.declaredTestCount || DECLARED_TEST_COUNT)
       }];
       if (state.report.runError) {
         var runErrorDetail = [state.report.runError.code, state.report.runError.layer, state.report.runError.latencyMs ? (state.report.runError.latencyMs + 'ms') : ''].filter(Boolean).join(' · ');
@@ -1621,6 +1670,12 @@
           message: item.id + ' ' + item.name,
           detail: (item.error?.message || item.status) + (detail ? (' · ' + detail) : '')
         });
+      });
+      rows.push({
+        kind: 'action',
+        actionId: 'diagnostics-build-check',
+        message: 'check build',
+        detail: 'show ui and server build'
       });
       rows.push({
         kind: 'action',
@@ -1678,6 +1733,15 @@
 
   function handleAction(actionId) {
     if (actionId === 'diagnostics-run') return run({ email: false });
+    if (actionId === 'diagnostics-build-check') {
+      return fetchBuildStatus().then(function(result) {
+        diagLog('build check', 'ui ' + result.uiBuildId + ' · server ' + (result.serverBuildSha || 'unavailable') + ' · tests ' + result.declaredTestCount);
+        return { ok: true, result: result };
+      }).catch(function(error) {
+        diagLog('build check failed', error?.message || 'server unavailable');
+        return { ok: false, error: error?.message || 'build check failed' };
+      });
+    }
     if (actionId === 'voice-check') return beginVoiceCheck();
     if (actionId === 'diagnostics-abort') {
       abort();

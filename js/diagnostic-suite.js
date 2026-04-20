@@ -1488,6 +1488,7 @@
 
     var startedAt = nowIso();
     var runId = 'diag-' + Date.now();
+    var previousUiSummary = native?.getMemory?.()?.uiState?.last_event_summary || '';
     setState({
       running: true,
       mode: 'running',
@@ -1609,6 +1610,9 @@
       report: report,
       progress: null
     });
+    if (native?.updateUIState) {
+      native.updateUIState({ last_event_summary: previousUiSummary || '' });
+    }
     return report;
   }
 

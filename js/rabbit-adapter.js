@@ -2471,7 +2471,11 @@
     };
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
     if (entry.visible && entry.visible_message) {
-      memory.uiState.last_event_summary = entry.visible_message;
+      if (entry.kind === 'diagnostic') {
+        memory.uiState.diagnostic_report_status = entry.visible_message;
+      } else {
+        memory.uiState.last_event_summary = entry.visible_message;
+      }
       window.dispatchEvent(new CustomEvent('structa-log-updated', { detail: { entry: entry } }));
     }
     persist();

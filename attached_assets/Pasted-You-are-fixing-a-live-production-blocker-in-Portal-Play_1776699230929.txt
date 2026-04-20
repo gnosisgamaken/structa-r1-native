@@ -1,0 +1,100 @@
+You are fixing a live production blocker in Portal-Play-Granada. Do not give analysis-only output. Implement the fix completely in code.
+
+GOAL
+Make these live endpoints return 200 on production after publish:
+1. /api/admin/health
+2. /api/admin/blog/posts
+3. /api/blog
+4. /llms.txt
+5. /sitemap.xml
+
+CURRENT VERIFIED FAILURES
+- /api/admin/health -> 500 {"error":"Internal server error during authentication","code":"AUTH_DATABASE_ERROR"}
+- /api/admin/blog/posts -> 500 {"error":"Internal server error during authentication","code":"AUTH_DATABASE_ERROR"}
+- /api/blog -> 500 {"error":"Failed to retrieve blog posts"}
+- /llms.txt -> 500 "Error generating LLM content"
+- /sitemap.xml -> 500 "<error>Failed to generate sitemap</error>"
+
+CONTEXT
+This is not a frontend problem.
+This is runtime DB/schema compatibility drift in production.
+Recent fixes already tried to harden api_keys and blog_posts, but production still fails.
+Assume production database is missing columns, defaults, extensions, or old schema assumptions.
+Your job is to remove fragility from runtime auth + public content routes.
+
+FILES TO INSPECT FIRST
+- server/auth/middleware.ts
+- server/routes.ts
+- server/admin-api-extension.ts
+- shared/schema.ts
+- package.json
+- .replit
+
+MANDATORY APPROACH
+1. Find every exact code path for:
+   - requireApiKey / requireApiKeyOrAdmin
+   - /api/admin/health
+   - /api/admin/blog/posts
+   - /api/blog
+   - /llms.txt
+   - /sitemap.xml
+
+2. Assume these specific production hazards:
+   - gen_random_uuid() not available
+   - old api_keys schema
+   - old blog_posts schema
+   - missing columns referenced by Drizzle selects
+   - runtime code depending on columns not guaranteed to exist
+   - route using ORM shape stricter than live DB shape
+
+3. Fix by making runtime code schema-tolerant:
+   - use CREATE TABLE IF NOT EXISTS where needed
+   - use ALTER TABLE ADD COLUMN IF NOT EXISTS for every actually-used column
+   - avoid extension-dependent defaults
+   - avoid selecting columns that may not exist unless you guarantee them first
+   - if needed, replace fragile ORM reads in hot paths with raw SQL that tolerates drift
+   - do not leave auth dependent on one brittle column set
+   - admin auth must work with x-api-key using the existing Play Granada key format
+
+4. IMPORTANT:
+   - /api/admin/health and /api/admin/blog/posts must authenticate via x-api-key without AUTH_DATABASE_ERROR
+   - /api/blog, /llms.txt, /sitemap.xml must not fail if blog_posts was partially migrated
+   - if a table is absent, create the minimum compatible shape at runtime
+   - if a column is absent, add it at runtime before query
+   - if a route can degrade safely, degrade safely instead of 500
+
+5. Do not stop at “build passes”.
+   Build passing is not enough.
+   You must harden the runtime paths themselves.
+
+IMPLEMENTATION STANDARD
+- Keep changes surgical
+- No fake mocks
+- No TODOs
+- No “follow-up needed” in place of code
+- No broad refactor outside the failing paths
+- Preserve current route behavior as much as possible
+- Prefer compatibility guards over assumptions
+
+LOCAL VERIFICATION REQUIRED
+Run these before finishing:
+1. npm run build
+2. grep / inspect final exact code paths for the 5 endpoints
+3. verify the compatibility guards cover all referenced columns in:
+   - api_keys hot path
+   - blog_posts public/admin read paths
+
+OUTPUT FORMAT
+Reply with only:
+1. root cause found
+2. exact files changed
+3. exact runtime protections added
+4. confirmation that npm run build passed
+5. short publish instruction
+
+FAIL CONDITION
+If you reply without implementing code changes, you failed.
+If you only describe hypotheses, you failed.
+If you leave any of the 5 routes still schema-fragile, you failed.
+
+Work now.

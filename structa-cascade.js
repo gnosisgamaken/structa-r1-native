@@ -720,9 +720,9 @@
   }
 
   function latestLogText() {
-    const entries = native?.getRecentLogEntries?.(1, { visible_only: true }) || [];
+    const entries = native?.getRecentLogEntries?.(1, { visible_only: true, include_diagnostic: false }) || [];
     const latest = entries[entries.length - 1];
-    return lower(latest?.visible_message || latest?.message || '—');
+    return lower(latest?.visible_message || latest?.message || getQueueLine());
   }
 
   function getStatsLines() {
@@ -2008,7 +2008,7 @@
 
     return {
       title: project?.name || 'new project',
-      changed: ui.last_event_summary || '',
+      changed: ui.user_status || ui.last_event_summary || '',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
       insight: ui.last_insight_summary || (insights[0]?.body || ''),
       next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : ''),

@@ -836,6 +836,9 @@
       selected_card_id: 'now',
       last_surface: 'home',
       resumed_at: null,
+      user_status: '',
+      system_status: '',
+      diagnostic_status: '',
       last_capture_summary: '',
       last_insight_summary: '',
       last_event_summary: '',
@@ -1948,6 +1951,7 @@
     memory.active_project_id = project.project_id;
     syncActiveProjectAlias();
     updateUIState({
+      user_status: 'project created',
       last_event_summary: 'project created',
       last_surface: 'home',
       project_cap_notice: ''
@@ -1977,6 +1981,7 @@
     memory.active_project_id = project.project_id;
     syncActiveProjectAlias();
     rebuildLegacyViews();
+    memory.uiState.user_status = 'project opened';
     memory.uiState.last_event_summary = 'project opened';
     memory.uiState.last_surface = 'home';
     memory.uiState.project_cap_notice = '';
@@ -2001,6 +2006,7 @@
       syncActiveProjectAlias();
       rebuildLegacyViews();
     }
+    memory.uiState.user_status = 'project archived';
     memory.uiState.last_event_summary = 'project archived';
     memory.uiState.project_cap_notice = '';
     persist();
@@ -2029,6 +2035,7 @@
     }
     syncActiveProjectAlias();
     rebuildLegacyViews();
+    memory.uiState.user_status = 'project deleted';
     memory.uiState.last_event_summary = 'project deleted';
     memory.uiState.project_cap_notice = '';
     persist();
@@ -2472,8 +2479,12 @@
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
     if (entry.visible && entry.visible_message) {
       if (entry.kind === 'diagnostic') {
+        memory.uiState.diagnostic_status = entry.visible_message;
         memory.uiState.diagnostic_report_status = entry.visible_message;
+      } else if (entry.kind === 'system') {
+        memory.uiState.system_status = entry.visible_message;
       } else {
+        memory.uiState.user_status = entry.visible_message;
         memory.uiState.last_event_summary = entry.visible_message;
       }
       window.dispatchEvent(new CustomEvent('structa-log-updated', { detail: { entry: entry } }));
@@ -2494,6 +2505,7 @@
     if (!entry.visible_message) return false;
 
     if (kind === 'probe') return false;
+    if (kind === 'diagnostic') return false;
 
     if (kind === 'ui') return false;
 
@@ -2510,9 +2522,13 @@
     return true;
   }
 
-  function getVisibleLogs(limit = 5) {
+  function getVisibleLogs(limit = 5, options = {}) {
+    const includeDiagnostic = options.include_diagnostic === true;
     return memory.logs
-      .filter(isVisibleLogEntry)
+      .filter(function(entry) {
+        if (includeDiagnostic && lower(entry?.kind || '') === 'diagnostic') return true;
+        return isVisibleLogEntry(entry);
+      })
       .map(entry => ({ ...entry, message: entry.visible_message || entry.message }))
       .slice(-limit);
   }
@@ -2637,7 +2653,11 @@
         project.backlog.push({ title: payload.title, created_at: payload.created_at, state: 'open' });
       }
     });
-    updateUIState({ last_event_summary: lower(payload.title), last_insight_summary: lower(payload.body.slice(0, 80)) });
+    updateUIState({
+      user_status: lower(payload.title),
+      last_event_summary: lower(payload.title),
+      last_insight_summary: lower(payload.body.slice(0, 80))
+    });
     persist();
     return { ok: true, payload };
   }
@@ -2883,7 +2903,7 @@
   }
 
   function getRecentLogEntries(limit = 5, options = {}) {
-    return options.visible_only ? getVisibleLogs(limit) : memory.logs.slice(-limit);
+    return options.visible_only ? getVisibleLogs(limit, options) : memory.logs.slice(-limit);
   }
 
   function getMemory() {

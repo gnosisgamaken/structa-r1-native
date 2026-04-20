@@ -17,6 +17,15 @@
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
   const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 37;
+  const RELEASE_CHECKLIST = [
+    'fresh launch shows a clean home and now footer',
+    'tutorial completes in one pass without trap',
+    'tell note enters the project correctly',
+    'show frame enters the project correctly',
+    'know comment stays quiet and updates grounded signals',
+    'now shows one clear blocker or decision',
+    'flush resets locally in one pass'
+  ];
 
   const listeners = [];
   const handlerRegistry = { ready: false };
@@ -25,10 +34,13 @@
     running: false,
     abortRequested: false,
     currentRunId: '',
+    currentSuite: 'all',
     report: null,
     progress: null,
     lastStartedAt: 0,
     lastError: '',
+    buildStatus: null,
+    diagnosticBuffer: [],
     voiceCheck: null,
     manualVoiceCheck: null
   };
@@ -111,6 +123,22 @@
     return parts.join(' · ');
   }
 
+  function suiteForTest(test) {
+    var id = String(test?.id || '');
+    if (/^E/i.test(id)) return 'bridge';
+    if (/^(D|F|G|H|J)/i.test(id)) return 'server';
+    return 'local';
+  }
+
+  function getSuiteLabel(suite) {
+    return {
+      all: 'all suites',
+      local: 'local checks',
+      server: 'server checks',
+      bridge: 'bridge checks'
+    }[suite] || 'all suites';
+  }
+
   function hasStorageTier(tier) {
     return !!native?.storage?.[tier]?.write && !!native?.storage?.[tier]?.read;
   }
@@ -185,14 +213,33 @@
       running: false,
       abortRequested: false,
       currentRunId: '',
+      currentSuite: 'all',
       report: null,
       progress: null,
       lastStartedAt: 0,
       lastError: '',
+      buildStatus: null,
+      diagnosticBuffer: [],
       voiceCheck: null,
       manualVoiceCheck: null
     });
     return { ok: true };
+  }
+
+  function pushDiagnosticBuffer(entry) {
+    if (!entry || !entry.message) return;
+    var createdAt = entry.created_at || nowIso();
+    var next = (state.diagnosticBuffer || []).concat([{
+      created_at: createdAt,
+      kind: entry.kind || 'muted',
+      message: compact(entry.message, 140),
+      detail: entry.detail ? compact(entry.detail, 220) : ''
+    }]).slice(-24);
+    setState({ diagnosticBuffer: next });
+  }
+
+  function clearDiagnosticBuffer() {
+    setState({ diagnosticBuffer: [] });
   }
 
   function onProgress(handler) {
@@ -217,10 +264,10 @@
   function diagLog(message, detail) {
     var text = String(message || '').trim();
     if (!text) return;
-    if (detail) text += ' · ' + String(detail || '').trim();
-    native?.appendLogEntry?.({
-      kind: 'diagnostic',
-      message: text
+    pushDiagnosticBuffer({
+      kind: 'muted',
+      message: text,
+      detail: detail ? String(detail || '').trim() : ''
     });
   }
 
@@ -402,23 +449,34 @@
   function getBuildMeta() {
     return {
       uiBuildId: UI_BUILD_ID,
-      declaredTestCount: DECLARED_TEST_COUNT
+      declaredTestCount: DECLARED_TEST_COUNT,
+      actualTestCount: buildTests().length
     };
   }
 
   async function fetchBuildStatus() {
     var meta = getBuildMeta();
     var response = await fetchJson('/buildinfo', { method: 'GET' });
+    var mismatches = [];
+    if (meta.declaredTestCount !== meta.actualTestCount) {
+      mismatches.push('diagnostics suite stale');
+    }
+    if (!(response.ok && response.data?.ok === true && String(response.data.sha || '').trim())) {
+      mismatches.push('server build unavailable');
+    }
     return {
       uiBuildId: meta.uiBuildId,
       declaredTestCount: meta.declaredTestCount,
+      actualTestCount: meta.actualTestCount,
       serverBuildSha: response.ok && response.data?.ok === true ? String(response.data.sha || '') : '',
       serverBuiltAt: response.ok && response.data?.ok === true ? String(response.data.built_at || '') : '',
-      status: response.ok && response.data?.ok === true ? 'current' : 'server-unavailable'
+      mismatches: mismatches,
+      status: mismatches.length ? 'mismatch' : 'current'
     };
   }
 
-  function makeReport(results, startedAt, finishedAt, runError) {
+  function makeReport(results, startedAt, finishedAt, runError, options) {
+    var opts = options && typeof options === 'object' ? options : {};
     var failed = results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; });
     var failureCodes = {};
     failed.forEach(function(item) {
@@ -445,8 +503,11 @@
         runtimeCaps: currentCaps(),
         appVersion: APP_BUILD_SHA
       },
+      suite: opts.suite || state.currentSuite || 'all',
       uiBuildId: UI_BUILD_ID,
       declaredTestCount: DECLARED_TEST_COUNT,
+      executedTestCount: results.length,
+      buildStatus: opts.buildStatus || null,
       manual_voice_check: state.manualVoiceCheck || null,
       summary: summary,
       runError: runError || null,
@@ -862,16 +923,47 @@
       return job && job.status !== 'blocked';
     });
     var disabledReason = queueBusy ? 'wait for queue to drain' : '';
+    var buildStatus = state.buildStatus;
     rows.push({
       kind: 'muted',
       message: 'build · ' + UI_BUILD_ID,
-      detail: DECLARED_TEST_COUNT + ' declared tests'
+      detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length
     });
+    if (buildStatus) {
+      rows.push({
+        kind: buildStatus.status === 'current' ? 'status' : 'error',
+        message: buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
+        detail: buildStatus.status === 'current'
+          ? ('server ' + (buildStatus.serverBuildSha || 'available'))
+          : (buildStatus.mismatches || []).join(' · ')
+      });
+    }
     rows.push({
       kind: 'action',
       actionId: 'diagnostics-run',
-      message: 'run diagnostics',
+      message: 'run all checks',
       detail: disabledReason || 'written report in log drawer',
+      disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-run-local',
+      message: 'run local checks',
+      detail: disabledReason || 'storage, claims, queue, flush',
+      disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-run-server',
+      message: 'run server checks',
+      detail: disabledReason || 'contracts, title, thread, chain, triangle',
+      disabled: !!disabledReason
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-run-bridge',
+      message: 'run bridge checks',
+      detail: disabledReason || 'image dispatch, fallback, mute lane',
       disabled: !!disabledReason
     });
     rows.push({
@@ -879,6 +971,13 @@
       actionId: 'diagnostics-build-check',
       message: 'check build',
       detail: 'show ui and server build',
+      disabled: false
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-release-checklist',
+      message: 'release checklist',
+      detail: 'launch-critical device flow review',
       disabled: false
     });
     rows.push({
@@ -949,24 +1048,27 @@
   }
 
   function publishDiagnosticSummary(report) {
-    if (!report || !native?.appendLogEntry) return;
-    native.appendLogEntry({
-      kind: 'diagnostic',
-      message: 'diagnostics · ' + report.summary.passed + ' pass · ' + report.summary.failed + ' fail · ' + report.summary.skipped + ' skip'
+    if (!report) return;
+    pushDiagnosticBuffer({
+      kind: 'status',
+      message: 'diagnostics · ' + report.summary.passed + ' pass · ' + report.summary.failed + ' fail · ' + report.summary.skipped + ' skip',
+      detail: getSuiteLabel(report.suite || 'all')
     });
     if (report.runError) {
-      native.appendLogEntry({
-        kind: 'diagnostic',
-        message: 'diagnostics failed before tests · ' + (report.runError.message || 'diagnostic preflight failed')
+      pushDiagnosticBuffer({
+        kind: 'error',
+        message: 'diagnostics failed before tests',
+        detail: report.runError.message || 'diagnostic preflight failed'
       });
     }
     (report.results || []).filter(function(item) {
       return item.status !== 'pass';
     }).slice(0, 6).forEach(function(item) {
       var detail = formatFailureDetail(item);
-      native.appendLogEntry({
-        kind: 'diagnostic',
-        message: item.id + ' ' + item.name + ' · ' + (item.error?.message || item.status) + (detail ? (' · ' + detail) : '')
+      pushDiagnosticBuffer({
+        kind: item.status === 'skip' ? 'muted' : 'error',
+        message: item.id + ' ' + item.name,
+        detail: (item.error?.message || item.status) + (detail ? (' · ' + detail) : '')
       });
     });
   }
@@ -994,12 +1096,12 @@
     }));
     tests.push(makeTest('A5', 'memory snapshot restore', 'runtime', async function(assertions) {
       var before = native.snapshotState();
-      native.updateUIState({ last_event_summary: 'diagnostic a5' });
+      native.updateUIState({ diagnostic_status: 'diagnostic a5' });
       var changed = native.snapshotState();
-      expect(assertions, before.memory?.uiState?.last_event_summary !== changed.memory?.uiState?.last_event_summary, 'snapshot changed', 'snapshot did not change');
+      expect(assertions, before.memory?.uiState?.diagnostic_status !== changed.memory?.uiState?.diagnostic_status, 'snapshot changed', 'snapshot did not change');
       await native.restoreSnapshot(before, { preserveCurrentTrace: false });
       var after = native.snapshotState();
-      expect(assertions, after.memory?.uiState?.last_event_summary === before.memory?.uiState?.last_event_summary, 'snapshot restored', 'restore mismatch');
+      expect(assertions, after.memory?.uiState?.diagnostic_status === before.memory?.uiState?.diagnostic_status, 'snapshot restored', 'restore mismatch');
     }));
 
     tests.push(makeTest('C1', 'claim insertion and dedup', 'claims', async function(assertions) {
@@ -1409,7 +1511,9 @@
       expect(assertions, true, 'runtime source fetched');
     }));
 
-    return tests;
+    return tests.map(function(test) {
+      return Object.assign({}, test, { suite: suiteForTest(test) });
+    });
   }
 
   async function runTest(test) {
@@ -1471,6 +1575,7 @@
 
   async function run(opts) {
     var options = opts && typeof opts === 'object' ? opts : {};
+    var suite = options.suite || 'all';
     if (state.running) {
       return { ok: false, error: 'diagnostics already running' };
     }
@@ -1488,14 +1593,16 @@
 
     var startedAt = nowIso();
     var runId = 'diag-' + Date.now();
-    var previousUiSummary = native?.getMemory?.()?.uiState?.last_event_summary || '';
+    clearDiagnosticBuffer();
     setState({
       running: true,
       mode: 'running',
       abortRequested: false,
       currentRunId: runId,
+      currentSuite: suite,
       lastStartedAt: Date.now(),
       report: null,
+      buildStatus: null,
       progress: {
         total: 0,
         done: 0,
@@ -1514,11 +1621,21 @@
 
     var results = [];
     var runError = null;
+    var buildStatus = null;
+    var requestedTestCount = 0;
     try {
       if (!llm?.withOperationPolicy) {
         throw createFailure('diagnostic silent policy unavailable', {
           code: 'diagnostic-policy-unavailable',
           layer: 'diagnostic-runtime'
+        });
+      }
+      buildStatus = await fetchBuildStatus();
+      setState({ buildStatus: buildStatus });
+      if (buildStatus.status !== 'current' && suite !== 'local') {
+        throw createFailure(buildStatus.mismatches.join(' · ') || 'build mismatch', {
+          code: 'build-mismatch',
+          layer: 'deploy-truth'
         });
       }
       diagTrace('diag.policy.attach', 'pending', 'start', {
@@ -1535,7 +1652,10 @@
         });
         return withDiagnosticMute(function() {
           return withIsolatedProject(async function() {
-            var tests = buildTests();
+            var tests = buildTests().filter(function(test) {
+              return suite === 'all' ? true : test.suite === suite;
+            });
+            requestedTestCount = tests.length;
             setState({
               progress: {
                 total: tests.length,
@@ -1588,7 +1708,17 @@
     }
 
     var finishedAt = nowIso();
-    var report = makeReport(results, startedAt, finishedAt, runError);
+    if (!runError && !state.abortRequested && requestedTestCount && results.length !== requestedTestCount) {
+      runError = buildRunError(new Error('diagnostics incomplete'), {
+        code: 'diagnostic-incomplete',
+        layer: 'diagnostic-runtime'
+      });
+      diagLog('diagnostics incomplete', results.length + ' of ' + requestedTestCount + ' tests recorded');
+    }
+    var report = makeReport(results, startedAt, finishedAt, runError, {
+      suite: suite,
+      buildStatus: buildStatus
+    });
     if (state.abortRequested) report.aborted = true;
     await saveLocalReport(report);
     publishDiagnosticSummary(report);
@@ -1610,9 +1740,6 @@
       report: report,
       progress: null
     });
-    if (native?.updateUIState) {
-      native.updateUIState({ last_event_summary: previousUiSummary || '' });
-    }
     return report;
   }
 
@@ -1623,16 +1750,26 @@
   }
 
   function getDrawerRows() {
+    var bufferRows = (state.diagnosticBuffer || []).slice(-6);
     if (state.mode === 'running' && state.progress) {
       var reportRows = [{
         kind: 'status',
-        message: 'diagnostics · running',
+        message: getSuiteLabel(state.currentSuite || 'all'),
         detail: state.progress.done + ' done · ' + state.progress.total + ' total'
       }, {
         kind: 'muted',
         message: 'build · ' + UI_BUILD_ID,
-        detail: DECLARED_TEST_COUNT + ' declared tests'
+        detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length
       }];
+      if (state.buildStatus) {
+        reportRows.push({
+          kind: state.buildStatus.status === 'current' ? 'status' : 'error',
+          message: state.buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
+          detail: state.buildStatus.status === 'current'
+            ? ('server ' + (state.buildStatus.serverBuildSha || 'available'))
+            : (state.buildStatus.mismatches || []).join(' · ')
+        });
+      }
       if (state.progress.current) {
         reportRows.push({
           kind: 'status',
@@ -1646,18 +1783,33 @@
         message: 'abort diagnostics',
         detail: 'cleanup still runs'
       });
-      return reportRows;
+      return reportRows.concat(bufferRows.map(function(entry) {
+        return {
+          kind: entry.kind || 'muted',
+          message: entry.message,
+          detail: entry.detail || ''
+        };
+      }));
     }
     if (state.mode === 'report' && state.report) {
       var rows = [{
         kind: 'status',
-        message: 'diagnostics · ' + state.report.summary.total + '/' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' tests',
+        message: getSuiteLabel(state.report.suite || 'all') + ' · ' + state.report.summary.total + '/' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' tests',
         detail: state.report.summary.passed + ' pass · ' + state.report.summary.failed + ' fail · ' + state.report.summary.skipped + ' skip'
       }, {
         kind: 'muted',
         message: 'build · ' + (state.report.uiBuildId || UI_BUILD_ID),
-        detail: 'declared ' + (state.report.declaredTestCount || DECLARED_TEST_COUNT)
+        detail: 'declared ' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' · actual ' + (state.report.buildStatus?.actualTestCount || buildTests().length)
       }];
+      if (state.report.buildStatus) {
+        rows.push({
+          kind: state.report.buildStatus.status === 'current' ? 'status' : 'error',
+          message: state.report.buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
+          detail: state.report.buildStatus.status === 'current'
+            ? ('server ' + (state.report.buildStatus.serverBuildSha || 'available'))
+            : (state.report.buildStatus.mismatches || []).join(' · ')
+        });
+      }
       if (state.report.runError) {
         var runErrorDetail = [state.report.runError.code, state.report.runError.layer, state.report.runError.latencyMs ? (state.report.runError.latencyMs + 'ms') : ''].filter(Boolean).join(' · ');
         rows.push({
@@ -1709,7 +1861,38 @@
         message: 'delete saved reports',
         detail: 'holds only the last 10'
       });
-      return rows;
+      return rows.concat(bufferRows.map(function(entry) {
+        return {
+          kind: entry.kind || 'muted',
+          message: entry.message,
+          detail: entry.detail || ''
+        };
+      }));
+    }
+    if (state.mode === 'release-checklist') {
+      var checklistRows = [{
+        kind: 'status',
+        message: 'release checklist',
+        detail: 'core public launch flows'
+      }, {
+        kind: 'muted',
+        message: 'build · ' + UI_BUILD_ID,
+        detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length
+      }];
+      RELEASE_CHECKLIST.forEach(function(item, index) {
+        checklistRows.push({
+          kind: 'muted',
+          message: (index + 1) + '. ' + item,
+          detail: 'device screenshot or trace required'
+        });
+      });
+      checklistRows.push({
+        kind: 'action',
+        actionId: 'diagnostics-release-back',
+        message: 'back to diagnostics',
+        detail: 'return to suite controls'
+      });
+      return checklistRows;
     }
     if (state.mode === 'voice-check' && state.voiceCheck) {
       var check = state.voiceCheck;
@@ -1739,7 +1922,13 @@
       voiceRows.push({ kind: 'action', actionId: 'voice-check-cancel', message: 'cancel voice check', detail: 'restore prior state' });
       return voiceRows;
     }
-    return getSummaryRows();
+    return getSummaryRows().concat(bufferRows.map(function(entry) {
+      return {
+        kind: entry.kind || 'muted',
+        message: entry.message,
+        detail: entry.detail || ''
+      };
+    }));
   }
 
   function clearSavedReports() {
@@ -1752,15 +1941,27 @@
   }
 
   function handleAction(actionId) {
-    if (actionId === 'diagnostics-run') return run({ email: false });
+    if (actionId === 'diagnostics-run') return run({ email: false, suite: 'all' });
+    if (actionId === 'diagnostics-run-local') return run({ email: false, suite: 'local' });
+    if (actionId === 'diagnostics-run-server') return run({ email: false, suite: 'server' });
+    if (actionId === 'diagnostics-run-bridge') return run({ email: false, suite: 'bridge' });
     if (actionId === 'diagnostics-build-check') {
       return fetchBuildStatus().then(function(result) {
+        setState({ buildStatus: result });
         diagLog('build check', 'ui ' + result.uiBuildId + ' · server ' + (result.serverBuildSha || 'unavailable') + ' · tests ' + result.declaredTestCount);
         return { ok: true, result: result };
       }).catch(function(error) {
         diagLog('build check failed', error?.message || 'server unavailable');
         return { ok: false, error: error?.message || 'build check failed' };
       });
+    }
+    if (actionId === 'diagnostics-release-checklist') {
+      setState({ mode: 'release-checklist' });
+      return Promise.resolve({ ok: true });
+    }
+    if (actionId === 'diagnostics-release-back') {
+      setState({ mode: state.report ? 'report' : 'idle' });
+      return Promise.resolve({ ok: true });
     }
     if (actionId === 'voice-check') return beginVoiceCheck();
     if (actionId === 'diagnostics-abort') {

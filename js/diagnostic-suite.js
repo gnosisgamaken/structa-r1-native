@@ -1342,7 +1342,7 @@
       var node = reserveInsight('existing claim in thread', true);
       var existingClaim = native.getClaimsForItem(node.node_id)[0];
       var comment = native.appendThreadComment(node.node_id, 'we should not keep that old claim', 'comment', 'ptt');
-      native.applyThreadExtraction(node.node_id, comment.id, {
+      var extractionResult = native.applyThreadExtraction(node.node_id, comment.id, {
         summary: 'contradiction',
         claims: [{
           text: 'we should not keep that old claim',
@@ -1352,6 +1352,8 @@
         }],
         contradicts: existingClaim.id
       });
+      expect(assertions, extractionResult?.contradictionId === existingClaim.id, 'contradiction linked', 'contradiction not linked');
+      expect(assertions, extractionResult?.claimStatusUpdate?.status === 'disputed', 'claim marked disputed in update', 'claim not disputed');
       var updated = (getProject().claims || []).find(function(entry) { return entry.id === existingClaim.id; });
       expect(assertions, updated?.status === 'disputed', 'claim disputed', 'claim not disputed');
       expect(assertions, getOpenQuestions().length > 0, 'reconciliation question created', 'reconciliation question missing');

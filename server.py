@@ -753,20 +753,16 @@ def chain_normalize(payload):
     if errors:
         return {
             "ok": True,
-            "status": "ambiguous",
-            "question": {
-                "body": "which connection matters most here?",
-                "meta": {
-                    "evidence_claims": parent_ids[:2],
-                    "rationale": compact("; ".join(errors), 180),
-                    "priority": "normal",
-                    "branch_id": compact((payload.get("branchContext") or {}).get("id") or "main", 48),
-                    "source": "triangle",
-                },
+            "focus": {"phase_next": focus.get("phase") or "observe", "state_next": "active"},
+            "produced": {"claims": [], "questions": [], "decisions": [], "tasks": []},
+            "step_metadata": {
+                "rationale": compact("; ".join(errors), 180),
+                "confidence": 0.0,
+                "model": "",
+                "latencyMs": 0,
             },
-            "step_metadata": {"confidence": 0.0, "latencyMs": 0, "model": ""},
-            "ui": {"summary": "triangle stayed ambiguous", "logLine": "triangle ambiguous"},
-            "meta": {"kind": "triangle"},
+            "note": "insufficient_signal",
+            "ui": {"summary": focus.get("phase") or "observe", "logLine": "chain invalid response"},
         }
 
     produced = parsed.get("produced") if isinstance(parsed.get("produced"), dict) else {}

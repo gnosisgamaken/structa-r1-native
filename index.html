@@ -653,10 +653,10 @@
   <script>
     const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
-      uiBuildId: 'ui-20260421-am1-showtell',
-      declaredDiagnosticTests: 38,
+      uiBuildId: 'ui-20260421-an1-rabbitcore',
+      declaredDiagnosticTests: 39,
       assetEpoch: __structaAssetEpoch,
-      expectedDiagnosticsAssetId: 'diag-20260421-am1-showtell'
+      expectedDiagnosticsAssetId: 'diag-20260421-an1-rabbitcore'
     });
   </script>
   <script>
@@ -673,13 +673,13 @@
         'js/context-router.js?v=20260417',
         'js/audio-engine.js?v=20260418',
         'js/voice-capture.js?v=20260420a',
-        'js/camera-capture.js?v=20260421a',
+        'js/camera-capture.js?v=20260421b',
         'js/orchestrator.js?v=20260417',
-        'js/r1-llm.js?v=20260421a',
+        'js/r1-llm.js?v=20260421b',
         'js/impact-chain-engine.js?v=20260420b',
         'js/triangle-engine.js?v=20260418',
-        'js/diagnostic-suite.js?v=20260421a',
-        'structa-cascade.js?v=20260421a'
+        'js/diagnostic-suite.js?v=20260421b',
+        'structa-cascade.js?v=20260421b'
       ].forEach(function(src) {
         document.write('<script src="' + assetRoot + '/' + src + '&ae=' + epoch + '"><\/script>');
       });

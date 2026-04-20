@@ -1302,13 +1302,12 @@
   }
 
   /**
-   * processImage -- sends image to R1 LLM with FULL project context.
-   * Project type fundamentally changes how to interpret an image:
-   * - Architecture: materials, spatial relationships, structure
-   * - Software: UI patterns, error states, code
-   * - Design: composition, color, typography
-   * - Film: framing, lighting, narrative
-   * Returns a promise with { ok, clean, structured }.
+   * processImage -- deterministic Rabbit-only image entry.
+   *
+   * The reliable product path is save-first capture plus Rabbit text analysis
+   * when the user adds a spoken annotation. Native Rabbit image callbacks stay
+   * available as a separate probe/assist lane, but core SHOW behavior does not
+   * depend on them returning inline.
    */
   function processImage(rawBase64, description, meta) {
     var options = meta || {};
@@ -1329,7 +1328,7 @@
             });
             return storeCaptureOnlyResult(Object.assign({}, options, {
               savedSummary: 'show+tell saved',
-              savedPrompt: 'hold ptt to retry description'
+              savedPrompt: 'hold ptt to describe'
             }));
           }).catch(function(error) {
             native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
@@ -1338,7 +1337,7 @@
             });
             return storeCaptureOnlyResult(Object.assign({}, options, {
               savedSummary: 'show+tell saved',
-              savedPrompt: 'hold ptt to retry description'
+              savedPrompt: 'hold ptt to describe'
             }));
           });
         });

@@ -15,8 +15,8 @@
   const RUN_RATE_LIMIT_MS = 60000;
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
-  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 38;
-  const DIAGNOSTIC_ASSET_ID = 'diag-20260421-am1-showtell';
+  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 39;
+  const DIAGNOSTIC_ASSET_ID = 'diag-20260421-an1-rabbitcore';
   const EXPECTED_DIAGNOSTIC_ASSET_ID = window.StructaBuild?.expectedDiagnosticsAssetId || '';
   const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const DIAGNOSTIC_IMAGE_FIXTURE_PATH = '/assets/diagnostics/bridge-image-fixture.png';
@@ -1052,7 +1052,7 @@
       }], {
         source: 'diagnostic',
         sourceRef: { itemId: node.node_id },
-        dedupByBranchText: true
+        dedupByBranchText: false
       });
     }
     return node;

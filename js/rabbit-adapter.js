@@ -459,6 +459,64 @@
     return registry;
   }
 
+  function sanitizeEvidenceRefs(refs, registry) {
+    if (!Array.isArray(refs) || !refs.length) return [];
+    var seen = new Set();
+    return refs.reduce(function(all, ref) {
+      var key = String(ref || '').trim();
+      if (!key || !registry[key] || seen.has(key)) return all;
+      seen.add(key);
+      all.push(key);
+      return all;
+    }, []);
+  }
+
+  function repairEvidenceIntegrity(project, options) {
+    ensureProjectChainState(project);
+    var opts = options && typeof options === 'object' ? options : {};
+    var registry = getLiveEvidenceRegistry(project);
+    var repairs = [];
+
+    function rememberRepair(kind, ownerId, before, after) {
+      repairs.push({
+        kind: kind,
+        ownerId: String(ownerId || ''),
+        before: before.slice(),
+        after: after.slice()
+      });
+    }
+
+    (project.claims || []).forEach(function(claim) {
+      var before = Array.isArray(claim?.evidence) ? claim.evidence.filter(Boolean).map(String) : [];
+      if (!before.length) return;
+      var after = sanitizeEvidenceRefs(before, registry);
+      if (after.length === before.length && after.every(function(ref, index) { return ref === before[index]; })) return;
+      claim.evidence = after;
+      rememberRepair('claim', claim.id, before, after);
+    });
+
+    (project.nodes || []).forEach(function(node) {
+      var before = Array.isArray(node?.meta?.evidence_claims) ? node.meta.evidence_claims.filter(Boolean).map(String) : [];
+      if (!before.length) return;
+      var after = sanitizeEvidenceRefs(before, registry);
+      if (after.length === before.length && after.every(function(ref, index) { return ref === before[index]; })) return;
+      node.meta = { ...(node.meta || {}), evidence_claims: after };
+      rememberRepair('node', node.node_id, before, after);
+    });
+
+    if (!opts.silent) {
+      repairs.forEach(function(repair) {
+        traceEvent('chain.orphan_evidence', 'repaired', repair.ownerId, {
+          kind: repair.kind,
+          removed: repair.before.filter(function(ref) { return repair.after.indexOf(ref) === -1; }).join(','),
+          kept: repair.after.join(',')
+        });
+      });
+    }
+
+    return repairs;
+  }
+
   function validateEvidenceIntegrity(project, options) {
     ensureProjectChainState(project);
     var opts = options && typeof options === 'object' ? options : {};
@@ -954,6 +1012,7 @@
       ensureProjectChainState(hydrated);
       migrateClaimRefs(hydrated);
       rebuildClaimIndex(hydrated);
+      repairEvidenceIntegrity(hydrated, { silent: false });
       validateEvidenceIntegrity(hydrated, { silent: false });
       if (!hydrated.schema_version || hydrated.schema_version < 6) {
         hydrated.schema_version = 6;
@@ -1895,6 +1954,8 @@
     ensureProjectRegistry();
     ensureProjectKnowledge(memory.projectMemory);
     mutator(memory.projectMemory);
+    rebuildClaimIndex(memory.projectMemory);
+    repairEvidenceIntegrity(memory.projectMemory, { silent: false });
     memory.projectMemory.updated_at = new Date().toISOString();
     rebuildLegacyViews();
     persist();

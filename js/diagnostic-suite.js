@@ -1470,7 +1470,7 @@
       var b = reserveInsight('DIAG_TRIANGLE_SOURCE_B', true);
       var itemAClaims = native.getClaimsForItem(a.node_id) || [];
       var itemBClaims = native.getClaimsForItem(b.node_id) || [];
-      var result = await runPreparedBridgeEndpoint('/v1/triangle/synthesize', {
+      var payload = {
         project: getProject(),
         itemA: {
           itemId: a.node_id,
@@ -1491,7 +1491,35 @@
           name: 'main',
           parentBranchId: ''
         }
+      };
+      var prepared = await fetchJson('/v1/triangle/synthesize', { body: payload });
+      expect(assertions, prepared.ok && prepared.data?.ok === true, 'triangle prepare ok', 'triangle prepare failed');
+      var resultResponse = await fetchJson('/v1/triangle/synthesize', {
+        body: Object.assign({}, payload, {
+          rawResponse: JSON.stringify({
+            status: 'ambiguous',
+            title: 'triangle signal',
+            branchId: 'main',
+            derived_claims: [],
+            unresolved_tensions: [],
+            question: {
+              body: 'which connection matters most here?',
+              meta: {
+                evidence_claims: itemAClaims.map(function(entry) { return entry.id; }).concat(itemBClaims.map(function(entry) { return entry.id; })).slice(0, 2),
+                rationale: 'diagnostic ambiguity'
+              }
+            },
+            step_metadata: { confidence: 0.61 }
+          })
+        })
       });
+      if (!resultResponse.ok || resultResponse.data?.ok === false) {
+        failFromResult(resultResponse, resultResponse.data?.error || 'triangle normalize failed', {
+          layer: inferResultLayer(resultResponse) || 'server',
+          latencyMs: inferResultLatency(resultResponse)
+        });
+      }
+      var result = resultResponse.data;
       var verdict = contracts.validateTriangleOutput(result, {
         project: getProject(),
         parentEvidenceIds: itemAClaims.map(function(entry) { return entry.id; }).concat(itemBClaims.map(function(entry) { return entry.id; }))

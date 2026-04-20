@@ -17,6 +17,8 @@
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
   const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 37;
+  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-ah1-b9dd6fb';
+  const EXPECTED_DIAGNOSTIC_ASSET_ID = window.StructaBuild?.expectedDiagnosticsAssetId || '';
   const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const RELEASE_CHECKLIST = [
     'fresh launch shows a clean home and now footer',
@@ -495,7 +497,9 @@
     return {
       uiBuildId: UI_BUILD_ID,
       declaredTestCount: DECLARED_TEST_COUNT,
-      actualTestCount: buildTests().length
+      actualTestCount: buildTests().length,
+      diagnosticAssetId: DIAGNOSTIC_ASSET_ID,
+      expectedDiagnosticAssetId: EXPECTED_DIAGNOSTIC_ASSET_ID
     };
   }
 
@@ -506,6 +510,9 @@
     if (meta.declaredTestCount !== meta.actualTestCount) {
       mismatches.push('diagnostics suite stale');
     }
+    if (meta.expectedDiagnosticAssetId && meta.expectedDiagnosticAssetId !== meta.diagnosticAssetId) {
+      mismatches.push('diagnostic asset id mismatch');
+    }
     if (!(response.ok && response.data?.ok === true && String(response.data.sha || '').trim())) {
       mismatches.push('server build unavailable');
     }
@@ -513,6 +520,8 @@
       uiBuildId: meta.uiBuildId,
       declaredTestCount: meta.declaredTestCount,
       actualTestCount: meta.actualTestCount,
+      diagnosticAssetId: meta.diagnosticAssetId,
+      expectedDiagnosticAssetId: meta.expectedDiagnosticAssetId,
       serverBuildSha: response.ok && response.data?.ok === true ? String(response.data.sha || '') : '',
       serverBuiltAt: response.ok && response.data?.ok === true ? String(response.data.built_at || '') : '',
       assetRefreshAttempted: hasAssetRefreshAttempted(),
@@ -529,6 +538,7 @@
       uiBuildId: status.uiBuildId,
       declaredTestCount: status.declaredTestCount,
       actualTestCount: status.actualTestCount,
+      diagnosticAssetId: status.diagnosticAssetId,
       serverBuildSha: status.serverBuildSha || ''
     });
     if (status.status === 'current') {
@@ -1004,11 +1014,11 @@
     var buildStatus = state.buildStatus;
     var mismatchReason = buildStatus && buildStatus.status !== 'current' ? (getBuildMismatchSummary(buildStatus) || 'build mismatch') : '';
     var disabledReason = mismatchReason || (queueBusy ? 'wait for queue to drain' : '');
-    rows.push({
-      kind: 'muted',
-      message: 'build · ' + UI_BUILD_ID,
-      detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length
-    });
+      rows.push({
+        kind: 'muted',
+        message: 'build · ' + UI_BUILD_ID,
+        detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length + ' · diag ' + DIAGNOSTIC_ASSET_ID
+      });
     if (buildStatus) {
       rows.push({
         kind: buildStatus.status === 'current' ? 'status' : 'error',
@@ -1881,7 +1891,7 @@
       }, {
         kind: 'muted',
         message: 'build · ' + (state.report.uiBuildId || UI_BUILD_ID),
-        detail: 'declared ' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' · actual ' + (state.report.buildStatus?.actualTestCount || buildTests().length)
+        detail: 'declared ' + (state.report.declaredTestCount || DECLARED_TEST_COUNT) + ' · actual ' + (state.report.buildStatus?.actualTestCount || buildTests().length) + ' · diag ' + (state.report.buildStatus?.diagnosticAssetId || DIAGNOSTIC_ASSET_ID)
       }];
       if (state.report.buildStatus) {
         rows.push({
@@ -1959,7 +1969,7 @@
       }, {
         kind: 'muted',
         message: 'build · ' + UI_BUILD_ID,
-        detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length
+        detail: DECLARED_TEST_COUNT + ' declared tests · actual ' + buildTests().length + ' · diag ' + DIAGNOSTIC_ASSET_ID
       }];
       RELEASE_CHECKLIST.forEach(function(item, index) {
         checklistRows.push({
@@ -2121,7 +2131,15 @@
     getState: getState,
     getDrawerRows: getDrawerRows,
     handleAction: handleAction,
-    resetLocalState: resetLocalState
+    resetLocalState: resetLocalState,
+    getAssetMeta: function() {
+      return {
+        uiBuildId: UI_BUILD_ID,
+        diagnosticAssetId: DIAGNOSTIC_ASSET_ID,
+        declaredTestCount: DECLARED_TEST_COUNT,
+        actualTestCount: buildTests().length
+      };
+    }
   });
 
   setTimeout(function() {

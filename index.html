@@ -653,14 +653,16 @@
   <script>
     const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
-      uiBuildId: 'ui-20260420-af1-ab77ee1',
+      uiBuildId: 'ui-20260420-ah1-b9dd6fb',
       declaredDiagnosticTests: 37,
-      assetEpoch: __structaAssetEpoch
+      assetEpoch: __structaAssetEpoch,
+      expectedDiagnosticsAssetId: 'diag-20260420-ah1-b9dd6fb'
     });
   </script>
   <script>
     (function() {
       var epoch = encodeURIComponent(window.StructaBuild.assetEpoch || 'base');
+      var assetRoot = '/__structa_asset/' + encodeURIComponent(window.StructaBuild.uiBuildId || 'ui-unknown');
       [
         'js/icons.js?v=20260418',
         'js/contracts.js?v=20260417',
@@ -679,7 +681,7 @@
         'js/diagnostic-suite.js?v=20260420k',
         'structa-cascade.js?v=20260420e'
       ].forEach(function(src) {
-        document.write('<script src="' + src + '&ae=' + epoch + '"><\/script>');
+        document.write('<script src="' + assetRoot + '/' + src + '&ae=' + epoch + '"><\/script>');
       });
     })();
   </script>

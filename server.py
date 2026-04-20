@@ -2,6 +2,7 @@
 import http.server
 import json
 import os
+import pathlib
 import time
 from urllib.parse import urlparse
 
@@ -1183,6 +1184,31 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/__structa_asset/"):
+            parts = parsed.path.split("/", 3)
+            if len(parts) < 4:
+                self.send_json(404, {"ok": False, "error": "asset path missing"})
+                return
+            relative_path = parts[3].lstrip("/")
+            root = pathlib.Path(os.getcwd()).resolve()
+            target = (root / relative_path).resolve()
+            if target != root and root not in target.parents:
+                self.send_json(403, {"ok": False, "error": "asset path denied"})
+                return
+            if not target.is_file():
+                self.send_json(404, {"ok": False, "error": "asset not found"})
+                return
+            try:
+                body = target.read_bytes()
+            except Exception as err:
+                self.send_json(500, {"ok": False, "error": str(err)})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", self.guess_type(str(target)))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if parsed.path == "/healthz":
             self.send_json(200, {
                 "ok": True,

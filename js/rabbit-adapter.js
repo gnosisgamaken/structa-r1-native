@@ -1315,6 +1315,14 @@
       }
 
       var contradictedClaim = comment.contradicts ? findClaimByReference(project, comment.contradicts) : null;
+      if (!contradictedClaim && comment.contradicts) {
+        contradictedClaim = (project.claims || []).find(function(entry) {
+          if (!entry || !entry.id) return false;
+          if (storedClaimIds.indexOf(entry.id) !== -1) return false;
+          var sourceItemId = String(entry.sourceRef?.itemId || '');
+          return sourceItemId && sourceItemId === String(nodeId || '');
+        }) || null;
+      }
       var reconciliationQuestion = null;
       var claimStatusUpdate = null;
       if (contradictedClaim && storedClaims.length) {

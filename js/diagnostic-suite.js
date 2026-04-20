@@ -17,6 +17,7 @@
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
   const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 37;
+  const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const RELEASE_CHECKLIST = [
     'fresh launch shows a clean home and now footer',
     'tutorial completes in one pass without trap',
@@ -137,6 +138,50 @@
       server: 'server checks',
       bridge: 'bridge checks'
     }[suite] || 'all suites';
+  }
+
+  function isStaleAssetBundle(buildStatus) {
+    if (!buildStatus) return false;
+    return Number(buildStatus.declaredTestCount || 0) !== Number(buildStatus.actualTestCount || 0);
+  }
+
+  function getBuildMismatchSummary(buildStatus) {
+    if (!buildStatus) return '';
+    if (isStaleAssetBundle(buildStatus)) {
+      return 'stale asset bundle · declared ' + buildStatus.declaredTestCount + ' · actual ' + buildStatus.actualTestCount;
+    }
+    return (buildStatus.mismatches || []).join(' · ');
+  }
+
+  function hasAssetRefreshAttempted() {
+    try {
+      return window.sessionStorage?.getItem(ASSET_REFRESH_SESSION_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function markAssetRefreshAttempted() {
+    try {
+      window.sessionStorage?.setItem(ASSET_REFRESH_SESSION_KEY, '1');
+    } catch (_) {}
+  }
+
+  function requestAssetRefresh(reason) {
+    var runtime = window.StructaUIRuntime;
+    if (runtime?.refreshBundle) {
+      return runtime.refreshBundle(reason || 'stale-assets');
+    }
+    try {
+      var nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('ui_refresh', String(Date.now()));
+      nextUrl.searchParams.set('ui_reason', String(reason || 'stale-assets'));
+      window.location.replace(nextUrl.toString());
+      return Promise.resolve(true);
+    } catch (_) {
+      window.location.reload();
+      return Promise.resolve(true);
+    }
   }
 
   function hasStorageTier(tier) {
@@ -470,9 +515,43 @@
       actualTestCount: meta.actualTestCount,
       serverBuildSha: response.ok && response.data?.ok === true ? String(response.data.sha || '') : '',
       serverBuiltAt: response.ok && response.data?.ok === true ? String(response.data.built_at || '') : '',
+      assetRefreshAttempted: hasAssetRefreshAttempted(),
       mismatches: mismatches,
       status: mismatches.length ? 'mismatch' : 'current'
     };
+  }
+
+  async function refreshBuildStatus(options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var status = await fetchBuildStatus();
+    setState({ buildStatus: status });
+    diagTrace('build.check', 'pending', status.status, {
+      uiBuildId: status.uiBuildId,
+      declaredTestCount: status.declaredTestCount,
+      actualTestCount: status.actualTestCount,
+      serverBuildSha: status.serverBuildSha || ''
+    });
+    if (status.status === 'current') {
+      diagTrace('build.ok', 'pending', 'current', {
+        uiBuildId: status.uiBuildId,
+        serverBuildSha: status.serverBuildSha || ''
+      });
+      return status;
+    }
+    diagTrace('build.mismatch', 'pending', 'mismatch', {
+      uiBuildId: status.uiBuildId,
+      mismatch: getBuildMismatchSummary(status) || 'build mismatch'
+    });
+    if (opts.autoRefresh && isStaleAssetBundle(status) && !hasAssetRefreshAttempted()) {
+      markAssetRefreshAttempted();
+      diagLog('stale asset bundle detected', 'forcing one reload');
+      await requestAssetRefresh('stale-assets');
+      return status;
+    }
+    if (isStaleAssetBundle(status) && hasAssetRefreshAttempted()) {
+      diagLog('stale asset bundle persists', 'refresh already attempted');
+    }
+    return status;
   }
 
   function makeReport(results, startedAt, finishedAt, runError, options) {
@@ -922,8 +1001,9 @@
     var queueBusy = (queue?.snapshot?.() || []).some(function(job) {
       return job && job.status !== 'blocked';
     });
-    var disabledReason = queueBusy ? 'wait for queue to drain' : '';
     var buildStatus = state.buildStatus;
+    var mismatchReason = buildStatus && buildStatus.status !== 'current' ? (getBuildMismatchSummary(buildStatus) || 'build mismatch') : '';
+    var disabledReason = mismatchReason || (queueBusy ? 'wait for queue to drain' : '');
     rows.push({
       kind: 'muted',
       message: 'build · ' + UI_BUILD_ID,
@@ -935,7 +1015,7 @@
         message: buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
         detail: buildStatus.status === 'current'
           ? ('server ' + (buildStatus.serverBuildSha || 'available'))
-          : (buildStatus.mismatches || []).join(' · ')
+          : (getBuildMismatchSummary(buildStatus) || (buildStatus.mismatches || []).join(' · '))
       });
     }
     rows.push({
@@ -1582,6 +1662,9 @@
     if (Date.now() - state.lastStartedAt < RUN_RATE_LIMIT_MS) {
       return { ok: false, error: 'diagnostics rate limited' };
     }
+    if (state.buildStatus?.status && state.buildStatus.status !== 'current') {
+      return { ok: false, error: getBuildMismatchSummary(state.buildStatus) || 'build mismatch' };
+    }
     if ((queue?.snapshot?.() || []).some(function(job) {
       return job && job.status !== 'blocked';
     })) {
@@ -1630,10 +1713,9 @@
           layer: 'diagnostic-runtime'
         });
       }
-      buildStatus = await fetchBuildStatus();
-      setState({ buildStatus: buildStatus });
-      if (buildStatus.status !== 'current' && suite !== 'local') {
-        throw createFailure(buildStatus.mismatches.join(' · ') || 'build mismatch', {
+      buildStatus = await refreshBuildStatus({ autoRefresh: false });
+      if (buildStatus.status !== 'current') {
+        throw createFailure(getBuildMismatchSummary(buildStatus) || buildStatus.mismatches.join(' · ') || 'build mismatch', {
           code: 'build-mismatch',
           layer: 'deploy-truth'
         });
@@ -1767,7 +1849,7 @@
           message: state.buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
           detail: state.buildStatus.status === 'current'
             ? ('server ' + (state.buildStatus.serverBuildSha || 'available'))
-            : (state.buildStatus.mismatches || []).join(' · ')
+            : (getBuildMismatchSummary(state.buildStatus) || (state.buildStatus.mismatches || []).join(' · '))
         });
       }
       if (state.progress.current) {
@@ -1807,7 +1889,7 @@
           message: state.report.buildStatus.status === 'current' ? 'build parity current' : 'build mismatch',
           detail: state.report.buildStatus.status === 'current'
             ? ('server ' + (state.report.buildStatus.serverBuildSha || 'available'))
-            : (state.report.buildStatus.mismatches || []).join(' · ')
+            : (getBuildMismatchSummary(state.report.buildStatus) || (state.report.buildStatus.mismatches || []).join(' · '))
         });
       }
       if (state.report.runError) {
@@ -1946,8 +2028,7 @@
     if (actionId === 'diagnostics-run-server') return run({ email: false, suite: 'server' });
     if (actionId === 'diagnostics-run-bridge') return run({ email: false, suite: 'bridge' });
     if (actionId === 'diagnostics-build-check') {
-      return fetchBuildStatus().then(function(result) {
-        setState({ buildStatus: result });
+      return refreshBuildStatus({ autoRefresh: false }).then(function(result) {
         diagLog('build check', 'ui ' + result.uiBuildId + ' · server ' + (result.serverBuildSha || 'unavailable') + ' · tests ' + result.declaredTestCount);
         return { ok: true, result: result };
       }).catch(function(error) {
@@ -2026,6 +2107,13 @@
     return Promise.resolve({ ok: false, error: 'unknown diagnostic action' });
   }
 
+  function bootBuildParityCheck() {
+    return refreshBuildStatus({ autoRefresh: true }).catch(function(error) {
+      diagLog('build check failed', error?.message || 'server unavailable');
+      return { ok: false, error: error?.message || 'build check failed' };
+    });
+  }
+
   window.StructaDiagnostics = Object.freeze({
     run: run,
     abort: abort,
@@ -2035,4 +2123,8 @@
     handleAction: handleAction,
     resetLocalState: resetLocalState
   });
+
+  setTimeout(function() {
+    bootBuildParityCheck();
+  }, 0);
 })();

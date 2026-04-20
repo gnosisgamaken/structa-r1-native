@@ -520,9 +520,21 @@
       var payload = {
         message: String(prompt || '').trim() || 'Describe what you see in this image',
         imageBase64: imageBase64,
-        useLLM: true
+        useLLM: true,
+        wantsR1Response: false,
+        wantsJournalEntry: opts.journal === true
       };
-      if (opts.journal === true) payload.wantsJournalEntry = true;
+
+      if (native && native.probeMode && native.appendProbeEvent) {
+        native.appendProbeEvent({
+          source: 'bridge-out',
+          name: 'image request',
+          payload: {
+            message: compactText(payload.message, 140),
+            journal: payload.wantsJournalEntry === true
+          }
+        });
+      }
 
       try {
         PluginMessageHandler.postMessage(JSON.stringify(payload));
@@ -619,9 +631,8 @@
       var imageText = extractResponseText(data);
       if (native && native.probeMode && native.appendProbeEvent) {
         native.appendProbeEvent({
-          source: 'bridge-in',
-          name: 'image message in' +
-            (imageText ? ' text=' + compactText(imageText, 40) : '') +
+          source: 'bridge-in-raw',
+          name: 'image response' +
             (rawDump ? ' raw=' + compactText(rawDump, 120) : '')
         });
       }
@@ -645,6 +656,16 @@
         }
       }
       var imageClean = sanitizeResponse(imageText);
+      if (native && native.probeMode && native.appendProbeEvent) {
+        native.appendProbeEvent({
+          source: 'bridge-in-parsed',
+          name: 'image text' +
+            (imageClean ? ' text=' + compactText(imageClean, 120) : '')
+        });
+      }
+      native?.traceEvent?.('plugin.message.parsed', 'in', 'image', {
+        text: compactText(imageClean, 240)
+      });
       imageRequest.resolve({
         ok: true,
         text: imageText,
@@ -1015,16 +1036,18 @@
     });
   }
 
-  function buildLocalImagePrompt(projectEnvelope, options) {
+  function buildBridgeImagePrompt(projectEnvelope, description, options) {
     var projectName = compactText(projectEnvelope?.name || 'untitled project', 64);
+    var context = compactText(description || options?.imageRef || options?.imageId || 'camera frame', 96);
     var intent = compactText(options?.voiceAnnotation || '', 96);
     var lines = [
-      'Describe what you see in this image for project context extraction.',
-      'Keep it concrete, visible, and brief.',
+      'Analyze this image for the current project.',
+      'Describe only visible facts relevant to the project context.',
       'Write 2 short sentences in plain prose.',
-      'project: ' + projectName
+      'project: ' + projectName,
+      'context: ' + context,
+      'intent: ' + (intent || 'none')
     ];
-    lines.push('intent: ' + (intent || 'no annotation'));
     return lines.join('\n');
   }
 
@@ -1163,10 +1186,7 @@
       source: 'image',
       reason: 'visual notes stay quiet'
     }, function() {
-      var prompt = buildLocalImagePrompt(projectEnvelope, options);
-      if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
-        prompt = protectSilentPrompt(prompt);
-      }
+      var prompt = buildBridgeImagePrompt(projectEnvelope, description, options);
       native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
         entryId: options.imageId || '',
         projectId: projectEnvelope.id || '',
@@ -1190,6 +1210,16 @@
             textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
             latencyMs: Date.now() - startedAt
           });
+          if (native && native.probeMode && native.appendProbeEvent) {
+            native.appendProbeEvent({
+              source: 'server-normalize',
+              name: 'claims extraction',
+              payload: {
+                imageId: options.imageId || '',
+                chars: String(bridgeResult.clean || bridgeResult.text || '').length
+              }
+            });
+          }
           return extractClaimsFromText({
             project: projectEnvelope,
             input: {
@@ -1627,6 +1657,8 @@
     titleProject: titleProject,
     speakMilestone: speakMilestone,
     evaluateMilestone: evaluateMilestone,
+    sendBridgeImage: sendBridgeImage,
+    buildBridgeImagePrompt: buildBridgeImagePrompt,
     withOperationPolicy: withOperationPolicy,
     currentOperationPolicy: currentOperationPolicy,
     probeCapabilities: probeCapabilities,

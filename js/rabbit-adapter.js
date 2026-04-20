@@ -1805,7 +1805,7 @@
           var parsed = typeof payload === 'string' ? JSON.parse(payload) : payload;
           var text = parsed?.message || parsed?.intent || parsed?.goal || '';
           if (parsed?.useSerpAPI) summary = 'serp request';
-          else if (parsed?.imageBase64) summary = 'vision request';
+          else if (parsed?.imageBase64) summary = 'image request';
           else if (!text) summary = 'bridge request';
         } catch (_) {}
         appendProbeEvent({ source: 'bridge-out', name: summary });

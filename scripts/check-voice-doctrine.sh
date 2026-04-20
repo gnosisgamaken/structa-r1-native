@@ -1,10 +1,9 @@
 #!/bin/sh
 set -eu
 
-matches="$(rg -n 'wantsR1Response\s*:\s*true|expectBridgeResponse\s*:\s*true|askLLMSpeak' js server.py || true)"
+matches="$(rg -n 'wantsR1Response\s*:\s*true|askLLMSpeak' js server.py || true)"
 violations="$(printf '%s\n' "$matches" | grep -v '^js/r1-llm.js:' || true)"
 literal_count="$(printf '%s\n' "$matches" | grep -c 'wantsR1Response' || true)"
-bridge_count="$(printf '%s\n' "$matches" | grep -c 'expectBridgeResponse' || true)"
 
 if [ -n "$violations" ]; then
   echo "voice doctrine violations found:"
@@ -12,8 +11,8 @@ if [ -n "$violations" ]; then
   exit 1
 fi
 
-if [ "$literal_count" -ne 1 ] || [ "$bridge_count" -ne 1 ]; then
-  echo "voice doctrine expected 1 literal wantsR1Response:true and 1 expectBridgeResponse:true"
+if [ "$literal_count" -ne 1 ]; then
+  echo "voice doctrine expected 1 literal wantsR1Response:true"
   printf '%s\n' "$matches"
   exit 1
 fi

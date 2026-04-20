@@ -33,6 +33,7 @@
   var lastMilestoneSpeechAt = 0;
   var MILESTONE_COOLDOWN_MS = 6000;
   var pendingBridgeRequests = new Map();
+  var pendingImageBridgeRequest = null;
   var operationPolicyStack = [{ allowSpeech: true, silent: false, source: 'default' }];
   var runtimeCaps = window.__structaCaps || {
     hasBridge: typeof PluginMessageHandler !== 'undefined',
@@ -371,6 +372,14 @@
     }
   }
 
+  function clearImageBridgeRequest(request) {
+    if (!request) return;
+    if (request.timeout) clearTimeout(request.timeout);
+    if (pendingImageBridgeRequest && pendingImageBridgeRequest.id === request.id) {
+      pendingImageBridgeRequest = null;
+    }
+  }
+
   function bridgeSend(request) {
     return new Promise(function(resolve) {
       if (typeof PluginMessageHandler === 'undefined') {
@@ -466,6 +475,70 @@
     });
   }
 
+  function sendBridgeImage(imageBase64, prompt, options) {
+    var opts = options || {};
+    if (typeof PluginMessageHandler === 'undefined') {
+      return Promise.resolve({
+        ok: false,
+        error: 'PluginMessageHandler not available',
+        code: 'bridge-unavailable',
+        layer: 'bridge'
+      });
+    }
+    if (pendingImageBridgeRequest) {
+      return Promise.resolve({
+        ok: false,
+        error: 'image bridge busy',
+        code: 'bridge-busy',
+        layer: 'bridge'
+      });
+    }
+    return new Promise(function(resolve) {
+      var request = {
+        id: getNextId(),
+        startedAt: Date.now(),
+        resolve: resolve,
+        timeout: null
+      };
+      pendingImageBridgeRequest = request;
+      request.timeout = setTimeout(function() {
+        if (!pendingImageBridgeRequest || pendingImageBridgeRequest.id !== request.id) return;
+        clearImageBridgeRequest(request);
+        native?.traceEvent?.('bridge', 'pending', 'timeout', {
+          requestId: request.id,
+          mode: 'image'
+        });
+        resolve({
+          ok: false,
+          error: 'BridgeTimeout',
+          code: BRIDGE_TIMEOUT_CODE,
+          layer: 'bridge',
+          latencyMs: Date.now() - request.startedAt
+        });
+      }, opts.timeout || 30000);
+
+      var payload = {
+        message: String(prompt || '').trim() || 'Describe what you see in this image',
+        imageBase64: imageBase64,
+        useLLM: true
+      };
+      if (opts.journal === true) payload.wantsJournalEntry = true;
+
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify(payload));
+      } catch (err) {
+        clearImageBridgeRequest(request);
+        resolve({
+          ok: false,
+          error: 'postMessage failed: ' + err.message,
+          code: 'bridge-post-failed',
+          layer: 'bridge',
+          latencyMs: Date.now() - request.startedAt
+        });
+      }
+    });
+  }
+
   function processQueue() {
     if (activeRequest || !requestQueue.length || dispatchTimer) return;
 
@@ -532,6 +605,53 @@
       window.dispatchEvent(new CustomEvent('structa-stt-ended', {
         detail: { transcript: data.transcript }
       }));
+      return;
+    }
+
+    if (pendingImageBridgeRequest) {
+      var imageRequest = pendingImageBridgeRequest;
+      var rawDump = '';
+      try {
+        rawDump = typeof data === 'string' ? data : JSON.stringify(data || {});
+      } catch (_) {
+        rawDump = '';
+      }
+      var imageText = extractResponseText(data);
+      if (native && native.probeMode && native.appendProbeEvent) {
+        native.appendProbeEvent({
+          source: 'bridge-in',
+          name: 'image message in' +
+            (imageText ? ' text=' + compactText(imageText, 40) : '') +
+            (rawDump ? ' raw=' + compactText(rawDump, 120) : '')
+        });
+      }
+      native?.traceEvent?.('plugin.message.raw', 'in', 'image', {
+        dump: compactText(rawDump, 800),
+        hasText: !!imageText
+      });
+      clearImageBridgeRequest(imageRequest);
+      if (!imageText) {
+        if (rawDump && rawDump !== '{}' && rawDump !== 'null') {
+          imageText = rawDump;
+        } else {
+          imageRequest.resolve({
+            ok: false,
+            error: 'image bridge empty response',
+            code: 'bridge-empty-response',
+            layer: 'bridge',
+            latencyMs: Date.now() - imageRequest.startedAt
+          });
+          return;
+        }
+      }
+      var imageClean = sanitizeResponse(imageText);
+      imageRequest.resolve({
+        ok: true,
+        text: imageText,
+        clean: imageClean,
+        structured: extractFields(imageClean),
+        latencyMs: Date.now() - imageRequest.startedAt
+      });
       return;
     }
 
@@ -897,28 +1017,13 @@
 
   function buildLocalImagePrompt(projectEnvelope, options) {
     var projectName = compactText(projectEnvelope?.name || 'untitled project', 64);
-    var branchName = compactText(projectEnvelope?.activeBranch?.name || projectEnvelope?.activeBranch?.id || 'main', 48);
-    var recentClaims = (projectEnvelope?.recentClaims || [])
-      .map(function(entry) { return compactText(entry?.text || '', 72); })
-      .filter(Boolean)
-      .slice(0, 2);
-    var openQuestions = (projectEnvelope?.openQuestions || projectEnvelope?.topQuestions || [])
-      .map(function(entry) {
-        if (entry && typeof entry === 'object') return compactText(entry.body || entry.text || entry.title || '', 72);
-        return compactText(entry || '', 72);
-      })
-      .filter(Boolean)
-      .slice(0, 2);
     var intent = compactText(options?.voiceAnnotation || '', 96);
     var lines = [
-      'Project image analysis.',
-      'Describe only what is factually visible and relevant.',
-      'Return 2 short sentences, then 1-4 bullet claims prefixed with "-".',
-      'project: ' + projectName,
-      'branch: ' + branchName
+      'Describe what you see in this image for project context extraction.',
+      'Keep it concrete, visible, and brief.',
+      'Write 2 short sentences in plain prose.',
+      'project: ' + projectName
     ];
-    if (recentClaims.length) lines.push('focus: ' + recentClaims.join(' | '));
-    if (openQuestions.length) lines.push('questions: ' + openQuestions.join(' | '));
     lines.push('intent: ' + (intent || 'no annotation'));
     return lines.join('\n');
   }
@@ -1058,41 +1163,19 @@
       source: 'image',
       reason: 'visual notes stay quiet'
     }, function() {
-      return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
-        var prompt = String(prepared?.prompt || '').trim();
-        if (!prepared || !prepared.ok || !prompt) {
-          prompt = buildLocalImagePrompt(projectEnvelope, options);
-          native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
-            entryId: options.imageId || '',
-            reason: prepared?.error || 'prompt unavailable',
-            promptLength: prompt.length
-          });
-        } else if (prompt.length > 1600) {
-          prompt = buildLocalImagePrompt(projectEnvelope, options);
-          native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
-            entryId: options.imageId || '',
-            reason: 'prompt too long',
-            promptLength: prompt.length
-          });
-        }
-
-        if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
-          prompt = protectSilentPrompt(prompt);
-        }
-
-        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
-          entryId: options.imageId || '',
-          projectId: projectEnvelope.id || '',
-          promptLength: prompt.length
-        });
-        return sendToLLM(prompt, {
-          imageBase64: rawBase64,
-          pluginId: 'com.playgranada.structa',
-          expectBridgeResponse: true,
-          journal: options.journal !== false,
-          timeout: Number(options.timeout || 12000),
-          priority: 'high'
-        }).then(function(bridgeResult) {
+      var prompt = buildLocalImagePrompt(projectEnvelope, options);
+      if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
+        prompt = protectSilentPrompt(prompt);
+      }
+      native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
+        entryId: options.imageId || '',
+        projectId: projectEnvelope.id || '',
+        promptLength: prompt.length
+      });
+      return sendBridgeImage(rawBase64, prompt, {
+        journal: options.journal === true,
+        timeout: Number(options.timeout || 12000)
+      }).then(function(bridgeResult) {
           if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
             if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
               return bridgeResult;
@@ -1146,7 +1229,6 @@
             };
           });
         });
-      });
     });
   }
 

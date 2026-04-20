@@ -1656,9 +1656,7 @@
         var rawFetch = await fetch('/js/r1-llm.js');
         var rawText = await rawFetch.text();
         var literalMatches = rawText.match(/wantsR1Response\s*:\s*true/g) || [];
-        var bridgeMatches = rawText.match(/expectBridgeResponse\s*:\s*true/g) || [];
         expect(assertions, literalMatches.length === 1, 'one literal wantsR1Response true', 'unexpected literal wantsR1Response count');
-        expect(assertions, bridgeMatches.length === 1, 'one bridge response request', 'unexpected expectBridgeResponse count');
         return;
       }
       expect(assertions, true, 'runtime source fetched');

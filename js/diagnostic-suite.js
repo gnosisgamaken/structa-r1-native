@@ -1389,12 +1389,14 @@
     tests.push(makeTest('E2A', 'bridge dispatch', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
-      }, 9000).catch(function() { return null; });
+      }, 13000).catch(function() { return null; });
       var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
         voiceAnnotation: 'DIAG_ANNOTATION_02',
-        forceBridgeOnly: true
+        forceBridgeOnly: true,
+        journal: false,
+        timeout: 12000
       });
       if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
         layer: inferResultLayer(result) || 'bridge',
@@ -1403,7 +1405,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }, { timeoutMs: 16000 }));
+    }, { timeoutMs: 22000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
@@ -1417,22 +1419,41 @@
     tests.push(makeTest('E4', 'journal entry manual verify', 'image', async function(assertions) {
       expect(assertions, true, 'manual verification required', 'open rabbithole journal to confirm Structa entry');
     }));
-    tests.push(makeTest('E2B', 'fallback path', 'image', async function(assertions) {
-      var traceWait = awaitTrace(function(entry) {
-        return entry.flow === 'image.dispatch' && entry.to === 'fallback-server';
-      }, 3000);
-      var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_FALLBACK_PIXEL_01', {
-        imageId: 'diag-image-fallback',
-        itemId: 'diag-item-fallback',
-        forceFallbackServer: true
+    tests.push(makeTest('E2B', 'fallback contract', 'image', async function(assertions) {
+      var payload = {
+        project: getProject(),
+        selection: {
+          kind: 'capture',
+          id: 'diag-item-fallback',
+          body: 'DIAG_FALLBACK_PIXEL_01',
+          claims: []
+        },
+        input: {
+          transcript: '',
+          voiceAnnotation: '',
+          imageId: 'diag-image-fallback',
+          itemId: 'diag-item-fallback',
+          imageRef: 'DIAG_FALLBACK_PIXEL_01',
+          imageBase64: PNG_1X1_BASE64
+        },
+        meta: {},
+        policy: {
+          priority: 'high',
+          allowSearch: false,
+          allowSpeech: false
+        }
+      };
+      var prepared = await fetchJson('/v1/image/analyze', { body: payload });
+      expect(assertions, prepared.ok && prepared.data?.ok === true, 'fallback prepare ok', 'fallback prepare failed');
+      expect(assertions, typeof prepared.data?.llm?.prompt === 'string' && prepared.data.llm.prompt.length > 0, 'fallback prompt prepared', 'fallback prompt missing');
+      var normalized = await fetchJson('/v1/image/analyze', {
+        body: Object.assign({}, payload, {
+          rawResponse: 'FACTS: DIAG_PIXEL_01\nSIGNAL: visual note ready\nNEXT:'
+        })
       });
-      await traceWait;
-      if (!result?.ok) failFromResult(result, result?.error || 'server fallback failed', {
-        layer: inferResultLayer(result) || 'server',
-        latencyMs: inferResultLatency(result)
-      });
-      expect(assertions, result?.ok === true, 'server fallback returned', 'server fallback failed');
-    }, { timeoutMs: 32000 }));
+      expect(assertions, normalized.ok && normalized.data?.ok === true, 'fallback normalize ok', 'fallback normalize failed');
+      expect(assertions, String(normalized.data?.clean || '').length > 0, 'fallback normalized clean text', 'fallback clean text missing');
+    }, { timeoutMs: 12000 }));
 
     tests.push(makeTest('F1', 'triangle rejects empty side', 'triangle', async function(assertions) {
       triangle.dismiss?.();

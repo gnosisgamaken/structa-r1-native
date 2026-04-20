@@ -1041,8 +1041,8 @@
         return sendToLLM(prompt, {
           imageBase64: rawBase64,
           pluginId: 'com.playgranada.structa',
-          journal: true,
-          timeout: 8000,
+          journal: options.journal !== false,
+          timeout: Number(options.timeout || 12000),
           priority: 'high'
         }).then(function(bridgeResult) {
           if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {

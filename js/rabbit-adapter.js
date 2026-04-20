@@ -1187,8 +1187,21 @@
     var byId = findClaimById(project, ref);
     if (byId) return byId;
     var normalized = compact(ref, 160).toLowerCase();
-    return (project.claims || []).find(function(entry) {
+    var exact = (project.claims || []).find(function(entry) {
       return entry && compact(entry.text || '', 160).toLowerCase() === normalized;
+    }) || null;
+    if (exact) return exact;
+    var normalizedTokens = normalized.split(/\s+/).filter(Boolean);
+    return (project.claims || []).find(function(entry) {
+      if (!entry) return false;
+      var text = compact(entry.text || '', 160).toLowerCase();
+      if (!text) return false;
+      if (text.indexOf(normalized) !== -1 || normalized.indexOf(text) !== -1) return true;
+      if (normalizedTokens.length < 3) return false;
+      var overlap = normalizedTokens.filter(function(token) {
+        return token.length > 3 && text.indexOf(token) !== -1;
+      });
+      return overlap.length >= Math.min(3, normalizedTokens.length);
     }) || null;
   }
 

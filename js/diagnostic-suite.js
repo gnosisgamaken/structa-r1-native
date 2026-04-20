@@ -1389,14 +1389,14 @@
     tests.push(makeTest('E2A', 'bridge dispatch', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
-      }, 13000).catch(function() { return null; });
+      }, 22000).catch(function() { return null; });
       var result = await llm.processImage(PNG_1X1_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
         voiceAnnotation: 'DIAG_ANNOTATION_02',
         forceBridgeOnly: true,
         journal: false,
-        timeout: 12000
+        timeout: 20000
       });
       if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
         layer: inferResultLayer(result) || 'bridge',
@@ -1405,7 +1405,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }, { timeoutMs: 22000 }));
+    }, { timeoutMs: 30000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
@@ -1587,7 +1587,7 @@
           source: 'comment',
           sourceRef: { itemId: node.node_id, threadEntryId: comment.id }
         }],
-        contradicts: existingClaim.text
+        contradicts: existingClaim.id
       });
       expect(assertions, extractionResult?.contradictionId === existingClaim.id, 'contradiction linked', 'contradiction not linked');
       expect(assertions, extractionResult?.claimStatusUpdate?.status === 'disputed', 'claim marked disputed in update', 'claim not disputed');

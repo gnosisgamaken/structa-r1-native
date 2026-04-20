@@ -102,6 +102,10 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
+  function lower(text) {
+    return String(text || '').toLowerCase();
+  }
+
   function traceEmail(flow, from, to, ctx) {
     native?.traceEvent?.(flow, from, to, ctx || {});
   }

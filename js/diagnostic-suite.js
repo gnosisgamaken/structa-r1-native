@@ -624,14 +624,14 @@
       kind: 'action',
       actionId: 'diagnostics-run',
       message: 'run diagnostics',
-      detail: disabledReason || 'isolated device suite',
+      detail: disabledReason || 'written report in log drawer',
       disabled: !!disabledReason
     });
     rows.push({
       kind: 'action',
       actionId: 'voice-check',
       message: 'voice check',
-      detail: 'manual mic + tts path',
+      detail: 'manual mic + sound path · only test that may speak',
       disabled: false
     });
     return rows;
@@ -691,6 +691,23 @@
         manualVoiceCheck: result
       });
       return { ok: true, result: result };
+    });
+  }
+
+  function publishDiagnosticSummary(report) {
+    if (!report || !native?.appendLogEntry) return;
+    native.appendLogEntry({
+      kind: 'diagnostic',
+      message: 'diagnostics · ' + report.summary.passed + ' pass · ' + report.summary.failed + ' fail · ' + report.summary.skipped + ' skip'
+    });
+    (report.results || []).filter(function(item) {
+      return item.status !== 'pass';
+    }).slice(0, 6).forEach(function(item) {
+      var detail = formatFailureDetail(item);
+      native.appendLogEntry({
+        kind: 'diagnostic',
+        message: item.id + ' ' + item.name + ' · ' + (item.error?.message || item.status) + (detail ? (' · ' + detail) : '')
+      });
     });
   }
 
@@ -1087,8 +1104,16 @@
       var original = window.PluginMessageHandler.postMessage;
       window.PluginMessageHandler.postMessage = function() {};
       try {
-        var first = llm.speakMilestone('project_live');
-        var second = llm.speakMilestone('project_live');
+        var first;
+        var second;
+        await llm.withOperationPolicy({
+          allowSpeech: true,
+          silent: false,
+          source: 'voice-check'
+        }, function() {
+          first = llm.speakMilestone('project_live');
+          second = llm.speakMilestone('project_live');
+        });
         expect(assertions, first === true, 'first milestone allowed', 'first milestone suppressed');
         expect(assertions, second === false, 'second milestone suppressed', 'cooldown failed');
       } finally {
@@ -1187,9 +1212,6 @@
     })) {
       return { ok: false, error: 'wait for queue to drain' };
     }
-    if (native?.getActiveFocus?.()) {
-      return { ok: false, error: 'wait for chain focus to clear' };
-    }
     if (!(currentCaps().hasBridge || new URLSearchParams(window.location.search || '').get('debug') === '1')) {
       return { ok: false, error: 'diagnostics require device bridge or debug mode' };
     }
@@ -1217,35 +1239,42 @@
 
     var results = [];
     try {
-      await withIsolatedProject(async function() {
-        var tests = buildTests();
-        setState({
-          progress: {
-            total: tests.length,
-            done: 0,
-            current: ''
+      await llm.withOperationPolicy({
+        allowSpeech: false,
+        silent: true,
+        source: 'diagnostics',
+        reason: 'diagnostics stay written'
+      }, function() {
+        return withIsolatedProject(async function() {
+          var tests = buildTests();
+          setState({
+            progress: {
+              total: tests.length,
+              done: 0,
+              current: ''
+            }
+          });
+          for (var index = 0; index < tests.length; index += 1) {
+            if (state.abortRequested) break;
+            var test = tests[index];
+            setState({
+              progress: {
+                total: tests.length,
+                done: index,
+                current: test.id + ' ' + test.name
+              }
+            });
+            var result = await runTest(test);
+            results.push(result);
+            setState({
+              progress: {
+                total: tests.length,
+                done: index + 1,
+                current: test.id + ' ' + result.status
+              }
+            });
           }
         });
-        for (var index = 0; index < tests.length; index += 1) {
-          if (state.abortRequested) break;
-          var test = tests[index];
-          setState({
-            progress: {
-              total: tests.length,
-              done: index,
-              current: test.id + ' ' + test.name
-            }
-          });
-          var result = await runTest(test);
-          results.push(result);
-          setState({
-            progress: {
-              total: tests.length,
-              done: index + 1,
-              current: test.id + ' ' + result.status
-            }
-          });
-        }
       });
     } catch (error) {
       setState({ lastError: error?.message || 'diagnostic run failed' });
@@ -1255,6 +1284,7 @@
     var report = makeReport(results, startedAt, finishedAt);
     if (state.abortRequested) report.aborted = true;
     await saveLocalReport(report);
+    publishDiagnosticSummary(report);
     if (options.email !== false) {
       report.delivery = await emailReport(report);
       if (!report.delivery?.ok) {
@@ -1312,11 +1342,17 @@
       }];
       if (state.report.delivery) {
         rows.push({
-          kind: state.report.delivery.ok ? 'status' : 'error',
-          message: state.report.delivery.ok ? 'report delivery' : 'report not emailed',
+          kind: state.report.delivery.ok ? 'status' : 'muted',
+          message: state.report.delivery.ok ? 'report exported' : 'report saved locally',
           detail: state.report.delivery.ok
             ? ('email sent · saved locally')
             : (((state.report.delivery.code === 'email-unavailable' ? 'email unavailable' : (state.report.delivery.error || 'email failed'))) + ' · saved locally only')
+        });
+      } else {
+        rows.push({
+          kind: 'status',
+          message: 'report saved locally',
+          detail: 'written report stays in this drawer'
         });
       }
       state.report.results.filter(function(item) {
@@ -1333,7 +1369,7 @@
         kind: 'action',
         actionId: 'diagnostics-export',
         message: 'export again',
-        detail: 'email the last report'
+        detail: 'best-effort email export'
       });
       rows.push({
         kind: 'action',
@@ -1348,14 +1384,14 @@
       var voiceRows = [{
         kind: 'status',
         message: 'voice check',
-        detail: 'manual mic + tts path'
+        detail: 'manual mic + sound path'
       }];
       if (check.phase === 'confirm_tone') {
-        voiceRows.push({ kind: 'status', message: 'did you hear the milestone?', detail: 'tap one answer' });
-        voiceRows.push({ kind: 'action', actionId: 'voice-check-heard', message: 'heard tone', detail: 'tts path is alive' });
-        voiceRows.push({ kind: 'action', actionId: 'voice-check-silent', message: 'silent', detail: 'tts path may be broken' });
+        voiceRows.push({ kind: 'status', message: 'did you hear the milestone?', detail: 'click one answer' });
+        voiceRows.push({ kind: 'action', actionId: 'voice-check-heard', message: 'heard tone', detail: 'sound path is alive' });
+        voiceRows.push({ kind: 'action', actionId: 'voice-check-silent', message: 'silent', detail: 'sound path may be broken' });
       } else if (check.phase === 'awaiting_transcript') {
-        voiceRows.push({ kind: 'status', message: 'hold ptt and say structa', detail: 'release to capture transcript' });
+        voiceRows.push({ kind: 'status', message: 'hold ptt and say structa', detail: 'release to save transcript' });
       } else if (check.phase === 'confirm_transcript') {
         voiceRows.push({ kind: 'status', message: 'transcript', detail: check.lastTranscript || 'no transcript' });
         voiceRows.push({ kind: 'action', actionId: 'voice-check-match', message: 'matches', detail: 'stt looks right' });
@@ -1384,7 +1420,7 @@
   }
 
   function handleAction(actionId) {
-    if (actionId === 'diagnostics-run') return run({ email: true });
+    if (actionId === 'diagnostics-run') return run({ email: false });
     if (actionId === 'voice-check') return beginVoiceCheck();
     if (actionId === 'diagnostics-abort') {
       abort();

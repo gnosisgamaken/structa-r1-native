@@ -2,6 +2,25 @@
   const contracts = window.StructaContracts;
   const validation = window.StructaValidation;
   const router = window.StructaActionRouter;   // optional — loaded if present
+  const COPY = window.StructaCopy || Object.freeze({
+    backgroundWorking: 'working in background',
+    waitingAnswer: 'waiting on your answer',
+    boilerRoomReady: 'boiler room ready',
+    holdPttBegin: 'hold ptt to begin',
+    holdPttExtend: 'hold ptt to extend',
+    holdPttComment: 'hold ptt · comment',
+    readyForFrame: 'ready for a frame',
+    frameSaved: 'frame saved',
+    frameCaptured: 'frame captured',
+    visualNoteReady: 'visual note ready',
+    visualNoteUnavailable: 'visual note unavailable',
+    reportSavedLocally: 'report saved locally',
+    reportSavedLocallyOnly: 'report saved locally only',
+    queuedWorking: function(count) {
+      return count + ' queued · working in background';
+    }
+  });
+  window.StructaCopy = COPY;
 
   const runtimeEvents = [];
   const MAX_RUNTIME_EVENTS = 200;
@@ -2182,7 +2201,7 @@
     if (raw === 'camera opened' || raw.endsWith('camera open')) return null;
     if (raw === 'capture capture') return null;
     if (raw === 'camera image captured' || raw === 'image captured') return 'frame captured';
-    if (raw === 'show+tell captured') return 'show+tell captured';
+    if (raw === 'show+tell captured' || raw === 'show+tell saved') return 'show+tell saved';
     if (raw === 'image saved') return 'frame saved';
     if (raw === 'voice saved') return null;
     if (raw === 'question answered') return null;
@@ -2227,6 +2246,10 @@
       return null;
     }
 
+    if (k === 'diagnostic') {
+      return compact(raw, 10);
+    }
+
     if (k === 'triangle') return null;
     if (k === 'voice') {
       if (raw.startsWith('project:')) return compact(raw, 6);
@@ -2239,6 +2262,7 @@
       if (
         raw === 'frame captured' ||
         raw === 'show+tell captured' ||
+        raw === 'show+tell saved' ||
         raw === 'visual note ready' ||
         raw === 'visual note unavailable' ||
         raw === 'frame capture failed — try again'

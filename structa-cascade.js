@@ -30,6 +30,16 @@
   const processingQueue = window.StructaProcessingQueue;
   const diagnostics = window.StructaDiagnostics;
   const projectCode = window.StructaContracts?.baseProjectCode || 'prj-structa-r1';
+  const COPY = window.StructaCopy || {
+    backgroundWorking: 'working in background',
+    waitingAnswer: 'waiting on your answer',
+    boilerRoomReady: 'boiler room ready',
+    holdPttBegin: 'hold ptt to begin',
+    holdPttExtend: 'hold ptt to extend',
+    holdPttComment: 'hold ptt · comment',
+    readyForFrame: 'ready for a frame',
+    queuedWorking: function(count) { return count + ' queued · working in background'; }
+  };
 
   // === Constants ===
   const STATES = Object.freeze({
@@ -57,8 +67,8 @@
   }
   const triangleEngine = window.StructaTriangle;
   const cards = [
-    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'visual capture', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'voice capture', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
+    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'visual note', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'voice note', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: iconAsset('card-know', 'assets/icons/png/7.png'), iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: iconAsset('card-now', 'assets/icons/png/6.png'), iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
   ];
@@ -486,7 +496,6 @@
   function getOnboardingStep() {
     const ui = getUIState();
     const projects = getProjects();
-    const project = getProjectMemory();
     if (projects.length > 1) {
       native?.updateUIState?.({
         onboarded: true,
@@ -496,18 +505,6 @@
     }
     if (ui?.onboarded) return 'complete';
     if (ui?.onboarding_step === 'complete') return 'complete';
-    const answeredOnboarding =
-      lower(project?.name || '') !== 'untitled project' ||
-      (project?.nodes || []).some(function(node) {
-        return node?.type === 'voice-entry' && node?.meta?.entry_mode === 'onboarding';
-      });
-    if (answeredOnboarding && typeof ui?.onboarding_step === 'number' && ui.onboarding_step < 3) {
-      native?.updateUIState?.({
-        onboarding_step: 'complete',
-        onboarded: true
-      });
-      return 'complete';
-    }
     if (typeof ui?.onboarding_step === 'number') return ui.onboarding_step;
     return freshWorkspaceState() ? 0 : 'complete';
   }
@@ -611,6 +608,8 @@
 
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
     if (step === 'complete') return cards.map(card => card.id);
+    if (step === 3) return ['now', 'know'];
+    if (step === 4) return ['know', 'show'];
     return ['now'];
   }
 
@@ -807,15 +806,15 @@
     if (!job) return '';
     switch (job.kind) {
       case 'triangle-synthesize':
-        return 'synthesis stalled — tap to retry, double side skips';
+        return 'synthesis stalled — click retry, double side skips';
       case 'image-analyze':
-        return 'visual analysis stalled — tap to retry, double side skips';
+        return 'visual note stalled — click retry, double side skips';
       case 'voice-interpret':
-        return 'interpretation stalled — tap to retry, double side skips';
+        return 'interpretation stalled — click retry, double side skips';
       case 'project-title':
-        return 'project naming stalled — tap to retry, double side skips';
+        return 'project naming stalled — click retry, double side skips';
       default:
-        return 'queue stalled — tap to retry, double side skips';
+        return 'queue stalled — click retry, double side skips';
     }
   }
 
@@ -1297,7 +1296,7 @@
     const voiceOverlay = document.getElementById('voice-overlay');
     const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision', log: 'to log' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
-    const suppressTutorialVoiceChrome = !!(data.answeringQuestion?.onboarding && onboardingActive() && getOnboardingStep() === 2);
+    const suppressTutorialVoiceChrome = !!(onboardingActive() && getOnboardingStep() === 2);
     const contextLabelText = data.triangleMode
       ? 'your angle'
       : suppressTutorialVoiceChrome
@@ -1361,7 +1360,15 @@
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
     stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
-    if (onboardingActive()) markTutorialStepEntered(getOnboardingStep());
+    if (onboardingActive()) {
+      const step = getOnboardingStep();
+      markTutorialStepEntered(step);
+      if (step === 3) {
+        setOnboardingStep(4, { via: 'primary' });
+        pushLog('lesson 3 complete', 'system');
+        selectedIndex = Math.max(0, cards.findIndex(card => card.id === 'show'));
+      }
+    }
   };
 
   // --- KNOW_DETAIL ---
@@ -2079,13 +2086,13 @@
         });
       } else {
         mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+        text(30, cardY + 134, 'hold ptt → answer', {
+          fill: 'rgba(244,239,228,0.96)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '12'
+        });
       }
-      text(30, cardY + 134, 'hold ptt → answer', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'hold ptt → answer', {
+      text(226, 276, data.tutorialStep2FallbackVisible ? 'scroll → choose · click confirms' : 'answer in your own words', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2095,18 +2102,18 @@
     }
 
     if (step === 3) {
-      text(18, cardY + 18, 'lesson 3 · scroll to know', {
+      text(18, cardY + 18, 'lesson 3 · open know', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, 'shake home. know is ready. click to open, then scroll once inside.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
-      text(18, cardY + 132, 'shake → know', {
+      wrapTextBlock(undefined, 'know is ready. click know to open the project map.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
+      text(18, cardY + 132, 'click know →', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'lesson 4 starts in know', {
+      text(226, 276, 'show is next', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2256,7 +2263,7 @@
     captures.slice(-4).reverse().forEach((capture, index) => {
       const captureThread = cloneThread(capture.thread);
       signals.push(makeItem({
-        lane: 'signals', title: capture.type === 'image' ? 'visual note' : 'capture',
+        lane: 'signals', title: capture.type === 'image' ? 'visual note' : 'voice note',
         body: capture.summary || 'stored',
         next: backlog[0]?.title || '',
         created_at: capture.created_at,
@@ -2304,7 +2311,7 @@
 
     const lanes = [
       { id: 'questions', label: 'asks', summary: 'guided asks', items: questions },
-      { id: 'signals', label: 'signals', summary: 'working signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'capture or tell to begin shaping signal', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
+      { id: 'signals', label: 'signals', summary: 'working signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'hold ptt or open show to begin shaping signal', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
       { id: 'decisions', label: 'decisions', summary: 'locked decisions', items: decisionsLane },
       { id: 'open loops', label: 'tasks', summary: 'open tasks', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no tasks', body: 'new tasks gather here as the project grows', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
     ].map(lane => {
@@ -2780,7 +2787,7 @@
 
     const describe = function(item) {
       return {
-        title: item?.type === 'show' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · visual capture'
+        title: item?.type === 'show' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · visual note'
           : item?.type === 'tell' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · voice note'
           : item?.type === 'know' ? 'point ' + (item === pointA ? 'a' : 'b') + ' · signal'
           : 'point ' + (item === pointA ? 'a' : 'b') + ' · decision',
@@ -3422,12 +3429,12 @@
         });
       }
     } else if (model.captures.length) {
-      text(20, 148, 'frame saved', {
+      text(20, 148, COPY.frameSaved, {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || 'working in background')), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
       text(20, 206, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3440,7 +3447,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 168, cameraRecoveryCue ? 'camera not enabled — tap shutter to allow' : 'click open lens to begin', {
+      text(20, 168, cameraRecoveryCue ? 'camera not enabled — click shutter to allow' : 'click open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3494,13 +3501,13 @@
       });
     });
 
-    const showFooter = model.annotationPending
-      ? 'hold ptt · tag frame'
-      : model.claimExtractionPending
-      ? 'working in background'
-      : model.pendingQueueCount > 0
-      ? `${model.pendingQueueCount} queued · working in background`
-      : (model.captures.length ? (model.claimCount > 0 ? `${model.claimCount} claims · hold ptt · comment` : 'hold ptt · comment') : 'ready to capture');
+      const showFooter = model.annotationPending
+        ? 'hold ptt · tag frame'
+        : model.claimExtractionPending
+          ? COPY.backgroundWorking
+          : model.pendingQueueCount > 0
+            ? COPY.queuedWorking(model.pendingQueueCount)
+            : (model.captures.length ? (model.claimCount > 0 ? `${model.claimCount} claims · ${COPY.holdPttComment}` : COPY.holdPttComment) : COPY.readyForFrame);
     text(226, 276, showFooter, {
       fill: 'rgba(8,8,8,0.38)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3683,7 +3690,7 @@
       id: capture?.entry_id || capture?.id || capture?.node_id || '',
       nodeId: capture?.node_id || '',
       project_id: capture?.project_id || getActiveProjectId(),
-      title: 'visual capture',
+      title: 'visual note',
       body: getCaptureSummary(capture),
       summary: getCaptureSummary(capture),
       timeLabel: recentTimeLabel(summary.createdAt),
@@ -3999,14 +4006,14 @@
       blocked: 'waiting on blocker',
       observe: 'observing',
       clarify: 'clarifying',
-      research: 'researching',
+      research: 'working in background',
       evaluate: 'evaluating',
       decision: 'deciding',
       cooldown: 'cooling down',
       idle: 'idle'
     }[data.chainPhase] || data.chainPhase;
 
-    if (!hasBlockers) {
+    if (!hasBlockers && data.chainPhase !== 'idle') {
       text(14, chainY + 8, phaseLabel, {
         fill: 'rgba(8,8,8,0.56)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -4026,14 +4033,14 @@
       const blocker = data.queueBlocker;
       const boxY = 84;
       mk('rect', { x: 10, y: boxY, width: 220, height: 142, rx: 8, fill: 'rgba(8,8,8,0.12)' });
-      text(18, boxY + 16, 'queue blocker', {
+      text(18, boxY + 16, 'background blocker', {
         fill: 'rgba(8,8,8,0.50)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, lower(String(blocker.body || 'queue stalled').slice(0, 132)), 18, boxY + 36, 192, 13, 'rgba(8,8,8,0.96)', '13', 5);
+      wrapTextBlock(undefined, lower(String(blocker.body || 'background work stalled').slice(0, 132)), 18, boxY + 36, 192, 13, 'rgba(8,8,8,0.96)', '13', 5);
       mk('rect', { x: 18, y: boxY + 100, width: 88, height: 20, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
-      text(28, boxY + 113, 'tap retry', {
+      text(28, boxY + 113, 'click retry', {
         fill: 'rgba(244,239,228,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '11'
@@ -4127,25 +4134,16 @@
       controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
     } else if (data.projectCapNotice || data.openQuestions > 0) {
       const boxY = 78;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 170, rx: 12, fill: 'rgba(8,8,8,0.15)' });
-      const reasoningLabel = lower(data.activeQuestionNode?.source || '') === 'chain' ? 'from reasoning' : 'answer to continue';
+      mk('rect', { x: 10, y: boxY, width: 220, height: 178, rx: 12, fill: 'rgba(8,8,8,0.15)' });
+      const reasoningLabel = lower(data.activeQuestionNode?.source || '') === 'chain' ? 'from reasoning' : 'question';
       text(18, boxY + 18, reasoningLabel, {
         fill: 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      if (queueCount > 0) {
-        text(222, boxY + 18, `${queueCount} queued`, {
-          fill: 'rgba(8,8,8,0.42)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10',
-          'text-anchor': 'end'
-        });
-      }
-      // Gold accent bar — signals this is Structa speaking
       mk('rect', { x: 14, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
       const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 6);
+      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 5);
       if (data.activeThreadSummary) {
         text(20, boxY + 46 + blockerRows * 14, 'comment · ' + lower(data.activeThreadSummary).slice(0, 36), {
           fill: 'rgba(8,8,8,0.44)',
@@ -4154,9 +4152,9 @@
         });
         drawKnowDepthGlyph(data.activeThreadDepth || 0, 204, boxY + 38 + blockerRows * 14);
       }
-      const ctaY = Math.min(boxY + 126, boxY + 42 + blockerRows * 14 + (data.activeThreadSummary ? 28 : 16));
+      const ctaY = Math.min(boxY + 130, boxY + 42 + blockerRows * 14 + (data.activeThreadSummary ? 28 : 16));
       if (!data.projectCapNotice) {
-        mk('rect', { x: 18, y: ctaY, width: 160, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
+        mk('rect', { x: 18, y: ctaY, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
         text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
           fill: 'rgba(244,239,228,0.96)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -4164,7 +4162,7 @@
         });
       }
       if (data.blockerCount > 1) {
-        text(18, ctaY + 42, `${data.blockerCount} blockers waiting to clear`, {
+        text(18, ctaY + 42, `${data.blockerCount} asks waiting`, {
           fill: 'rgba(8,8,8,0.36)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10'
@@ -4179,28 +4177,23 @@
         });
       }
     } else {
-      text(14, 112, 'boiler room ready', {
+      const mainPrompt = lower(data.next || (projectHasMeaningfulContent() ? 'hold ptt or open show to extend the project' : 'hold ptt or open show to begin'));
+      text(14, 112, COPY.boilerRoomReady, {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      wrapTextBlock(undefined, lower(data.next || 'capture or tell to build project structure'), 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 5);
-      text(14, 222, data.chainActive || data.chainPhase !== 'idle' ? phaseLabel : 'waiting for your next move', {
-        fill: 'rgba(8,8,8,0.46)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
-      if (queueCount > 0) {
-        text(226, 222, `${queueCount} queued`, {
-          fill: 'rgba(8,8,8,0.36)',
+      wrapTextBlock(undefined, mainPrompt, 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 4);
+      if (data.chainPhase !== 'idle') {
+        text(14, 214, phaseLabel, {
+          fill: 'rgba(8,8,8,0.46)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10',
-          'text-anchor': 'end'
+          'font-size': '11'
         });
       }
     }
 
-    text(226, 276, hasBlockers ? (queueCount ? `${queueCount} queued · will finish soon` : 'waiting on your answer') : 'hold ptt on project', {
+    text(226, 276, hasBlockers ? (queueCount ? COPY.queuedWorking(queueCount) : COPY.waitingAnswer) : (queueCount ? COPY.queuedWorking(queueCount) : (projectHasMeaningfulContent() ? COPY.holdPttExtend : COPY.holdPttBegin)), {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -4231,21 +4224,21 @@
     if (onboardingActive() && getOnboardingStep() === 4) {
       const cameraDenied = !!getUIState().tutorial_step4_camera_denied;
       mk('rect', { x: 10, y: 84, width: 220, height: 152, rx: 12, fill: 'rgba(8,8,8,0.12)' });
-      text(18, 104, 'lesson 4 · show structa', {
+      text(18, 104, 'lesson 4 · open show', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
       wrapTextBlock(undefined, cameraDenied
-        ? 'camera needs permission first. tap the screen once to allow camera, or long-press home to skip.'
-        : 'shake home. show is ready. open it and capture your first frame. the first capture unlocks the full app.',
+        ? 'camera needs permission first. click once to allow camera, or long-press home to skip.'
+        : 'back once, then open show. add one frame to finish the tutorial.',
       18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
-      text(18, 218, cameraDenied ? 'tap once → allow camera' : 'shake → show', {
+      text(18, 218, cameraDenied ? 'click once → allow camera' : 'back → show', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'shutter → capture · long-press home to skip', {
+      text(226, 276, 'show → first frame', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4516,20 +4509,6 @@
 
       case STATES.KNOW_BROWSE: {
         const model = buildKnowModel();
-        if (onboardingActive() && getOnboardingStep() === 3) {
-          const lanes = model.lanes || [];
-          if (!lanes.length) break;
-          stateData.knowLaneIndex = ((stateData.knowLaneIndex || 0) + (direction > 0 ? 1 : -1) + lanes.length) % lanes.length;
-          stateData.knowItemIndex = 0;
-          const newLane = lanes[stateData.knowLaneIndex] || lanes[0];
-          const activeChip = model.chips[stateData.knowChipIndex]?.id;
-          const hasChipItems = newLane?.items?.some(item => item.chips.includes(activeChip));
-          if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
-          setOnboardingStep(4, { via: 'primary' });
-          pushLog('lesson 3 complete', 'system');
-          render();
-          break;
-        }
         const items = getKnowVisibleItems(model);
         if (!items.length) break;
         stateData.knowItemIndex = ((stateData.knowItemIndex || 0) + (direction > 0 ? 1 : -1) + items.length) % items.length;
@@ -5409,13 +5388,16 @@
     if (step !== 2) return;
     const inferredName = event?.detail?.inferredName || '';
     if (inferredName) native?.setProjectName?.(inferredName);
-    completeOnboarding();
+    setOnboardingStep(3, { via: 'primary' });
+    selectedIndex = Math.max(0, cards.findIndex(card => card.id === 'know'));
     pushLog('lesson 2 complete', 'system');
     if (currentState === STATES.VOICE_PROCESSING || currentState === STATES.VOICE_OPEN) {
-      voiceReturnState = STATES.NOW_BROWSE;
+      voiceReturnState = STATES.HOME;
     } else if (currentState === STATES.HOME) {
-      transition(STATES.NOW_BROWSE);
+      transition(STATES.HOME);
     } else if (currentState === STATES.NOW_BROWSE) {
+      transition(STATES.HOME);
+    } else {
       render();
     }
   });
@@ -5431,7 +5413,7 @@
     if (!onboardingActive() || getOnboardingStep() !== 4) return;
     native?.updateUIState?.({ tutorial_step4_camera_denied: true });
     traceTutorial('tutorial.step', 'camera_denied', '4', { step: 4 });
-    stateData.showStatus = 'tap once to allow camera · long-press home to skip';
+    stateData.showStatus = 'click once to allow camera · long-press home to skip';
     scheduleRender();
   });
 

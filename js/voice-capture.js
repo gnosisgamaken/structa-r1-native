@@ -144,12 +144,19 @@
 
     switch (cmd.type) {
       case 'research':
-          native?.appendLogEntry?.({ kind: 'voice', message: 'researching: ' + arg.slice(0, 40) });
+          native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch working in background: ' + arg.slice(0, 40) });
           if (window.StructaLLM && window.StructaLLM.research) {
-            window.StructaLLM.research(arg).then(function(result) {
+            window.StructaLLM.withOperationPolicy({
+              allowSpeech: false,
+              silent: true,
+              source: 'research-command',
+              reason: 'branch work stays quiet'
+            }, function() {
+              return window.StructaLLM.research(arg);
+            }).then(function(result) {
               if (result && result.ok) {
-                native?.appendLogEntry?.({ kind: 'llm', message: 'research: ' + result.findings.slice(0, 2).join('; ').slice(0, 50) });
-                native?.updateUIState?.({ last_insight_summary: 'research: ' + arg.slice(0, 30) });
+                native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch ready: ' + result.findings.slice(0, 2).join('; ').slice(0, 50) });
+                native?.updateUIState?.({ last_insight_summary: 'branch working · ' + arg.slice(0, 30) });
               }
               window.dispatchEvent(new CustomEvent('structa-memory-updated'));
             });
@@ -160,11 +167,18 @@
           return true;
 
       case 'export':
-          native?.appendLogEntry?.({ kind: 'voice', message: 'exporting ' + arg });
+          native?.appendLogEntry?.({ kind: 'diagnostic', message: 'export working in background: ' + arg });
           if (window.StructaLLM && window.StructaLLM.generateExport) {
-            window.StructaLLM.generateExport(arg).then(function(result) {
+            window.StructaLLM.withOperationPolicy({
+              allowSpeech: false,
+              silent: true,
+              source: 'export-command',
+              reason: 'exports stay quiet'
+            }, function() {
+              return window.StructaLLM.generateExport(arg);
+            }).then(function(result) {
               if (result && result.ok) {
-                native?.appendLogEntry?.({ kind: 'export', message: arg + ' sent to email' });
+                native?.appendLogEntry?.({ kind: 'diagnostic', message: arg + ' export ready' });
               }
               window.dispatchEvent(new CustomEvent('structa-memory-updated'));
             });

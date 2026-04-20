@@ -422,7 +422,7 @@
         return {
           ok: false,
           blocked: true,
-          message: 'visual analysis stalled — tap to retry, double side skips'
+          message: 'visual note stalled — click retry, double side skips'
         };
       }
 
@@ -474,7 +474,7 @@
         return {
           ok: false,
           blocked: true,
-          message: 'visual analysis stalled — tap to retry, double side skips'
+          message: 'visual note stalled — click retry, double side skips'
         };
       }).catch(function() {
         native?.traceEvent?.('image', 'analyzing', 'blocked', {
@@ -485,7 +485,7 @@
         return {
           ok: false,
           blocked: true,
-          message: 'visual analysis stalled — tap to retry, double side skips'
+          message: 'visual note stalled — click retry, double side skips'
         };
       });
     });
@@ -743,7 +743,7 @@
       strip.classList.add('active');
       strip.querySelector('.strip-text').textContent = 'recording narration...';
     }
-    setStatus('release to capture with narration');
+    setStatus('release for frame + note');
 
     // Start R1 native STT if available
     if (typeof CreationVoiceHandler !== 'undefined') {
@@ -959,8 +959,8 @@
       source_type: 'camera',
       input_type: annotation ? 'image+voice' : 'image',
       image_asset: resolvedAsset,
-      prompt_text: annotation || (facingMode === 'user' ? 'selfie capture' : 'camera capture'),
-      summary: annotation ? 'show+tell captured' : 'image captured',
+      prompt_text: annotation || (facingMode === 'user' ? 'selfie frame' : 'camera frame'),
+      summary: annotation ? 'show+tell saved' : 'frame saved',
       approval_state: 'draft',
       tags: annotation ? [facingMode, 'capture', 'show-tell'] : [facingMode, 'capture'],
       links: [],
@@ -981,13 +981,13 @@
     native?.storeCaptureBundle?.(bundle);
     native?.updateUIState?.({
       last_capture_entry_id: bundle?.entry_id || '',
-      last_capture_summary: annotation ? 'show+tell captured' : 'image captured'
+      last_capture_summary: annotation ? 'show+tell saved' : 'frame saved'
     });
     window.dispatchEvent(new CustomEvent('structa-capture-stored', {
       detail: { entryId: bundle?.entry_id || '', summary: bundle?.summary || '' }
     }));
 
-    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell captured' : 'image captured' });
+    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'frame saved' });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: annotation ? 'show-tell' : 'capture' }
     }));
@@ -997,8 +997,8 @@
     if (native?.addNode) {
       captureNode = native.addNode({
         type: 'capture',
-        title: annotation ? 'show+tell: ' + annotation.slice(0, 40) : 'visual capture',
-        body: annotation || 'visual capture',
+        title: annotation ? 'show+tell: ' + annotation.slice(0, 40) : 'visual note',
+        body: annotation || 'visual note',
         source: 'camera',
         capture_image: bundle?.entry_id || null,
         voice_annotation: annotation || null,

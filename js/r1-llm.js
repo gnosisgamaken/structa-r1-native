@@ -33,6 +33,7 @@
   var lastMilestoneSpeechAt = 0;
   var MILESTONE_COOLDOWN_MS = 6000;
   var pendingBridgeRequests = new Map();
+  var operationPolicyStack = [{ allowSpeech: true, silent: false, source: 'default' }];
   var runtimeCaps = window.__structaCaps || {
     hasBridge: typeof PluginMessageHandler !== 'undefined',
     hasVoiceBridge: typeof CreationVoiceHandler !== 'undefined',
@@ -136,6 +137,35 @@
     return aliases[raw] || raw;
   }
 
+  function currentOperationPolicy() {
+    return operationPolicyStack[operationPolicyStack.length - 1] || { allowSpeech: true, silent: false, source: 'default' };
+  }
+
+  function pushOperationPolicy(patch) {
+    var next = Object.assign({}, currentOperationPolicy(), patch || {});
+    operationPolicyStack.push(next);
+    if (next.silent || next.allowSpeech === false) {
+      native?.traceEvent?.('background.silent', 'active', lower(next.source || 'background'), {
+        source: next.source || 'background',
+        reason: next.reason || ''
+      });
+    }
+    return function releasePolicy() {
+      var index = operationPolicyStack.indexOf(next);
+      if (index >= 0) operationPolicyStack.splice(index, 1);
+      if (!operationPolicyStack.length) {
+        operationPolicyStack.push({ allowSpeech: true, silent: false, source: 'default' });
+      }
+    };
+  }
+
+  function withOperationPolicy(patch, fn) {
+    var release = pushOperationPolicy(patch);
+    return Promise.resolve().then(function() {
+      return fn();
+    }).finally(release);
+  }
+
   function speakMilestone(kind) {
     var normalized = normalizeMilestoneKind(kind);
     var STRINGS = {
@@ -153,8 +183,24 @@
       decision_approved: true
     };
     var text = STRINGS[normalized];
+    var policy = currentOperationPolicy();
     if (!text) {
       native?.recordVoiceCall?.(normalized || 'unknown', false, { reason: 'not-allowlisted' });
+      return false;
+    }
+    if (policy.allowSpeech === false || policy.silent === true) {
+      native?.recordVoiceCall?.(normalized, true, {
+        reason: 'policy-silent',
+        source: policy.source || 'background'
+      });
+      native?.traceEvent?.('voice.suppressed', 'requested', normalized, {
+        source: policy.source || 'background',
+        reason: policy.reason || 'silent policy'
+      });
+      native?.traceEvent?.('speech.blocked_by_policy', 'requested', normalized, {
+        source: policy.source || 'background',
+        reason: policy.reason || 'silent policy'
+      });
       return false;
     }
     if (!runtimeCaps.hasBridge || typeof PluginMessageHandler === 'undefined') {
@@ -848,87 +894,94 @@
       );
     }
 
-    return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
-      var prompt = String(prepared?.prompt || '').trim();
-      if (!prepared || !prepared.ok || !prompt) {
-        prompt = buildLocalImagePrompt(projectEnvelope, options);
-        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
-          entryId: options.imageId || '',
-          reason: prepared?.error || 'prompt unavailable',
-          promptLength: prompt.length
-        });
-      } else if (prompt.length > 1600) {
-        prompt = buildLocalImagePrompt(projectEnvelope, options);
-        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
-          entryId: options.imageId || '',
-          reason: 'prompt too long',
-          promptLength: prompt.length
-        });
-      }
+    return withOperationPolicy({
+      allowSpeech: false,
+      silent: true,
+      source: 'image',
+      reason: 'visual notes stay quiet'
+    }, function() {
+      return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
+        var prompt = String(prepared?.prompt || '').trim();
+        if (!prepared || !prepared.ok || !prompt) {
+          prompt = buildLocalImagePrompt(projectEnvelope, options);
+          native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
+            entryId: options.imageId || '',
+            reason: prepared?.error || 'prompt unavailable',
+            promptLength: prompt.length
+          });
+        } else if (prompt.length > 1600) {
+          prompt = buildLocalImagePrompt(projectEnvelope, options);
+          native?.traceEvent?.('image.dispatch', 'prepare', 'bridge-local-prompt', {
+            entryId: options.imageId || '',
+            reason: 'prompt too long',
+            promptLength: prompt.length
+          });
+        }
 
-      native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
-        entryId: options.imageId || '',
-        projectId: projectEnvelope.id || '',
-        promptLength: prompt.length
-      });
-      return sendToLLM(prompt, {
-        imageBase64: rawBase64,
-        pluginId: 'com.playgranada.structa',
-        journal: true,
-        timeout: 8000,
-        priority: 'high'
-      }).then(function(bridgeResult) {
-        if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
-          if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
+        native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
+          entryId: options.imageId || '',
+          projectId: projectEnvelope.id || '',
+          promptLength: prompt.length
+        });
+        return sendToLLM(prompt, {
+          imageBase64: rawBase64,
+          pluginId: 'com.playgranada.structa',
+          journal: true,
+          timeout: 8000,
+          priority: 'high'
+        }).then(function(bridgeResult) {
+          if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
+            if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
+              return bridgeResult;
+            }
+            if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
+              return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
+            }
             return bridgeResult;
           }
-          if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
-            return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
-          }
-          return bridgeResult;
-        }
-        native?.traceEvent?.('image.bridge', 'pending', 'response', {
-          entryId: options.imageId || '',
-          textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
-          latencyMs: Date.now() - startedAt
-        });
-        return extractClaimsFromText({
-          project: projectEnvelope,
-          input: {
-            text: bridgeResult.clean || bridgeResult.text || '',
-            deviceId: native?.deviceId || ''
-          },
-          source: options.voiceAnnotation ? 'show-tell' : 'image',
-          sourceRef: {
-            imageId: options.imageId || '',
-            itemId: options.itemId || ''
-          },
-          meta: {
-            deviceId: native?.deviceId || '',
-            imageId: options.imageId || ''
-          }
-        }).then(function(extracted) {
-          var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
-          if (claims.length) {
-            native?.traceEvent?.('image.claims', 'pending', 'extracted', {
-              entryId: options.imageId || '',
-              count: claims.length
-            });
-          } else if (!extracted?.ok) {
-            native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
-              entryId: options.imageId || '',
-              reason: extracted?.error || 'extraction failed'
-            });
-          }
-          return {
-            ok: true,
-            text: bridgeResult.text || bridgeResult.clean || '',
-            clean: bridgeResult.clean || bridgeResult.text || '',
-            structured: extractFields(bridgeResult.clean || bridgeResult.text || ''),
-            claims: claims,
-            claim_extraction_pending: !claims.length,
-            bridge: true
-          };
+          native?.traceEvent?.('image.bridge', 'pending', 'response', {
+            entryId: options.imageId || '',
+            textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
+            latencyMs: Date.now() - startedAt
+          });
+          return extractClaimsFromText({
+            project: projectEnvelope,
+            input: {
+              text: bridgeResult.clean || bridgeResult.text || '',
+              deviceId: native?.deviceId || ''
+            },
+            source: options.voiceAnnotation ? 'show-tell' : 'image',
+            sourceRef: {
+              imageId: options.imageId || '',
+              itemId: options.itemId || ''
+            },
+            meta: {
+              deviceId: native?.deviceId || '',
+              imageId: options.imageId || ''
+            }
+          }).then(function(extracted) {
+            var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
+            if (claims.length) {
+              native?.traceEvent?.('image.claims', 'pending', 'extracted', {
+                entryId: options.imageId || '',
+                count: claims.length
+              });
+            } else if (!extracted?.ok) {
+              native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
+                entryId: options.imageId || '',
+                reason: extracted?.error || 'extraction failed'
+              });
+            }
+            return {
+              ok: true,
+              text: bridgeResult.text || bridgeResult.clean || '',
+              clean: bridgeResult.clean || bridgeResult.text || '',
+              structured: extractFields(bridgeResult.clean || bridgeResult.text || ''),
+              claims: claims,
+              claim_extraction_pending: !claims.length,
+              bridge: true
+            };
+          });
         });
       });
     });
@@ -1159,54 +1212,61 @@
    * Returns 3 compressed findings.
    */
   function research(query) {
-    var context = buildProjectContext({ deep: false });
-    var formulationPrompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
-      (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
-      'Topic: "' + query + '"\n' +
-      'Write the best web search query only. 3 to 8 words.';
+    return withOperationPolicy({
+      allowSpeech: false,
+      silent: true,
+      source: 'research',
+      reason: 'background research stays written'
+    }, function() {
+      var context = buildProjectContext({ deep: false });
+      var formulationPrompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
+        (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
+        'Topic: "' + query + '"\n' +
+        'Write the best web search query only. 3 to 8 words.';
 
-    return sendToLLM(formulationPrompt, { journal: false, timeout: 15000, priority: 'high' })
-      .then(function(formulated) {
-        var searchQuery = (formulated && formulated.ok && formulated.clean) ? formulated.clean.replace(/^["']|["']$/g, '') : query;
-        return sendToLLM(JSON.stringify({
-          query: searchQuery,
-          tag: 'search',
-          useLocation: false
-        }), {
-          useSerpAPI: true,
-          journal: false,
-          timeout: 25000,
-          priority: 'high'
-        }).then(function(searchResult) {
-          return { searchQuery: searchQuery, searchResult: searchResult };
-        });
-      })
-      .then(function(payload) {
-        if (!payload.searchResult || !payload.searchResult.ok) return { ok: false, findings: [] };
-        var rawResults = payload.searchResult.text || payload.searchResult.clean || '';
-        var synthesisPrompt = '🚫 DO NOT SEARCH AGAIN. DO NOT SAVE NOTES.\n' +
-          (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
-          'Search topic: "' + query + '"\n' +
-          'Search query used: "' + payload.searchQuery + '"\n\n' +
-          'Search results:\n' + String(rawResults).slice(0, 2400) + '\n\n' +
-          'Return exactly 3 numbered findings. Each finding must be 10 words max and useful for the project.';
-        return sendToLLM(synthesisPrompt, { journal: false, timeout: 20000, priority: 'high' })
-          .then(function(result) {
-            if (!result || !result.ok) return { ok: false, findings: [] };
-            var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
-            var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
-            if (native && native.addNode && findings.length) {
-              native.addNode({
-                type: 'research', title: 'research: ' + query.slice(0, 40),
-                body: findings.join(' | '), source: 'serp',
-                research_findings: findings,
-                tags: query.toLowerCase().split(/\s+/).slice(0, 3),
-                meta: { search_query: payload.searchQuery }
-              });
-            }
-            return { ok: true, query: query, searchQuery: payload.searchQuery, findings: findings, raw: result.clean, serpRaw: rawResults };
+      return sendToLLM(formulationPrompt, { journal: false, timeout: 15000, priority: 'high' })
+        .then(function(formulated) {
+          var searchQuery = (formulated && formulated.ok && formulated.clean) ? formulated.clean.replace(/^["']|["']$/g, '') : query;
+          return sendToLLM(JSON.stringify({
+            query: searchQuery,
+            tag: 'search',
+            useLocation: false
+          }), {
+            useSerpAPI: true,
+            journal: false,
+            timeout: 25000,
+            priority: 'high'
+          }).then(function(searchResult) {
+            return { searchQuery: searchQuery, searchResult: searchResult };
           });
-      });
+        })
+        .then(function(payload) {
+          if (!payload.searchResult || !payload.searchResult.ok) return { ok: false, findings: [] };
+          var rawResults = payload.searchResult.text || payload.searchResult.clean || '';
+          var synthesisPrompt = '🚫 DO NOT SEARCH AGAIN. DO NOT SAVE NOTES.\n' +
+            (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
+            'Search topic: "' + query + '"\n' +
+            'Search query used: "' + payload.searchQuery + '"\n\n' +
+            'Search results:\n' + String(rawResults).slice(0, 2400) + '\n\n' +
+            'Return exactly 3 numbered findings. Each finding must be 10 words max and useful for the project.';
+          return sendToLLM(synthesisPrompt, { journal: false, timeout: 20000, priority: 'high' })
+            .then(function(result) {
+              if (!result || !result.ok) return { ok: false, findings: [] };
+              var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
+              var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
+              if (native && native.addNode && findings.length) {
+                native.addNode({
+                  type: 'research', title: 'branch: ' + query.slice(0, 40),
+                  body: findings.join(' | '), source: 'serp',
+                  research_findings: findings,
+                  tags: query.toLowerCase().split(/\s+/).slice(0, 3),
+                  meta: { search_query: payload.searchQuery, silent: true }
+                });
+              }
+              return { ok: true, query: query, searchQuery: payload.searchQuery, findings: findings, raw: result.clean, serpRaw: rawResults };
+            });
+        });
+    });
   }
 
   // === Export generation ===
@@ -1239,10 +1299,17 @@
         '\n\nSummarize key themes and implications in 3 paragraphs.';
     }
 
-    return sendToLLM(prompt, { journal: false }).then(function(result) {
-      if (!result || !result.ok) return { ok: false };
-      return emailText('Structa ' + exportType + ' — ' + (project.name || 'project'), result.clean).then(function(delivery) {
-        return { ok: true, type: exportType, content: result.clean, delivery: delivery };
+    return withOperationPolicy({
+      allowSpeech: false,
+      silent: true,
+      source: 'export',
+      reason: 'exports stay quiet'
+    }, function() {
+      return sendToLLM(prompt, { journal: false }).then(function(result) {
+        if (!result || !result.ok) return { ok: false };
+        return emailText('Structa ' + exportType + ' — ' + (project.name || 'project'), result.clean).then(function(delivery) {
+          return { ok: true, type: exportType, content: result.clean, delivery: delivery };
+        });
       });
     });
   }
@@ -1308,6 +1375,8 @@
     emailText: emailText,
     titleProject: titleProject,
     speakMilestone: speakMilestone,
+    withOperationPolicy: withOperationPolicy,
+    currentOperationPolicy: currentOperationPolicy,
     probeCapabilities: probeCapabilities,
     getCapabilities: function() { return window.__structaCaps || runtimeCaps; },
     resetHistory: resetHistory,

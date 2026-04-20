@@ -485,7 +485,15 @@
 
   function getOnboardingStep() {
     const ui = getUIState();
+    const projects = getProjects();
     const project = getProjectMemory();
+    if (projects.length > 1) {
+      native?.updateUIState?.({
+        onboarded: true,
+        onboarding_step: 'complete'
+      });
+      return 'complete';
+    }
     if (ui?.onboarded) return 'complete';
     if (ui?.onboarding_step === 'complete') return 'complete';
     const answeredOnboarding =
@@ -495,10 +503,10 @@
       });
     if (answeredOnboarding && typeof ui?.onboarding_step === 'number' && ui.onboarding_step < 3) {
       native?.updateUIState?.({
-        onboarding_step: 3,
-        onboarded: false
+        onboarding_step: 'complete',
+        onboarded: true
       });
-      return 3;
+      return 'complete';
     }
     if (typeof ui?.onboarding_step === 'number') return ui.onboarding_step;
     return freshWorkspaceState() ? 0 : 'complete';
@@ -513,11 +521,7 @@
   }
 
   function skippedOnboardingSteps() {
-    const ui = getUIState();
-    const skipped = [];
-    if (ui.onboarding_step2_skipped) skipped.push(2);
-    if (ui.onboarding_step4_skipped) skipped.push(4);
-    return skipped;
+    return [];
   }
 
   function traceTutorial(flow, from, to, ctx) {
@@ -548,8 +552,7 @@
   }
 
   function tutorialSkipEligible(step = getOnboardingStep()) {
-    if (!onboardingActive()) return false;
-    return step === 2 || step === 4;
+    return false;
   }
 
   function showTutorialStep2Fallback(reason) {
@@ -608,15 +611,11 @@
 
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
     if (step === 'complete') return cards.map(card => card.id);
-    if (step >= 4) return ['now', 'know', 'show'];
-    if (step >= 3) return ['now', 'know'];
     return ['now'];
   }
 
   function onboardingAllowsLogs() {
-    if (Number(getUIState().flush_undo_available_until || 0) > Date.now()) return true;
-    if (!onboardingActive()) return true;
-    return Number(getOnboardingStep()) >= 2;
+    return true;
   }
 
   function onboardingAllowsProjectSwitcher() {
@@ -2086,7 +2085,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'hold ptt → answer · long-press home to skip', {
+      text(226, 276, 'hold ptt → answer', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -2865,12 +2864,12 @@
     if (allowMenuFlush()) {
       const flushTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
-        x: 182, y: 256, width: 44, height: 18, rx: 7, ry: 7,
-        fill: 'rgba(255,255,255,0.04)',
-        stroke: 'rgba(244,239,228,0.32)',
+        x: 180, y: 14, width: 46, height: 18, rx: 7, ry: 7,
+        fill: 'rgba(255,255,255,0.05)',
+        stroke: 'rgba(255,255,255,0.10)',
         'stroke-width': 1
       }, flushTap);
-      text(204, 268, 'flush', {
+      text(203, 26, 'flush', {
         fill: 'rgba(244,239,228,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4865,7 +4864,6 @@
   }
 
   function touchLogAllowed() {
-    if (tutorialSkipEligible()) return false;
     switch (currentState) {
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
@@ -5408,11 +5406,10 @@
   window.addEventListener('structa-onboarding-answer', function(event) {
     if (!onboardingActive()) return;
     const step = getOnboardingStep();
-    if (step !== 2 && step !== 3) return;
+    if (step !== 2) return;
     const inferredName = event?.detail?.inferredName || '';
-    const via = event?.detail?.origin === 'tutorial_fallback_wheel' ? 'fallback_wheel' : 'primary';
     if (inferredName) native?.setProjectName?.(inferredName);
-    setOnboardingStep(3, { via: via });
+    completeOnboarding();
     pushLog('lesson 2 complete', 'system');
     if (currentState === STATES.VOICE_PROCESSING || currentState === STATES.VOICE_OPEN) {
       voiceReturnState = STATES.NOW_BROWSE;
@@ -5651,14 +5648,6 @@
       const step = getOnboardingStep();
       if (step === 1) {
         openProjectSwitcher();
-      } else if (step === 3) {
-        selectedIndex = cards.findIndex(function(card) { return card.id === 'know'; });
-        if (selectedIndex < 0) selectedIndex = 2;
-        transition(STATES.HOME);
-      } else if (step === 4) {
-        selectedIndex = cards.findIndex(function(card) { return card.id === 'show'; });
-        if (selectedIndex < 0) selectedIndex = 0;
-        transition(STATES.HOME);
       }
       return;
     }

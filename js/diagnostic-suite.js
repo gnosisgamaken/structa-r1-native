@@ -619,8 +619,7 @@
     var queueBusy = (queue?.snapshot?.() || []).some(function(job) {
       return job && job.status !== 'blocked';
     });
-    var activeFocus = native?.getActiveFocus?.();
-    var disabledReason = queueBusy ? 'wait for queue to drain' : (activeFocus ? 'wait for chain focus to clear' : '');
+    var disabledReason = queueBusy ? 'wait for queue to drain' : '';
     rows.push({
       kind: 'action',
       actionId: 'diagnostics-run',

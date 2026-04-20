@@ -564,7 +564,7 @@
     }
     if (typeof payload !== 'object') return String(payload || '');
 
-    var directKeys = ['message', 'content', 'response', 'transcript', 'text', 'output', 'answer'];
+    var directKeys = ['message', 'content', 'response', 'transcript', 'text', 'output', 'answer', 'body', 'summary', 'caption', 'value'];
     for (var k = 0; k < directKeys.length; k += 1) {
       var value = payload[directKeys[k]];
       if (typeof value === 'string' && value.trim()) return value;
@@ -572,6 +572,31 @@
         var nested = extractResponseText(value);
         if (nested) return nested;
       }
+    }
+
+    if (payload.content && Array.isArray(payload.content)) {
+      var contentText = extractResponseText(payload.content);
+      if (contentText) return contentText;
+    }
+    if (payload.parts && Array.isArray(payload.parts)) {
+      var partsText = extractResponseText(payload.parts);
+      if (partsText) return partsText;
+    }
+    if (payload.blocks && Array.isArray(payload.blocks)) {
+      var blocksText = extractResponseText(payload.blocks);
+      if (blocksText) return blocksText;
+    }
+    if (payload.segments && Array.isArray(payload.segments)) {
+      var segmentsText = extractResponseText(payload.segments);
+      if (segmentsText) return segmentsText;
+    }
+    if (payload.candidates && Array.isArray(payload.candidates)) {
+      var candidatesText = extractResponseText(payload.candidates);
+      if (candidatesText) return candidatesText;
+    }
+    if (payload.delta) {
+      var deltaText = extractResponseText(payload.delta);
+      if (deltaText) return deltaText;
     }
 
     if (payload.data) {
@@ -600,6 +625,10 @@
     if (payload.result) {
       var nestedResult = extractResponseText(payload.result);
       if (nestedResult) return nestedResult;
+    }
+    if (payload.candidate) {
+      var nestedCandidate = extractResponseText(payload.candidate);
+      if (nestedCandidate) return nestedCandidate;
     }
     return '';
   }

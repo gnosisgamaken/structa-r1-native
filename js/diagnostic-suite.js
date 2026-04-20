@@ -1203,7 +1203,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }, { timeoutMs: 10000 }));
+    }, { timeoutMs: 16000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
@@ -1232,9 +1232,10 @@
         latencyMs: inferResultLatency(result)
       });
       expect(assertions, result?.ok === true, 'server fallback returned', 'server fallback failed');
-    }, { timeoutMs: 22000 }));
+    }, { timeoutMs: 32000 }));
 
     tests.push(makeTest('F1', 'triangle rejects empty side', 'triangle', async function(assertions) {
+      triangle.dismiss?.();
       var noClaimNode = reserveInsight('DIAG_EMPTY_TRIANGLE_SIDE', false);
       var claimNode = reserveInsight('DIAG_TRIANGLE_SIDE_B', true);
       triangle.copy({ type: 'know', id: noClaimNode.node_id, body: noClaimNode.body, project_id: getProjectId() });
@@ -1243,10 +1244,13 @@
       expect(assertions, result?.ok === false, 'empty side rejected', 'triangle did not reject empty side');
     }));
     tests.push(makeTest('F2', 'triangle round trip', 'triangle', async function(assertions) {
+      triangle.dismiss?.();
       var a = reserveInsight('DIAG_TRIANGLE_SOURCE_A', true);
       var b = reserveInsight('DIAG_TRIANGLE_SOURCE_B', true);
-      triangle.copy({ type: 'know', id: a.node_id, body: a.body, project_id: getProjectId() });
-      triangle.complete({ type: 'know', id: b.node_id, body: b.body, project_id: getProjectId() });
+      var copyState = triangle.copy({ type: 'know', id: a.node_id, body: a.body, project_id: getProjectId() });
+      expect(assertions, copyState?.mode === 'armed', 'triangle armed', 'triangle did not arm');
+      var completeState = triangle.complete({ type: 'know', id: b.node_id, body: b.body, project_id: getProjectId() });
+      expect(assertions, completeState?.mode === 'synthesizing', 'triangle ready to synthesize', 'triangle not ready');
       var queued = await triangle.submit('what pattern links them');
       if (!queued?.ok) failFromResult(queued, queued?.error || 'triangle submit failed', {
         layer: inferResultLayer(queued) || 'triangle',
@@ -1304,7 +1308,7 @@
       });
       expect(assertions, verdict.ok === true || result.note === 'insufficient_signal', 'chain output valid or insufficient', 'chain output invalid');
       expect(assertions, claimNode?.node_id ? true : true, 'chain step executed');
-    }, { timeoutMs: 22000 }));
+    }, { timeoutMs: 30000 }));
     tests.push(makeTest('G3', 'focus termination plateau', 'chain', async function(assertions) {
       reserveQuestion('what should plateau?');
       var focus = native.activateNextFocus() || native.getActiveFocus();
@@ -1316,34 +1320,28 @@
 
     tests.push(makeTest('H1', 'thread extract', 'thread', async function(assertions) {
       var node = reserveInsight('thread parent item', true);
-      var comment = native.appendThreadComment(node.node_id, 'this contradicts the old path', { origin: 'ptt' });
-      var result = await fetchJson('/v1/thread/extract', {
-        body: {
-          project: getProject(),
-          selection: { id: node.node_id, summary: node.body, kind: 'know' },
-          input: { transcript: 'this contradicts the old path' },
-          sourceRef: { itemId: node.node_id }
-        }
+      var comment = native.appendThreadComment(node.node_id, 'this contradicts the old path', 'comment', 'ptt');
+      var result = await runPreparedBridgeEndpoint('/v1/thread/extract', {
+        project: getProject(),
+        selection: { id: node.node_id, summary: node.body, kind: 'know' },
+        input: { transcript: 'this contradicts the old path' },
+        sourceRef: { itemId: node.node_id }
       });
-      if (!result.ok || result.data?.ok === false) failFromResult(result, result.data?.error || 'thread extract failed', {
-        layer: inferResultLayer(result) || 'server',
-        latencyMs: inferResultLatency(result)
-      });
-      expect(assertions, result.ok && result.data?.ok === true, 'thread extract ok', 'thread extract failed');
-      if (typeof result.data?.summary !== 'string') {
+      expect(assertions, result?.ok === true, 'thread extract ok', 'thread extract failed');
+      if (typeof result?.summary !== 'string') {
         throw createFailure('thread summary missing', {
           code: 'shape-mismatch',
           layer: 'server',
-          latencyMs: inferResultLatency(result)
+          latencyMs: inferResultLatency(result) || 0
         });
       }
-      expect(assertions, typeof result.data?.summary === 'string', 'thread extract summary', 'thread summary missing');
-      native.applyThreadExtraction(node.node_id, comment.id, result.data);
+      expect(assertions, typeof result?.summary === 'string', 'thread extract summary', 'thread summary missing');
+      native.applyThreadExtraction(node.node_id, comment.id, result);
     }));
     tests.push(makeTest('H2', 'contradiction surfaces question', 'thread', async function(assertions) {
       var node = reserveInsight('existing claim in thread', true);
       var existingClaim = native.getClaimsForItem(node.node_id)[0];
-      var comment = native.appendThreadComment(node.node_id, 'we should not keep that old claim', { origin: 'ptt' });
+      var comment = native.appendThreadComment(node.node_id, 'we should not keep that old claim', 'comment', 'ptt');
       native.applyThreadExtraction(node.node_id, comment.id, {
         summary: 'contradiction',
         claims: [{

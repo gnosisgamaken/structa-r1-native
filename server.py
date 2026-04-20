@@ -1029,8 +1029,10 @@ def thread_refine_normalize(payload):
     raw_text = payload.get("rawResponse") or ""
     raw = compact(raw_text, 160).lower()
     parsed = parse_labeled_lines(raw_text)
-    summary = compact(parsed.get("SUMMARY") or raw or "", 72)
     selection = payload.get("selection") or {}
+    transcript = compact(((payload.get("input") or {}).get("transcript") or ""), 72)
+    selection_hint = compact(selection.get("summary") or selection.get("body") or "", 72)
+    summary = compact(parsed.get("SUMMARY") or raw or transcript or selection_hint or "comment captured", 72)
     source_ref = payload.get("sourceRef") or {"itemId": selection.get("id") or ""}
     claims = extract_simple_claims(
         [parsed.get("CLAIM1", ""), parsed.get("CLAIM2", ""), parsed.get("CLAIM3", "")],

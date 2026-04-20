@@ -726,56 +726,58 @@
       safeBody = safeBody.slice(0, 2799).trimEnd() + '…';
     }
     var messaging = window.r1?.messaging;
-    traceEmail('email.attempt', 'idle', messaging?.emailUser ? 'native' : 'bridge-llm', {
+    var hasNativeEmail = typeof messaging?.emailUser === 'function';
+    traceEmail('email.attempt', 'idle', hasNativeEmail ? 'native' : 'unavailable', {
       subject: safeSubject,
       bodyBytes: safeBody.length
     });
-    if (messaging?.emailUser) {
+    if (hasNativeEmail) {
       return Promise.resolve(messaging.emailUser({
         subject: safeSubject,
         body: safeBody
-      })).then(function() {
+      })).then(function(result) {
+        if (result && typeof result === 'object' && result.ok === false) {
+          traceEmail('email.native.failed', 'pending', 'native-rejected', {
+            subject: safeSubject,
+            bodyBytes: safeBody.length,
+            error: result.error || 'native rejected'
+          });
+          return {
+            ok: false,
+            error: result.error || 'email failed',
+            code: 'email-native-rejected',
+            mode: 'native'
+          };
+        }
         traceEmail('email.native.result', 'pending', 'ok', {
           subject: safeSubject,
           bodyBytes: safeBody.length
         });
         return { ok: true, mode: 'native', subject: safeSubject };
       }).catch(function(error) {
-        traceEmail('email.native.result', 'pending', 'failed', {
+        traceEmail('email.native.failed', 'pending', 'failed', {
           subject: safeSubject,
           bodyBytes: safeBody.length,
           error: error?.message || 'email failed'
         });
-        return { ok: false, error: error?.message || 'email failed', mode: 'native' };
+        return {
+          ok: false,
+          error: error?.message || 'email failed',
+          code: 'email-native-error',
+          mode: 'native'
+        };
       });
     }
-    if (typeof PluginMessageHandler !== 'undefined' && typeof PluginMessageHandler.postMessage === 'function') {
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify({
-          message: 'Email this exact report to the user.\nSubject: ' + safeSubject + '\n\n' + safeBody,
-          useLLM: true,
-          wantsR1Response: false,
-          wantsJournalEntry: false
-        }));
-        traceEmail('email.bridge.dispatched', 'pending', 'requested', {
-          subject: safeSubject,
-          bodyBytes: safeBody.length
-        });
-        return Promise.resolve({ ok: true, mode: 'bridge-requested', subject: safeSubject });
-      } catch (error) {
-        traceEmail('email.bridge.dispatched', 'pending', 'failed', {
-          subject: safeSubject,
-          bodyBytes: safeBody.length,
-          error: error?.message || 'bridge email failed'
-        });
-        return Promise.resolve({ ok: false, error: error?.message || 'bridge email failed', mode: 'bridge-requested' });
-      }
-    }
-    traceEmail('email.native.result', 'pending', 'unavailable', {
+    traceEmail('email.native.unavailable', 'pending', 'no-native-api', {
       subject: safeSubject,
       bodyBytes: safeBody.length
     });
-    return Promise.resolve({ ok: false, error: 'email unavailable', mode: 'unavailable' });
+    return Promise.resolve({
+      ok: false,
+      error: 'email unavailable',
+      code: 'email-unavailable',
+      mode: 'none'
+    });
   }
 
   function runImageServerFallback(orchestrator, payload, options, fromState, reason) {
@@ -877,6 +879,9 @@
         priority: 'high'
       }).then(function(bridgeResult) {
         if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
+          if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
+            return bridgeResult;
+          }
           if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
             return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
           }

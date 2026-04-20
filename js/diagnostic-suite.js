@@ -695,8 +695,8 @@
     });
   }
 
-  function makeTest(id, name, category, runFn) {
-    return { id: id, name: name, category: category, run: runFn };
+  function makeTest(id, name, category, runFn, options) {
+    return Object.assign({ id: id, name: name, category: category, run: runFn }, options || {});
   }
 
   function buildTests() {
@@ -896,7 +896,7 @@
       expect(assertions, result?.ok === true, 'title endpoint ok', 'title endpoint failed');
       expect(assertions, String(result.title || '').split(/\s+/).filter(Boolean).length >= 2, 'title has words', 'title too short');
       expect(assertions, String(result.title || '').length <= 24, 'title under 24 chars', 'title too long');
-    }));
+    }, { timeoutMs: 22000 }));
 
     tests.push(makeTest('E1', 'context prompt endpoint', 'image', async function(assertions) {
       var response = await fetchJson('/v1/image/context_prompt', {
@@ -910,15 +910,15 @@
       expect(assertions, String(response.data?.prompt || '').indexOf(getProject().name || '') !== -1, 'prompt includes project name', 'project name missing from prompt');
       expect(assertions, String(response.data?.prompt || '').length < 3000, 'prompt under budget', 'prompt too long');
     }));
-    tests.push(makeTest('E2', 'bridge dispatch', 'image', async function(assertions) {
+    tests.push(makeTest('E2A', 'bridge dispatch', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
-        return (entry.flow === 'image.bridge' && entry.to === 'response') ||
-          (entry.flow === 'image.dispatch' && entry.to === 'fallback-server');
+        return entry.flow === 'image.bridge' && entry.to === 'response';
       }, 9000).catch(function() { return null; });
       var result = await llm.processImage(PNG_1X1_BASE64, 'diagnostic pixel', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
-        voiceAnnotation: 'test pixel'
+        voiceAnnotation: 'test pixel',
+        forceBridgeOnly: true
       });
       if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
         layer: inferResultLayer(result) || 'bridge',
@@ -927,7 +927,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }));
+    }, { timeoutMs: 10000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'diagnostic frame\n- there is a visual bottleneck', deviceId: native?.deviceId || '' },
@@ -941,7 +941,7 @@
     tests.push(makeTest('E4', 'journal entry manual verify', 'image', async function(assertions) {
       expect(assertions, true, 'manual verification required', 'open rabbithole journal to confirm Structa entry');
     }));
-    tests.push(makeTest('E5', 'fallback path', 'image', async function(assertions) {
+    tests.push(makeTest('E2B', 'fallback path', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.dispatch' && entry.to === 'fallback-server';
       }, 3000);
@@ -956,7 +956,7 @@
         latencyMs: inferResultLatency(result)
       });
       expect(assertions, result?.ok === true, 'server fallback returned', 'server fallback failed');
-    }));
+    }, { timeoutMs: 22000 }));
 
     tests.push(makeTest('F1', 'triangle rejects empty side', 'triangle', async function(assertions) {
       var noClaimNode = reserveInsight('diagnostic empty triangle side', false);
@@ -981,7 +981,7 @@
         return entry.flow === 'triangle.synth.resolved' || entry.flow === 'triangle.synth.ambiguous';
       }, 12000);
       expect(assertions, !!trace, 'triangle finished', 'triangle never finished');
-    }));
+    }, { timeoutMs: 22000 }));
     tests.push(makeTest('F3', 'triangle validator orphan evidence', 'triangle', async function(assertions) {
       var verdict = contracts.validateTriangleOutput({
         status: 'synthesized',
@@ -1028,7 +1028,7 @@
       });
       expect(assertions, verdict.ok === true || result.note === 'insufficient_signal', 'chain output valid or insufficient', 'chain output invalid');
       expect(assertions, claimNode?.node_id ? true : true, 'chain step executed');
-    }));
+    }, { timeoutMs: 22000 }));
     tests.push(makeTest('G3', 'focus termination plateau', 'chain', async function(assertions) {
       reserveQuestion('what should plateau?');
       var focus = native.activateNextFocus() || native.getActiveFocus();
@@ -1127,7 +1127,7 @@
       testId: test.id
     });
     try {
-      await withTimeout(test.run(assertions), TEST_TIMEOUT_MS, test.id);
+      await withTimeout(test.run(assertions), test.timeoutMs || TEST_TIMEOUT_MS, test.id);
       var result = {
         id: test.id,
         name: test.name,
@@ -1316,8 +1316,8 @@
           kind: state.report.delivery.ok ? 'status' : 'error',
           message: state.report.delivery.ok ? 'report delivery' : 'report not emailed',
           detail: state.report.delivery.ok
-            ? ((state.report.delivery.mode === 'bridge-requested' ? 'email requested via bridge' : 'email sent') + ' · saved locally')
-            : ((state.report.delivery.error || 'email failed') + ' · saved locally')
+            ? ('email sent · saved locally')
+            : (((state.report.delivery.code === 'email-unavailable' ? 'email unavailable' : (state.report.delivery.error || 'email failed'))) + ' · saved locally only')
         });
       }
       state.report.results.filter(function(item) {

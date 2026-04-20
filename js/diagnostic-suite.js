@@ -15,8 +15,8 @@
   const RUN_RATE_LIMIT_MS = 60000;
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
-  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 35;
-  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-aj1-afreset';
+  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 36;
+  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-ak1-tracefix';
   const EXPECTED_DIAGNOSTIC_ASSET_ID = window.StructaBuild?.expectedDiagnosticsAssetId || '';
   const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const DIAGNOSTIC_IMAGE_FIXTURE_PATH = '/assets/diagnostics/bridge-image-fixture.png';
@@ -1161,6 +1161,18 @@
       message: 'trace capture',
       detail: 'triple-tap header for trace mode · quadruple-tap dumps snapshot'
     });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-trace-toggle',
+      message: 'toggle trace mode',
+      detail: 'show bridge-out / bridge-in / server normalize'
+    });
+    rows.push({
+      kind: 'action',
+      actionId: 'diagnostics-dump-snapshot',
+      message: 'dump snapshot',
+      detail: 'capture a debug snapshot for this run'
+    });
     return rows;
   }
 
@@ -2112,6 +2124,18 @@
         message: 'trace capture',
         detail: 'triple-tap header for bridge-out / bridge-in rows · quadruple-tap dumps snapshot'
       });
+      rows.push({
+        kind: 'action',
+        actionId: 'diagnostics-trace-toggle',
+        message: 'toggle trace mode',
+        detail: 'show bridge-out / bridge-in / server normalize'
+      });
+      rows.push({
+        kind: 'action',
+        actionId: 'diagnostics-dump-snapshot',
+        message: 'dump snapshot',
+        detail: 'capture a debug snapshot for this run'
+      });
       return rows.concat(bufferRows.map(function(entry) {
         return {
           kind: entry.kind || 'muted',
@@ -2204,6 +2228,16 @@
         diagLog('build check failed', error?.message || 'server unavailable');
         return { ok: false, error: error?.message || 'build check failed' };
       });
+    }
+    if (actionId === 'diagnostics-trace-toggle') {
+      var nextTraceMode = window.StructaUIRuntime?.toggleLogTraceMode?.();
+      diagLog('trace mode', nextTraceMode ? 'trace on' : 'trace off');
+      return Promise.resolve({ ok: true, traceMode: !!nextTraceMode });
+    }
+    if (actionId === 'diagnostics-dump-snapshot') {
+      window.StructaUIRuntime?.dumpLogDebugSnapshot?.();
+      diagLog('debug snapshot', 'snapshot requested');
+      return Promise.resolve({ ok: true });
     }
     if (actionId === 'diagnostics-release-checklist') {
       setState({ mode: 'release-checklist' });

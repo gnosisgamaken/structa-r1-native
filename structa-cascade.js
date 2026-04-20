@@ -1118,10 +1118,10 @@
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
     const traceMode = !!stateData.logTraceMode;
     const diagnosticRows = logOpen && diagnostics?.getDrawerRows ? diagnostics.getDrawerRows() : null;
-    const entries = diagnosticRows && diagnosticRows.length
-      ? diagnosticRows
-      : (traceMode
-        ? getTraceEntries(logOpen ? 20 : 5)
+    const entries = traceMode
+      ? getTraceEntries(logOpen ? 20 : 5)
+      : (diagnosticRows && diagnosticRows.length
+        ? diagnosticRows
         : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
@@ -1132,14 +1132,16 @@
       return;
     }
     renderLogRows(entries);
-    if (diagnosticRows) {
+    if (traceMode) {
+      logPreview.textContent = 'trace · ' + entries.length;
+    } else if (diagnosticRows) {
       logPreview.textContent = diagnostics?.getState?.()?.running ? 'diagnostics running' : 'diagnostics';
     } else {
-      logPreview.textContent = traceMode ? 'trace · ' + entries.length : latestLogText();
+      logPreview.textContent = latestLogText();
     }
     updateLogOps();
     if (logOpen) {
-      if (diagnosticRows) {
+      if (traceMode || diagnosticRows) {
         log.scrollTop = 0;
         logPinnedToBottom = true;
       } else if (followLatest) {
@@ -1151,6 +1153,24 @@
         logPinnedToBottom = isLogNearBottom();
       }
     }
+  }
+
+  function setLogTraceMode(enabled) {
+    stateData.logTraceMode = !!enabled;
+    refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+    return stateData.logTraceMode;
+  }
+
+  function toggleLogTraceMode() {
+    return setLogTraceMode(!stateData.logTraceMode);
+  }
+
+  function dumpLogDebugSnapshot() {
+    fireFeedback('touch-commit');
+    native?.dumpDebugSnapshot?.({ export: false });
+    pushLog('snapshot dumped', 'export');
+    scheduleLogRefresh({ jumpToLatest: true, forceFollow: true });
+    return true;
   }
 
   function setLogDrawer(open) {
@@ -1202,17 +1222,13 @@
     if (logHeaderTapCount >= 4) {
       logHeaderTapCount = 0;
       logHeaderTapWindowStartedAt = 0;
-      fireFeedback('touch-commit');
-      native?.dumpDebugSnapshot?.({ export: false });
-      pushLog('snapshot dumped', 'export');
-      scheduleLogRefresh({ jumpToLatest: true, forceFollow: true });
+      dumpLogDebugSnapshot();
       return;
     }
     logHeaderTapEvalTimer = setTimeout(function() {
       if (logHeaderTapCount === 3) {
-        stateData.logTraceMode = !stateData.logTraceMode;
         fireFeedback('touch-commit');
-        refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+        toggleLogTraceMode();
       }
       logHeaderTapCount = 0;
       logHeaderTapWindowStartedAt = 0;
@@ -6017,7 +6033,10 @@
       invalidateUICaches();
       scheduleRender();
     },
-    refreshBundle: refreshBundle
+    refreshBundle: refreshBundle,
+    setLogTraceMode: setLogTraceMode,
+    toggleLogTraceMode: toggleLogTraceMode,
+    dumpLogDebugSnapshot: dumpLogDebugSnapshot
   });
 
   window.StructaPanel = Object.freeze({

@@ -520,10 +520,9 @@
       var payload = {
         message: String(prompt || '').trim() || 'Describe what you see in this image',
         imageBase64: imageBase64,
-        useLLM: true,
-        wantsR1Response: false,
-        wantsJournalEntry: opts.journal === true
+        useLLM: true
       };
+      if (opts.journal === true) payload.wantsJournalEntry = true;
 
       if (native && native.probeMode && native.appendProbeEvent) {
         native.appendProbeEvent({

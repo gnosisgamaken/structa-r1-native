@@ -1391,18 +1391,25 @@
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
       }, 28000).catch(function() { return null; });
+      var rawTraceWait = awaitTrace(function(entry) {
+        return entry.flow === 'plugin.message.raw' && entry.to === 'image';
+      }, 28000).catch(function() { return null; });
       var result = await llm.processImage(PNG_DIAG_SAMPLE_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
-        voiceAnnotation: 'DIAG_ANNOTATION_02',
+        voiceAnnotation: '',
         forceBridgeOnly: true,
-        journal: true,
+        journal: false,
         timeout: 26000
       });
-      if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
-        layer: inferResultLayer(result) || 'bridge',
-        latencyMs: inferResultLatency(result)
-      });
+      var rawTrace = await rawTraceWait;
+      if (!result?.ok) {
+        var rawDetail = rawTrace?.ctx?.dump || rawTrace?.ctx?.keys || rawTrace?.ctx?.shape || '';
+        failFromResult(result, (result?.error || 'bridge image failed') + (rawDetail ? ' · ' + compact(rawDetail, 120) : ''), {
+          layer: inferResultLayer(result) || 'bridge',
+          latencyMs: inferResultLatency(result)
+        });
+      }
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');

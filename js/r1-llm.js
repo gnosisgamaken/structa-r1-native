@@ -141,6 +141,25 @@
     return operationPolicyStack[operationPolicyStack.length - 1] || { allowSpeech: true, silent: false, source: 'default' };
   }
 
+  function diagnosticsMuteActive() {
+    return !!window.__STRUCTA_DIAGNOSTICS_RUNNING__ || !!window.__STRUCTA_FORCE_SILENT__;
+  }
+
+  function shouldBlockSpeech(policy) {
+    var activePolicy = policy || currentOperationPolicy();
+    return !!(activePolicy.allowSpeech === false || activePolicy.silent === true || diagnosticsMuteActive());
+  }
+
+  function effectiveSilentSource(policy) {
+    if (diagnosticsMuteActive()) return 'diagnostics';
+    return lower(policy?.source || 'background');
+  }
+
+  function effectiveSilentReason(policy) {
+    if (diagnosticsMuteActive()) return 'diagnostics hard mute';
+    return policy?.reason || 'silent policy';
+  }
+
   function pushOperationPolicy(patch) {
     var next = Object.assign({}, currentOperationPolicy(), patch || {});
     operationPolicyStack.push(next);
@@ -186,21 +205,22 @@
     var policy = currentOperationPolicy();
     if (!text) {
       native?.recordVoiceCall?.(normalized || 'unknown', false, { reason: 'not-allowlisted' });
-    return false;
-  }
-
-    if (policy.allowSpeech === false || policy.silent === true) {
+      return false;
+    }
+    if (shouldBlockSpeech(policy)) {
+      var silentSource = effectiveSilentSource(policy);
+      var silentReason = effectiveSilentReason(policy);
       native?.recordVoiceCall?.(normalized, true, {
         reason: 'policy-silent',
-        source: policy.source || 'background'
+        source: silentSource
       });
       native?.traceEvent?.('voice.suppressed', 'requested', normalized, {
-        source: policy.source || 'background',
-        reason: policy.reason || 'silent policy'
+        source: silentSource,
+        reason: silentReason
       });
       native?.traceEvent?.('speech.blocked_by_policy', 'requested', normalized, {
-        source: policy.source || 'background',
-        reason: policy.reason || 'silent policy'
+        source: silentSource,
+        reason: silentReason
       });
       return false;
     }
@@ -245,6 +265,43 @@
       native?.recordVoiceCall?.(normalized, true, { reason: 'post-failed' });
       return false;
     }
+  }
+
+  function evaluateMilestone(kind, options) {
+    var normalized = normalizeMilestoneKind(kind);
+    var opts = options && typeof options === 'object' ? options : {};
+    var STRINGS = {
+      triangle_captured: 'signal captured',
+      signal_captured: 'signal captured',
+      decision_created: 'decision ready',
+      decision_approved: 'locked',
+      frame_ready: 'frame ready',
+      project_live: 'project live'
+    };
+    var MULTI_FIRE = {
+      triangle_captured: true,
+      signal_captured: true,
+      decision_created: true,
+      decision_approved: true
+    };
+    if (!STRINGS[normalized]) {
+      return { ok: false, normalized: normalized, reason: 'not-allowlisted' };
+    }
+    if (opts.allowSpeech === false || opts.silent === true) {
+      return { ok: false, normalized: normalized, reason: 'policy-silent' };
+    }
+    if (opts.hasBridge === false) {
+      return { ok: false, normalized: normalized, reason: 'bridge-unavailable' };
+    }
+    if (!MULTI_FIRE[normalized] && opts.projectMilestones && opts.projectMilestones[normalized]) {
+      return { ok: false, normalized: normalized, reason: 'project-dedupe' };
+    }
+    var now = Number(opts.now || Date.now());
+    var last = Number(opts.lastMilestoneSpeechAt || 0);
+    if (now - last < MILESTONE_COOLDOWN_MS) {
+      return { ok: false, normalized: normalized, reason: 'cooldown' };
+    }
+    return { ok: true, normalized: normalized, reason: 'milestone' };
   }
 
   function evaluateMilestone(kind, options) {
@@ -343,6 +400,7 @@
 
       if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
       if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
+      else if (shouldBlockSpeech(request.opts.policy || currentOperationPolicy())) payload.pluginId = 'com.playgranada.structa';
       if (request.opts.useSerpAPI) payload.useSerpAPI = true;
 
       try {
@@ -1386,7 +1444,9 @@
         journal: false,
         timeout: Math.min(prepared.llm.timeout || 3000, 3000),
         priority: prepared.llm.priority || 'high',
-        useSerpAPI: false
+        useSerpAPI: false,
+        pluginId: 'com.playgranada.structa',
+        policy: currentOperationPolicy()
       });
       }),
       new Promise(function(resolve) {

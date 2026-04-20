@@ -678,6 +678,62 @@
     });
   }
 
+  function withDiagnosticMute(fn) {
+    var previousDiagnosticsFlag = window.__STRUCTA_DIAGNOSTICS_RUNNING__;
+    var previousForceSilent = window.__STRUCTA_FORCE_SILENT__;
+    var chain = window.StructaImpactChain;
+    var chainState = {
+      exists: !!chain,
+      active: !!chain?.active,
+      paused: !!chain?.isPaused?.(),
+      bpm: Number(chain?.bpm || 2) || 2
+    };
+    window.__STRUCTA_DIAGNOSTICS_RUNNING__ = true;
+    window.__STRUCTA_FORCE_SILENT__ = 'diagnostics';
+    if (chain) {
+      try {
+        chain.pause('diagnostics');
+        diagTrace('diag.chain.pause', chainState.active ? 'active' : 'idle', 'paused', {
+          runId: state.currentRunId,
+          paused: chainState.paused,
+          active: chainState.active
+        });
+        diagLog('diagnostic chain paused', chainState.active ? 'background reasoning muted' : 'already idle');
+      } catch (error) {
+        diagTrace('diag.chain.pause', 'pending', 'failed', {
+          runId: state.currentRunId,
+          error: error?.message || 'chain pause failed'
+        });
+      }
+    }
+    return Promise.resolve().then(fn).finally(function() {
+      window.__STRUCTA_DIAGNOSTICS_RUNNING__ = previousDiagnosticsFlag;
+      if (previousForceSilent === undefined) delete window.__STRUCTA_FORCE_SILENT__;
+      else window.__STRUCTA_FORCE_SILENT__ = previousForceSilent;
+      if (!chain) return;
+      try {
+        if (chainState.paused) {
+          chain.pause('diagnostics restore');
+        } else if (chainState.active) {
+          chain.bpm = chainState.bpm;
+          chain.resume();
+        } else {
+          chain.pause('diagnostics restore');
+        }
+        diagTrace('diag.chain.restore', 'paused', chainState.active ? 'active' : (chainState.paused ? 'paused' : 'idle'), {
+          runId: state.currentRunId,
+          active: chainState.active,
+          paused: chainState.paused
+        });
+      } catch (error) {
+        diagTrace('diag.chain.restore', 'paused', 'failed', {
+          runId: state.currentRunId,
+          error: error?.message || 'chain restore failed'
+        });
+      }
+    });
+  }
+
   function reserveQuestion(body) {
     return native?.addNode?.({
       type: 'question',
@@ -726,7 +782,14 @@
       journal: false,
       timeout: prepared.data?.llm?.timeout || TEST_TIMEOUT_MS,
       priority: prepared.data?.llm?.priority || 'high',
-      imageBase64: prepared.data?.llm?.imageBase64
+      imageBase64: prepared.data?.llm?.imageBase64,
+      pluginId: 'com.playgranada.structa',
+      policy: {
+        allowSpeech: false,
+        silent: true,
+        source: 'diagnostics',
+        reason: 'diagnostics stay written'
+      }
     });
     if (!llmResult?.ok) {
       failFromResult(llmResult, llmResult?.error || path + ' bridge failed', {
@@ -1396,35 +1459,37 @@
         diagTrace('diag.policy.attach', 'start', 'active', {
           runId: runId
         });
-        return withIsolatedProject(async function() {
-          var tests = buildTests();
-          setState({
-            progress: {
-              total: tests.length,
-              done: 0,
-              current: ''
+        return withDiagnosticMute(function() {
+          return withIsolatedProject(async function() {
+            var tests = buildTests();
+            setState({
+              progress: {
+                total: tests.length,
+                done: 0,
+                current: ''
+              }
+            });
+            for (var index = 0; index < tests.length; index += 1) {
+              if (state.abortRequested) break;
+              var test = tests[index];
+              setState({
+                progress: {
+                  total: tests.length,
+                  done: index,
+                  current: test.id + ' ' + test.name
+                }
+              });
+              var result = await runTest(test);
+              results.push(result);
+              setState({
+                progress: {
+                  total: tests.length,
+                  done: index + 1,
+                  current: test.id + ' ' + result.status
+                }
+              });
             }
           });
-          for (var index = 0; index < tests.length; index += 1) {
-            if (state.abortRequested) break;
-            var test = tests[index];
-            setState({
-              progress: {
-                total: tests.length,
-                done: index,
-                current: test.id + ' ' + test.name
-              }
-            });
-            var result = await runTest(test);
-            results.push(result);
-            setState({
-              progress: {
-                total: tests.length,
-                done: index + 1,
-                current: test.id + ' ' + result.status
-              }
-            });
-          }
         });
       });
     } catch (error) {

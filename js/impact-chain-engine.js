@@ -53,6 +53,10 @@
     return native?.getActiveFocus?.() || null;
   }
 
+  function diagnosticsMuted() {
+    return !!window.__STRUCTA_DIAGNOSTICS_RUNNING__ || !!window.__STRUCTA_FORCE_SILENT__;
+  }
+
   function queueHasHigherPriorityWork() {
     if (!queue?.countByPriority) return false;
     return ['P0', 'P1', 'P2'].some(function(priority) {
@@ -604,6 +608,10 @@
 
   function beat() {
     if (chain.stepInFlight || chain.manuallyStopped) return;
+    if (diagnosticsMuted()) {
+      pause('diagnostics');
+      return;
+    }
     if (onboardingBlocked()) {
       pause('onboarding');
       return;
@@ -641,7 +649,7 @@
   }
 
   function start(bpm) {
-    if (onboardingBlocked()) return;
+    if (onboardingBlocked() || diagnosticsMuted()) return;
     chain.manuallyStopped = false;
     persistPauseState(false);
     chain.bpm = Math.max(1, Math.min(20, bpm || chain.bpm || 2));
@@ -668,7 +676,7 @@
 
   function resume() {
     chain.lastUserActivity = Date.now();
-    if (chain.manuallyStopped || onboardingBlocked()) return;
+    if (chain.manuallyStopped || onboardingBlocked() || diagnosticsMuted()) return;
     chain.active = true;
     scheduleNextBeat(120);
   }
@@ -692,7 +700,7 @@
   }
 
   function requestImmediateBeat() {
-    if (chain.manuallyStopped || onboardingBlocked()) return;
+    if (chain.manuallyStopped || onboardingBlocked() || diagnosticsMuted()) return;
     scheduleNextBeat(120);
   }
 

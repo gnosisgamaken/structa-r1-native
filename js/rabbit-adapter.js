@@ -831,6 +831,41 @@
     return updated;
   }
 
+  function buildInitialUIState() {
+    return {
+      selected_card_id: 'now',
+      last_surface: 'home',
+      resumed_at: null,
+      last_capture_summary: '',
+      last_insight_summary: '',
+      last_event_summary: '',
+      onboarded: false,
+      onboarding_step: 0,
+      onboarding_paused: false,
+      onboarding_step2_skipped: false,
+      onboarding_step4_skipped: false,
+      tutorial_last_entered_step: 0,
+      tutorial_step_entered_at: null,
+      tutorial_step2_fallback_visible: false,
+      tutorial_step2_fallback_reason: '',
+      tutorial_step2_fallback_index: 0,
+      tutorial_step2_ptt_attempted: false,
+      tutorial_step4_camera_denied: false,
+      queue_blockers: [],
+      project_cap_notice: '',
+      flush_undo_available_until: 0,
+      depth_comment_count: 0,
+      depth_chevron_seen: false,
+      diagnostic_last_error: '',
+      diagnostic_delivery_mode: '',
+      diagnostic_report_status: '',
+      diagnostic_last_run_id: '',
+      blocker_summary: '',
+      answer_summary: '',
+      research_summary: ''
+    };
+  }
+
   function buildInitialMemory() {
     var baseProject = createDefaultProject({ project_id: contracts.baseProjectCode });
     return {
@@ -850,16 +885,7 @@
           byKind: {}
         }
       },
-      uiState: {
-        selected_card_id: 'now',
-        last_surface: 'home',
-        resumed_at: null,
-        last_capture_summary: '',
-        last_insight_summary: '',
-        last_event_summary: '',
-        onboarded: false,
-        onboarding_step: 0
-      },
+      uiState: buildInitialUIState(),
       active_project_id: baseProject.project_id,
       projects: [baseProject],
       projectMemory: baseProject
@@ -1998,49 +2024,148 @@
     return { ok: true, project_id: project.project_id };
   }
 
+  function stopPrimedStream() {
+    try {
+      var stream = window.__STRUCTA_PRIMED_STREAM__;
+      if (stream?.getTracks) {
+        stream.getTracks().forEach(function(track) {
+          try { track.stop(); } catch (_) {}
+        });
+      }
+      window.__STRUCTA_PRIMED_STREAM__ = null;
+    } catch (_) {}
+  }
+
+  function resetRuntimeTransientState() {
+    stopPrimedStream();
+    delete window.__STRUCTA_DIAGNOSTICS_RUNNING__;
+    delete window.__STRUCTA_FORCE_SILENT__;
+    window.__STRUCTA_PTT_TARGET__ = null;
+    window.__STRUCTA_INLINE_PTT__ = false;
+    if (window.StructaDiagnostics?.resetLocalState) {
+      try { window.StructaDiagnostics.resetLocalState(); } catch (_) {}
+    }
+  }
+
+  function resetUIStateToBaseline(options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var baseline = buildInitialUIState();
+    baseline.flush_undo_available_until = Math.max(0, Number(opts.flushUndoUntil || 0));
+    memory.uiState = baseline;
+    return baseline;
+  }
+
+  function clearLocalCacheArtifacts() {
+    try {
+      var storageRef = window.localStorage;
+      if (storageRef) {
+        var keysToRemove = [];
+        for (var index = 0; index < storageRef.length; index += 1) {
+          var key = storageRef.key(index);
+          if (!key) continue;
+          if (key === 'structa.queue.v1' || key === 'structa-probe') {
+            keysToRemove.push(key);
+            continue;
+          }
+          if (key.indexOf('structa-native-cache-v2:') === 0) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(function(key) {
+          try { storageRef.removeItem(key); } catch (_) {}
+        });
+      }
+    } catch (_) {}
+  }
+
+  function resetQueueToEmpty() {
+    if (!window.StructaProcessingQueue?.restore) return;
+    try {
+      window.StructaProcessingQueue.restore([], { paused: true });
+    } catch (_) {}
+  }
+
   function flushMemory() {
     var secureSnapshot = null;
     var snapshotSave = Promise.resolve(false);
+    var queueWasPaused = !!window.StructaProcessingQueue?.isPaused?.();
     try {
+      flushPendingUIStatePersist();
       secureSnapshot = snapshotState();
       snapshotSave = storage.secure.write('structa.snapshot.last', secureSnapshot).then(function(result) {
         return !!result?.ok;
       });
     } catch (_) {}
+    traceEvent('flush.runtime.stop', 'running', 'started', {
+      projectId: memory.active_project_id
+    });
+    if (window.StructaImpactChain?.pause) {
+      try { window.StructaImpactChain.pause('memory flush'); } catch (_) {}
+    }
+    if (window.StructaProcessingQueue?.pause) {
+      try { window.StructaProcessingQueue.pause(); } catch (_) {}
+    }
+    resetRuntimeTransientState();
     const fresh = buildInitialMemory();
     Object.keys(memory).forEach(function(key) { delete memory[key]; });
     Object.assign(memory, fresh);
     runtimeEvents.splice(0, runtimeEvents.length);
+    resetUIStateToBaseline();
     syncActiveProjectAlias();
     rebuildLegacyViews();
-
     if (window.StructaLLM?.resetHistory) {
       try { window.StructaLLM.resetHistory(); } catch (_) {}
     }
-    if (window.StructaImpactChain?.pause) {
-      try { window.StructaImpactChain.pause('memory flush'); } catch (_) {}
+    memory.triangleSlot = null;
+    resetQueueToEmpty();
+    clearLocalCacheArtifacts();
+    traceEvent('flush.cache.clear', 'pending', 'completed', {
+      projectId: memory.active_project_id
+    });
+
+    if (window.StructaUIRuntime?.fullReset) {
+      try {
+        window.StructaUIRuntime.fullReset({ reason: 'flush', preserveUndo: false });
+      } catch (_) {}
     }
 
-    try {
-      window.localStorage?.removeItem(cacheKey);
-      window.localStorage?.removeItem(cacheKey + '_emergency');
-      window.localStorage?.removeItem('structa.queue.v1');
-      window.localStorage?.removeItem('structa-probe');
-    } catch (_) {}
-    memory.triangleSlot = null;
+    var clearTasks = [
+      window.StructaStorage?.clear
+        ? window.StructaStorage.clear().catch(function() { return []; })
+        : Promise.resolve([]),
+      storage.plain.remove('structa.queue.v1').catch(function() { return { ok: false }; }),
+      storage.plain.remove('structa-probe').catch(function() { return { ok: false }; }),
+      storage.plain.remove('structa.diagnostics.reports').catch(function() { return { ok: false }; })
+    ];
 
-    var clearPromise = window.StructaStorage?.clear
-      ? window.StructaStorage.clear().catch(function() { return []; })
-      : Promise.resolve([]);
-
-    return Promise.all([Promise.resolve(clearPromise), snapshotSave]).then(function(results) {
+    return Promise.all(clearTasks.concat([snapshotSave])).then(function(results) {
       var cleared = results[0];
-      var snapshotSaved = !!results[1];
-      memory.uiState.flush_undo_available_until = snapshotSaved ? (Date.now() + 120000) : 0;
+      var snapshotSaved = !!results[results.length - 1];
+      resetUIStateToBaseline({
+        flushUndoUntil: snapshotSaved ? (Date.now() + 120000) : 0
+      });
+      if (window.StructaUIRuntime?.fullReset) {
+        try {
+          window.StructaUIRuntime.fullReset({
+            reason: 'flush',
+            preserveUndo: snapshotSaved
+          });
+        } catch (_) {}
+      }
       persist();
+      appendLogEntry({ kind: 'system', message: 'flush complete · local state cleared' });
+      appendLogEntry({ kind: 'system', message: 'ui reset complete' });
+      traceEvent('flush.ui.reset', 'pending', 'completed', {
+        projectId: memory.active_project_id,
+        undoAvailable: snapshotSaved
+      });
       traceEvent('flush', 'running', 'completed', {
         projectId: memory.active_project_id,
         snapshotSaved: snapshotSaved
+      });
+      traceEvent('flush.runtime.ready', 'resetting', 'idle', {
+        projectId: memory.active_project_id,
+        queuePaused: queueWasPaused
       });
       traceEvent('system', 'flush', 'complete', {
         projectId: memory.active_project_id,
@@ -2048,6 +2173,9 @@
       });
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
       emitModelChange({ scope: 'all' });
+      if (window.StructaProcessingQueue?.resume) {
+        try { window.StructaProcessingQueue.resume(); } catch (_) {}
+      }
       return { ok: true, cleared: cleared, project_id: memory.active_project_id, snapshot_saved: snapshotSaved };
     });
   }
@@ -2070,10 +2198,26 @@
       syncActiveProjectAlias();
       rebuildLegacyViews();
       ensureTraceStore();
+      var queueItems = snapshot?.queueState?.items || snapshot?.queue || [];
+      var queuePaused = !!snapshot?.queueState?.paused;
       memory.uiState = {
+        ...buildInitialUIState(),
         ...(memory.uiState || {}),
         flush_undo_available_until: 0
       };
+      resetRuntimeTransientState();
+      if (window.StructaProcessingQueue?.restore) {
+        try {
+          window.StructaProcessingQueue.restore(queueItems, { paused: queuePaused });
+        } catch (_) {
+          resetQueueToEmpty();
+        }
+      }
+      if (window.StructaUIRuntime?.fullReset) {
+        try {
+          window.StructaUIRuntime.fullReset({ reason: 'flush-undo', preserveUndo: false });
+        } catch (_) {}
+      }
       persist();
       traceEvent('flush', 'undo', 'restored', {
         projectId: memory.active_project_id
@@ -2243,6 +2387,8 @@
 
     if (k === 'system') {
       if (raw === 'onboarding complete') return 'onboarding complete';
+      if (raw === 'flush complete · local state cleared') return raw;
+      if (raw === 'ui reset complete') return raw;
       return null;
     }
 

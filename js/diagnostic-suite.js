@@ -177,6 +177,22 @@
     return clone(state);
   }
 
+  function resetLocalState() {
+    setState({
+      mode: 'idle',
+      running: false,
+      abortRequested: false,
+      currentRunId: '',
+      report: null,
+      progress: null,
+      lastStartedAt: 0,
+      lastError: '',
+      voiceCheck: null,
+      manualVoiceCheck: null
+    });
+    return { ok: true };
+  }
+
   function onProgress(handler) {
     if (typeof handler !== 'function') return function() {};
     listeners.push(handler);
@@ -1731,6 +1747,7 @@
     onProgress: onProgress,
     getState: getState,
     getDrawerRows: getDrawerRows,
-    handleAction: handleAction
+    handleAction: handleAction,
+    resetLocalState: resetLocalState
   });
 })();

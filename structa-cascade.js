@@ -859,6 +859,53 @@
     cachedKnowModel = { version: -1, projectId: '', focusNodeId: '', value: null };
   }
 
+  function resetVoiceChrome() {
+    var voiceOverlay = document.getElementById('voice-overlay');
+    var contextLabel = document.getElementById('voice-context-label');
+    if (voiceOverlay) voiceOverlay.classList.remove('answer-mode');
+    if (contextLabel) contextLabel.textContent = '';
+    document.body.classList.remove('input-locked');
+  }
+
+  function fullUIRuntimeReset(options = {}) {
+    clearPendingSideClick();
+    clearTouchLogPress();
+    clearTutorialSkipTouch();
+    clearTutorialStep2HintTimer();
+    clearFlushConfirmTimer();
+    if (logHeaderTapEvalTimer) {
+      clearTimeout(logHeaderTapEvalTimer);
+      logHeaderTapEvalTimer = null;
+    }
+    logHeaderTapCount = 0;
+    logHeaderTapWindowStartedAt = 0;
+    tutorialSkipTriggered = false;
+    tutorialSkipSuppressClickUntil = 0;
+    touchLogPressTriggered = false;
+    touchLogSuppressClickUntil = 0;
+    transitionTargetState = null;
+    wheelDeltaAccumulator = 0;
+    lastNativeScrollAt = 0;
+    lastNativeScrollDirection = 0;
+    resetTutorialSurfaceState();
+    resetVoiceChrome();
+    invalidateDataCaches();
+    invalidateUICaches();
+    currentState = STATES.HOME;
+    stateData = {};
+    selectedIndex = Math.max(0, cards.findIndex(function(card) { return card.id === 'now'; }));
+    logOpen = false;
+    logReturnState = STATES.HOME;
+    cameraReturnState = STATES.HOME;
+    voiceReturnState = STATES.HOME;
+    if (!options.preserveUndo && Number(getUIState().flush_undo_available_until || 0) > 0) {
+      native?.updateUIState?.({ flush_undo_available_until: 0 });
+    }
+    scheduleLogRefresh({ jumpToLatest: true, forceFollow: true });
+    scheduleOpsRefresh({ queueLine: getQueueLine() });
+    scheduleRender();
+  }
+
   function scheduleRender() {
     if (renderScheduled) return;
     renderScheduled = true;
@@ -5921,6 +5968,15 @@
   }
 
   // === Public API ===
+  window.StructaUIRuntime = Object.freeze({
+    fullReset: fullUIRuntimeReset,
+    invalidateAllUICaches: function() {
+      invalidateDataCaches();
+      invalidateUICaches();
+      scheduleRender();
+    }
+  });
+
   window.StructaPanel = Object.freeze({
     render,
     pushLog,

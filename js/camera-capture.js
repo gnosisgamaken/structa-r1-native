@@ -299,6 +299,53 @@
     });
   }
 
+  function applyCaptureSaved(job, result) {
+    const summary = String(result?.savedSummary || job.annotation || 'frame saved');
+    const prompt = String(result?.savedPrompt || (job.annotation ? 'show+tell saved' : 'hold ptt to describe'));
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, job.entryId, job.nodeId);
+      if (refs.capture) {
+        refs.capture.summary = summary;
+        refs.capture.ai_analysis = '';
+        refs.capture.prompt_text = job.annotation || refs.capture.prompt_text || '';
+        refs.capture.preview_data = refs.capture.preview_data || job.previewData;
+        refs.capture.data = refs.capture.data || job.previewData;
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          analysis_status: 'saved',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.capture.preview_data || job.previewData,
+          claim_ids: [],
+          claim_extraction_pending: false,
+          analysis_stage: 'saved',
+          annotation_window_until: 0
+        };
+      }
+      if (refs.node) {
+        refs.node.body = job.annotation || 'visual note';
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          analysis_status: 'saved',
+          analysis_completed_at: new Date().toISOString(),
+          preview_data: refs.node.meta?.preview_data || job.previewData,
+          claim_ids: [],
+          claim_extraction_pending: false,
+          analysis_stage: 'saved',
+          annotation_window_until: 0
+        };
+      }
+      native?.updateUIState?.({
+        last_capture_summary: summary,
+        user_status: prompt
+      });
+    });
+    native?.traceEvent?.('image', 'analyzing', 'saved', {
+      entryId: job.entryId || '',
+      nodeId: job.nodeId || '',
+      prompt: prompt
+    });
+  }
+
   function applyAnalysisUnavailable(job, fallbackText) {
     native?.touchProjectMemory?.(function(project) {
       const refs = findCaptureRefs(project, job.entryId, job.nodeId);
@@ -464,6 +511,11 @@
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
             detail: { source: 'visual-insight' }
           }));
+          return result;
+        }
+        if (result && result.ok && result.savedOnly) {
+          applyCaptureSaved(payload, result);
+          window.StructaFeedback?.fire?.('resolve');
           return result;
         }
         native?.traceEvent?.('image', 'analyzing', 'blocked', {

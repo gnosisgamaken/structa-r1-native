@@ -1111,6 +1111,124 @@
     return lines.join('\n');
   }
 
+  function buildShowCaptureContext(description, options) {
+    var opts = options || {};
+    return {
+      surface: 'show',
+      kind: 'capture',
+      nodeId: opts.itemId || opts.imageId || '',
+      title: opts.voiceAnnotation
+        ? 'show+tell: ' + compactText(opts.voiceAnnotation, 48)
+        : compactText(description || 'visual note', 48),
+      text: opts.voiceAnnotation || description || 'camera capture',
+      status: 'open',
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  function normalizeShowTellResult(voiceResult, options) {
+    var opts = options || {};
+    return extractClaimsFromText({
+      project: buildProjectEnvelope('show'),
+      input: {
+        text: voiceResult.clean || voiceResult.text || '',
+        deviceId: native?.deviceId || ''
+      },
+      source: 'show-tell',
+      sourceRef: {
+        imageId: opts.imageId || '',
+        itemId: opts.itemId || ''
+      },
+      meta: {
+        deviceId: native?.deviceId || '',
+        imageId: opts.imageId || ''
+      }
+    }).then(function(extracted) {
+      var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
+      if (claims.length) {
+        native?.traceEvent?.('show.tell', 'pending', 'claims_extracted', {
+          entryId: opts.imageId || '',
+          count: claims.length
+        });
+      } else if (!extracted?.ok) {
+        native?.traceEvent?.('show.tell', 'pending', 'claims_pending', {
+          entryId: opts.imageId || '',
+          reason: extracted?.error || 'extraction failed'
+        });
+      }
+      return {
+        ok: true,
+        text: voiceResult.text || voiceResult.clean || '',
+        clean: voiceResult.clean || voiceResult.text || '',
+        structured: voiceResult.structured || extractFields(voiceResult.clean || voiceResult.text || ''),
+        claims: claims,
+        claim_extraction_pending: !claims.length,
+        bridge: false,
+        semanticMode: 'show-tell'
+      };
+    });
+  }
+
+  function analyzeShowTell(rawBase64, description, options) {
+    var opts = options || {};
+    var transcript = String(opts.voiceAnnotation || '').trim();
+    if (!transcript) {
+      return Promise.resolve({
+        ok: false,
+        error: 'show-tell transcript unavailable',
+        code: 'show-tell-missing-transcript',
+        layer: 'voice'
+      });
+    }
+    native?.traceEvent?.('show.tell', 'prepare', 'voice', {
+      entryId: opts.imageId || '',
+      itemId: opts.itemId || '',
+      chars: transcript.length
+    });
+    return processVoice(transcript, {
+      buildContext: buildShowCaptureContext(description, opts)
+    }).then(function(voiceResult) {
+      if (!voiceResult || !voiceResult.ok || !voiceResult.clean) {
+        native?.traceEvent?.('show.tell', 'pending', 'failed', {
+          entryId: opts.imageId || '',
+          error: voiceResult?.error || 'voice failed'
+        });
+        return voiceResult || {
+          ok: false,
+          error: 'show-tell failed',
+          code: 'show-tell-failed',
+          layer: 'voice'
+        };
+      }
+      native?.traceEvent?.('show.tell', 'pending', 'response', {
+        entryId: opts.imageId || '',
+        chars: String(voiceResult.clean || '').length
+      });
+      return normalizeShowTellResult(voiceResult, opts);
+    });
+  }
+
+  function storeCaptureOnlyResult(options) {
+    var opts = options || {};
+    native?.traceEvent?.('show.capture', 'pending', 'saved', {
+      entryId: opts.imageId || '',
+      itemId: opts.itemId || ''
+    });
+    return Promise.resolve({
+      ok: true,
+      savedOnly: true,
+      bridge: false,
+      semanticMode: 'capture-only',
+      clean: '',
+      text: '',
+      structured: {},
+      claims: [],
+      claim_extraction_pending: false,
+      savedSummary: 'frame saved',
+      savedPrompt: 'hold ptt to describe'
+    });
+  }
+
   function emailText(subject, body) {
     var safeSubject = compactText(subject || 'Structa export', 96);
     var safeBody = String(body || '').trim();
@@ -1193,8 +1311,42 @@
    * Returns a promise with { ok, clean, structured }.
    */
   function processImage(rawBase64, description, meta) {
-    var orchestrator = window.StructaOrchestrator;
     var options = meta || {};
+    var useBridgeAssist = options.useRabbitImageBridge === true || options.forceBridgeOnly || options.forceFallbackServer;
+    if (!useBridgeAssist) {
+      if (String(options.voiceAnnotation || '').trim()) {
+        return withOperationPolicy({
+          allowSpeech: false,
+          silent: true,
+          source: 'show-tell',
+          reason: 'show+tell stays quiet'
+        }, function() {
+          return analyzeShowTell(rawBase64, description, options).then(function(result) {
+            if (result && result.ok) return result;
+            native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
+              entryId: options.imageId || '',
+              error: result?.error || 'show-tell failed'
+            });
+            return storeCaptureOnlyResult(Object.assign({}, options, {
+              savedSummary: 'show+tell saved',
+              savedPrompt: 'hold ptt to retry description'
+            }));
+          }).catch(function(error) {
+            native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
+              entryId: options.imageId || '',
+              error: error?.message || 'show-tell failed'
+            });
+            return storeCaptureOnlyResult(Object.assign({}, options, {
+              savedSummary: 'show+tell saved',
+              savedPrompt: 'hold ptt to retry description'
+            }));
+          });
+        });
+      }
+      return storeCaptureOnlyResult(options);
+    }
+
+    var orchestrator = window.StructaOrchestrator;
     var priority = 'high';
     var projectEnvelope = buildProjectEnvelope('show');
     var selection = {
@@ -1718,6 +1870,7 @@
     executePreparedLLM: executePreparedLLM,
     processVoice: processVoice,
     processImage: processImage,
+    analyzeShowTell: analyzeShowTell,
     extractClaimsFromText: extractClaimsFromText,
     refineThreadComment: refineThreadComment,
     backfillClaimsForItem: backfillClaimsForItem,
@@ -1731,6 +1884,7 @@
     speakMilestone: speakMilestone,
     evaluateMilestone: evaluateMilestone,
     sendBridgeImage: sendBridgeImage,
+    askRabbitAboutImage: sendBridgeImage,
     buildBridgeImagePrompt: buildBridgeImagePrompt,
     withOperationPolicy: withOperationPolicy,
     currentOperationPolicy: currentOperationPolicy,

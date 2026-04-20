@@ -695,6 +695,9 @@
     if (!capture) return 'no frames';
     const status = lower(capture?.meta?.analysis_status || '');
     if (status === 'pending') return 'analyzing…';
+    if (status === 'saved') {
+      return lower(String(capture?.summary || capture?.prompt_text || capture?.voice_annotation || 'frame saved'));
+    }
     if (status === 'unavailable') {
       const fallback = String(capture?.summary || capture?.prompt_text || capture?.voice_annotation || 'frame saved');
       return lower('unanalyzed · ' + fallback);
@@ -714,7 +717,9 @@
     if (stage === 'queued') return 'working in background';
     if (stage === 'analyzing') return 'analyzing';
     if (stage === 'extracting claims') return 'extracting claims';
+    if (stage === 'saved') return 'hold ptt to describe';
     if (lower(meta.analysis_status || '') === 'pending') return 'working in background';
+    if (lower(meta.analysis_status || '') === 'saved') return 'hold ptt to describe';
     if (meta.claim_extraction_pending) return 'will finish soon';
     return 'done';
   }

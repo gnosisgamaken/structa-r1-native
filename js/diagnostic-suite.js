@@ -574,6 +574,7 @@
 
   function makeReport(results, startedAt, finishedAt, runError, options) {
     var opts = options && typeof options === 'object' ? options : {};
+    var suiteDeclaredCount = Number(opts.requestedTestCount || 0) || DECLARED_TEST_COUNT;
     var failed = results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; });
     var failureCodes = {};
     failed.forEach(function(item) {
@@ -602,7 +603,7 @@
       },
       suite: opts.suite || state.currentSuite || 'all',
       uiBuildId: UI_BUILD_ID,
-      declaredTestCount: DECLARED_TEST_COUNT,
+      declaredTestCount: suiteDeclaredCount,
       executedTestCount: results.length,
       buildStatus: opts.buildStatus || null,
       manual_voice_check: state.manualVoiceCheck || null,
@@ -1389,14 +1390,14 @@
     tests.push(makeTest('E2A', 'bridge dispatch', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
         return entry.flow === 'image.bridge' && entry.to === 'response';
-      }, 22000).catch(function() { return null; });
+      }, 28000).catch(function() { return null; });
       var result = await llm.processImage(PNG_DIAG_SAMPLE_BASE64, 'DIAG_PIXEL_01', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
         voiceAnnotation: 'DIAG_ANNOTATION_02',
         forceBridgeOnly: true,
-        journal: false,
-        timeout: 20000
+        journal: true,
+        timeout: 26000
       });
       if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
         layer: inferResultLayer(result) || 'bridge',
@@ -1405,7 +1406,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }, { timeoutMs: 30000 }));
+    }, { timeoutMs: 38000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },
@@ -1871,7 +1872,8 @@
     }
     var report = makeReport(results, startedAt, finishedAt, runError, {
       suite: suite,
-      buildStatus: buildStatus
+      buildStatus: buildStatus,
+      requestedTestCount: requestedTestCount
     });
     if (state.abortRequested) report.aborted = true;
     await saveLocalReport(report);

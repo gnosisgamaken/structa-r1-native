@@ -409,7 +409,7 @@
         message: request.message,
         correlationId: request.correlationId,
         useLLM: request.opts.useSerpAPI ? false : true,
-        wantsR1Response: false,
+        wantsR1Response: request.opts.expectBridgeResponse === true,
         wantsJournalEntry: request.opts.journal || false
       };
 
@@ -1070,6 +1070,7 @@
         return sendToLLM(prompt, {
           imageBase64: rawBase64,
           pluginId: 'com.playgranada.structa',
+          expectBridgeResponse: true,
           journal: options.journal !== false,
           timeout: Number(options.timeout || 12000),
           priority: 'high'

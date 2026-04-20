@@ -500,9 +500,10 @@
     var payload = {
       message: String(prompt || '').trim() || 'Describe what you see in this image',
       imageBase64: imageBase64,
-      useLLM: true
+      useLLM: true,
+      wantsR1Response: false,
+      wantsJournalEntry: opts.journal === true
     };
-    if (opts.journal === true) payload.wantsJournalEntry = true;
     if (native && native.probeMode && native.appendProbeEvent) {
       native.appendProbeEvent({
         source: 'bridge-out',
@@ -510,6 +511,7 @@
         payload: {
           imageRunId: imageRunId,
           message: compactText(payload.message, 140),
+          wantsR1Response: payload.wantsR1Response === true,
           journal: payload.wantsJournalEntry === true,
           timeoutMs: timeoutMs
         }
@@ -518,6 +520,7 @@
     native?.traceEvent?.('image.bridge', 'prepare', 'post', {
       imageRunId: imageRunId,
       timeoutMs: timeoutMs,
+      wantsR1Response: payload.wantsR1Response === true,
       journal: payload.wantsJournalEntry === true
     });
     if (!expectResponse) {

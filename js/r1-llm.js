@@ -28,9 +28,11 @@
   var MAX_HISTORY = 10;
   var lastCallTime = 0;
   var MIN_GAP_MS = 350;
+  var BRIDGE_TIMEOUT_CODE = 'bridge-timeout';
   var dispatchTimer = null;
   var lastMilestoneSpeechAt = 0;
   var MILESTONE_COOLDOWN_MS = 6000;
+  var pendingBridgeRequests = new Map();
   var runtimeCaps = window.__structaCaps || {
     hasBridge: typeof PluginMessageHandler !== 'undefined',
     hasVoiceBridge: typeof CreationVoiceHandler !== 'undefined',
@@ -104,6 +106,11 @@
   function getNextId() {
     requestId++;
     return 'structa-' + Date.now() + '-' + requestId;
+  }
+
+  function createCorrelationId() {
+    requestId++;
+    return 'bridge-' + Date.now() + '-' + requestId;
   }
 
   function normalizeMilestoneKind(kind) {
@@ -185,6 +192,63 @@
    * Returns a promise that resolves with { ok, text, clean, structured }.
    * Supports optional imageBase64 for multimodal queries.
    */
+  function clearBridgeRequest(request) {
+    if (!request) return;
+    if (request.timeout) clearTimeout(request.timeout);
+    pendingBridgeRequests.delete(request.correlationId);
+    if (activeRequest && activeRequest.id === request.id) {
+      activeRequest = null;
+    }
+  }
+
+  function bridgeSend(request) {
+    return new Promise(function(resolve) {
+      if (typeof PluginMessageHandler === 'undefined') {
+        clearBridgeRequest(request);
+        resolve({ ok: false, error: 'PluginMessageHandler not available' });
+        return;
+      }
+
+      pendingBridgeRequests.set(request.correlationId, request);
+      request.timeout = setTimeout(function() {
+        if (!pendingBridgeRequests.has(request.correlationId)) return;
+        clearBridgeRequest(request);
+        native?.traceEvent?.('bridge', 'pending', 'timeout', {
+          correlationId: request.correlationId,
+          requestId: request.id,
+          pluginId: request.opts?.pluginId || ''
+        });
+        resolve({
+          ok: false,
+          error: 'BridgeTimeout',
+          code: BRIDGE_TIMEOUT_CODE,
+          correlationId: request.correlationId
+        });
+        processQueue();
+      }, request.opts.timeout || 30000);
+
+      var payload = {
+        message: request.message,
+        correlationId: request.correlationId,
+        useLLM: request.opts.useSerpAPI ? false : true,
+        wantsR1Response: false,
+        wantsJournalEntry: request.opts.journal || false
+      };
+
+      if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
+      if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
+      if (request.opts.useSerpAPI) payload.useSerpAPI = true;
+
+      try {
+        PluginMessageHandler.postMessage(JSON.stringify(payload));
+        resolve(null);
+      } catch (err) {
+        clearBridgeRequest(request);
+        resolve({ ok: false, error: 'postMessage failed: ' + err.message });
+      }
+    });
+  }
+
   function sendToLLM(message, options) {
     var opts = options || {};
     var id = getNextId();
@@ -198,6 +262,7 @@
     return new Promise(function(resolve) {
       var request = {
         id: id,
+        correlationId: createCorrelationId(),
         message: protectedMessage,
         opts: opts,
         resolve: resolve
@@ -231,45 +296,27 @@
 
       lastCallTime = Date.now();
       activeRequest = request;
-      activeRequest.timeout = setTimeout(function() {
-        if (!activeRequest || activeRequest.id !== request.id) return;
-        var timedOut = activeRequest;
-        activeRequest = null;
-        timedOut.resolve({ ok: false, error: 'timeout' });
+      bridgeSend(request).then(function(dispatchResult) {
+        if (!dispatchResult) return;
+        request.resolve(dispatchResult);
         processQueue();
-      }, request.opts.timeout || 30000);
-
-      var payload = {
-        message: request.message,
-        useLLM: request.opts.useSerpAPI ? false : true,
-        wantsR1Response: false,
-        wantsJournalEntry: request.opts.journal || false
-      };
-
-      if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
-      if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
-      if (request.opts.useSerpAPI) payload.useSerpAPI = true;
-
-      if (typeof PluginMessageHandler !== 'undefined') {
-        try {
-          PluginMessageHandler.postMessage(JSON.stringify(payload));
-        } catch (err) {
-          clearTimeout(activeRequest.timeout);
-          activeRequest = null;
-          request.resolve({ ok: false, error: 'postMessage failed: ' + err.message });
-          processQueue();
-        }
-      } else {
-        clearTimeout(activeRequest.timeout);
-        activeRequest = null;
-        request.resolve({ ok: false, error: 'PluginMessageHandler not available' });
-        processQueue();
-      }
+      });
     }, delay);
   }
 
   // === Response handler ===
   var previousHandler = window.onPluginMessage;
+
+  function extractCorrelationId(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    if (typeof payload.correlationId === 'string' && payload.correlationId) return payload.correlationId;
+    if (typeof payload.requestId === 'string' && payload.requestId) return payload.requestId;
+    if (payload.data && typeof payload.data === 'object') {
+      var nested = extractCorrelationId(payload.data);
+      if (nested) return nested;
+    }
+    return '';
+  }
 
   window.onPluginMessage = function(data) {
     // STT handling — match exact R1 format: { type: 'sttEnded', transcript: '...' }
@@ -285,12 +332,14 @@
 
     // Try to extract the LLM response text
     var responseText = extractResponseText(data);
+    var correlationId = extractCorrelationId(data);
 
-    if (activeRequest && responseText) {
-      var cb = activeRequest;
+    if ((correlationId && pendingBridgeRequests.has(correlationId)) || (activeRequest && responseText)) {
+      var cb = correlationId && pendingBridgeRequests.has(correlationId)
+        ? pendingBridgeRequests.get(correlationId)
+        : activeRequest;
       if (cb) {
-        clearTimeout(cb.timeout);
-        activeRequest = null;
+        clearBridgeRequest(cb);
         if (native && native.probeMode && native.appendProbeEvent) {
           native.appendProbeEvent({
             source: 'bridge-in',
@@ -302,7 +351,8 @@
           ok: true,
           text: responseText,
           clean: clean,
-          structured: extractFields(clean)
+          structured: extractFields(clean),
+          correlationId: cb.correlationId || correlationId || ''
         });
         processQueue();
         return;
@@ -672,6 +722,17 @@
     return Promise.resolve({ ok: false, error: 'email unavailable', mode: 'unavailable' });
   }
 
+  function runImageServerFallback(orchestrator, payload, options, fromState, reason) {
+    native?.traceEvent?.('image.dispatch', fromState || 'bridge-timeout', 'fallback-server', {
+      entryId: options.imageId || '',
+      reason: reason || 'bridge timeout'
+    });
+    if (!orchestrator?.analyzeImage) {
+      return Promise.resolve({ ok: false, error: reason || 'bridge timeout', code: BRIDGE_TIMEOUT_CODE });
+    }
+    return orchestrator.analyzeImage(payload, executePreparedLLM);
+  }
+
   /**
    * processImage -- sends image to R1 LLM with FULL project context.
    * Project type fundamentally changes how to interpret an image:
@@ -720,10 +781,13 @@
         entryId: options.imageId || '',
         reason: options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
       });
-      if (!orchestrator.analyzeImage) {
-        return Promise.resolve({ ok: false, error: 'bridge unavailable' });
-      }
-      return orchestrator.analyzeImage(payload, executePreparedLLM);
+      return runImageServerFallback(
+        orchestrator,
+        payload,
+        options,
+        options.forceFallbackServer ? 'forced-fallback' : 'bridge-unavailable',
+        options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
+      );
     }
 
     return orchestrator.prepareImageContextPrompt(payload).then(function(prepared) {
@@ -753,10 +817,15 @@
         imageBase64: rawBase64,
         pluginId: 'com.playgranada.structa',
         journal: true,
-        timeout: 15000,
+        timeout: 8000,
         priority: 'high'
       }).then(function(bridgeResult) {
-        if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) return bridgeResult;
+        if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
+          if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
+            return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
+          }
+          return bridgeResult;
+        }
         native?.traceEvent?.('image.bridge', 'pending', 'response', {
           entryId: options.imageId || '',
           textLength: String(bridgeResult.clean || bridgeResult.text || '').length,

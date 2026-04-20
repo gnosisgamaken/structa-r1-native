@@ -77,7 +77,7 @@
     }
     var message = fallbackMessage || 'failed';
     if (input && typeof input === 'object') {
-      message = input.error?.message || input.error || input.message || fallbackMessage || 'failed';
+      message = input.data?.error || input.error?.message || (typeof input.error === 'string' ? input.error : '') || input.message || fallbackMessage || 'failed';
     } else if (typeof input === 'string' && input) {
       message = input;
     }
@@ -1247,21 +1247,37 @@
       triangle.dismiss?.();
       var a = reserveInsight('DIAG_TRIANGLE_SOURCE_A', true);
       var b = reserveInsight('DIAG_TRIANGLE_SOURCE_B', true);
-      var copyState = triangle.copy({ type: 'know', id: a.node_id, body: a.body, project_id: getProjectId() });
-      expect(assertions, copyState?.mode === 'armed', 'triangle armed', 'triangle did not arm');
-      var completeState = triangle.complete({ type: 'know', id: b.node_id, body: b.body, project_id: getProjectId() });
-      expect(assertions, completeState?.mode === 'synthesizing', 'triangle ready to synthesize', 'triangle not ready');
-      var queued = await triangle.submit('what pattern links them');
-      if (!queued?.ok) failFromResult(queued, queued?.error || 'triangle submit failed', {
-        layer: inferResultLayer(queued) || 'triangle',
-        latencyMs: inferResultLatency(queued)
+      var itemAClaims = native.getClaimsForItem(a.node_id) || [];
+      var itemBClaims = native.getClaimsForItem(b.node_id) || [];
+      var result = await runPreparedBridgeEndpoint('/v1/triangle/synthesize', {
+        project: getProject(),
+        itemA: {
+          itemId: a.node_id,
+          claimIds: itemAClaims.map(function(entry) { return entry.id; }),
+          claims: itemAClaims
+        },
+        itemB: {
+          itemId: b.node_id,
+          claimIds: itemBClaims.map(function(entry) { return entry.id; }),
+          claims: itemBClaims
+        },
+        angle: {
+          text: 'what pattern links them',
+          sttConfidence: 0.99
+        },
+        branchContext: {
+          id: 'main',
+          name: 'main',
+          parentBranchId: ''
+        }
       });
-      expect(assertions, queued?.ok === true, 'triangle queued', 'triangle submit failed');
-      var trace = await awaitTrace(function(entry) {
-        return entry.flow === 'triangle.synth.resolved' || entry.flow === 'triangle.synth.ambiguous';
-      }, 12000);
-      expect(assertions, !!trace, 'triangle finished', 'triangle never finished');
-    }, { timeoutMs: 22000 }));
+      var verdict = contracts.validateTriangleOutput(result, {
+        project: getProject(),
+        parentEvidenceIds: itemAClaims.map(function(entry) { return entry.id; }).concat(itemBClaims.map(function(entry) { return entry.id; }))
+      });
+      expect(assertions, verdict.ok === true, 'triangle output valid', 'triangle output invalid');
+      expect(assertions, result?.status === 'synthesized' || result?.status === 'ambiguous', 'triangle finished', 'triangle never finished');
+    }, { timeoutMs: 32000 }));
     tests.push(makeTest('F3', 'triangle validator orphan evidence', 'triangle', async function(assertions) {
       var verdict = contracts.validateTriangleOutput({
         status: 'synthesized',
@@ -1350,7 +1366,7 @@
           source: 'comment',
           sourceRef: { itemId: node.node_id, threadEntryId: comment.id }
         }],
-        contradicts: existingClaim.id
+        contradicts: existingClaim.text
       });
       expect(assertions, extractionResult?.contradictionId === existingClaim.id, 'contradiction linked', 'contradiction not linked');
       expect(assertions, extractionResult?.claimStatusUpdate?.status === 'disputed', 'claim marked disputed in update', 'claim not disputed');

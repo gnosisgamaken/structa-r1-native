@@ -1177,6 +1177,18 @@
     }) || null;
   }
 
+  function findClaimByReference(project, value) {
+    ensureProjectKnowledge(project);
+    var ref = String(value || '').trim();
+    if (!ref) return null;
+    var byId = findClaimById(project, ref);
+    if (byId) return byId;
+    var normalized = compact(ref, 160).toLowerCase();
+    return (project.claims || []).find(function(entry) {
+      return entry && compact(entry.text || '', 160).toLowerCase() === normalized;
+    }) || null;
+  }
+
   function buildReconciliationQuestionBody(previousText, nextText) {
     var prior = compact(previousText || 'that earlier claim', 52).replace(/[.?!]+$/g, '');
     var next = compact(nextText || 'this newer claim', 52).replace(/[.?!]+$/g, '');
@@ -1276,7 +1288,7 @@
         return all;
       }, [])));
 
-      var clarifiedClaim = comment.clarifies ? findClaimById(project, comment.clarifies) : null;
+      var clarifiedClaim = comment.clarifies ? findClaimByReference(project, comment.clarifies) : null;
       if (clarifiedClaim && storedClaimIds.length) {
         clarifiedClaim.clarifications = Array.isArray(clarifiedClaim.clarifications) ? clarifiedClaim.clarifications : [];
         storedClaimIds.forEach(function(claimId) {
@@ -1286,14 +1298,14 @@
         });
       }
 
-      var contradictedClaim = comment.contradicts ? findClaimById(project, comment.contradicts) : null;
+      var contradictedClaim = comment.contradicts ? findClaimByReference(project, comment.contradicts) : null;
       var reconciliationQuestion = null;
       var claimStatusUpdate = null;
       if (contradictedClaim && storedClaims.length) {
         claimStatusUpdate = setClaimStatusOnProject(project, contradictedClaim.id, 'disputed', {
           reason: 'comment-contradiction'
         });
-        contradictedClaim = findClaimById(project, contradictedClaim.id) || contradictedClaim;
+        contradictedClaim = findClaimByReference(project, contradictedClaim.id) || contradictedClaim;
         contradictedClaim.disputedBy = Array.isArray(contradictedClaim.disputedBy) ? contradictedClaim.disputedBy : [];
         storedClaimIds.forEach(function(claimId) {
           if (contradictedClaim.disputedBy.indexOf(claimId) === -1) {

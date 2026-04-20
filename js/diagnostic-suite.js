@@ -16,8 +16,8 @@
   const PNG_1X1_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WHZp9sAAAAASUVORK5CYII=';
   const APP_BUILD_SHA = 'workspace';
   const UI_BUILD_ID = window.StructaBuild?.uiBuildId || 'ui-unknown';
-  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 37;
-  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-ah1-b9dd6fb';
+  const DECLARED_TEST_COUNT = Number(window.StructaBuild?.declaredDiagnosticTests || 0) || 35;
+  const DIAGNOSTIC_ASSET_ID = 'diag-20260420-ai1-a7a98ec';
   const EXPECTED_DIAGNOSTIC_ASSET_ID = window.StructaBuild?.expectedDiagnosticsAssetId || '';
   const ASSET_REFRESH_SESSION_KEY = 'structa-asset-refresh:' + UI_BUILD_ID;
   const RELEASE_CHECKLIST = [
@@ -144,13 +144,19 @@
 
   function isStaleAssetBundle(buildStatus) {
     if (!buildStatus) return false;
-    return Number(buildStatus.declaredTestCount || 0) !== Number(buildStatus.actualTestCount || 0);
+    if (buildStatus.expectedDiagnosticAssetId && buildStatus.diagnosticAssetId) {
+      return buildStatus.expectedDiagnosticAssetId !== buildStatus.diagnosticAssetId;
+    }
+    return false;
   }
 
   function getBuildMismatchSummary(buildStatus) {
     if (!buildStatus) return '';
     if (isStaleAssetBundle(buildStatus)) {
-      return 'stale asset bundle · declared ' + buildStatus.declaredTestCount + ' · actual ' + buildStatus.actualTestCount;
+      return 'stale asset bundle · expected ' + buildStatus.expectedDiagnosticAssetId + ' · actual ' + buildStatus.diagnosticAssetId;
+    }
+    if (Number(buildStatus.declaredTestCount || 0) !== Number(buildStatus.actualTestCount || 0)) {
+      return 'diagnostic manifest mismatch · declared ' + buildStatus.declaredTestCount + ' · actual ' + buildStatus.actualTestCount;
     }
     return (buildStatus.mismatches || []).join(' · ');
   }
@@ -508,7 +514,7 @@
     var response = await fetchJson('/buildinfo', { method: 'GET' });
     var mismatches = [];
     if (meta.declaredTestCount !== meta.actualTestCount) {
-      mismatches.push('diagnostics suite stale');
+      mismatches.push('diagnostic manifest mismatch');
     }
     if (meta.expectedDiagnosticAssetId && meta.expectedDiagnosticAssetId !== meta.diagnosticAssetId) {
       mismatches.push('diagnostic asset id mismatch');
@@ -516,6 +522,8 @@
     if (!(response.ok && response.data?.ok === true && String(response.data.sha || '').trim())) {
       mismatches.push('server build unavailable');
     }
+    var staleAsset = meta.expectedDiagnosticAssetId && meta.diagnosticAssetId && meta.expectedDiagnosticAssetId !== meta.diagnosticAssetId;
+    var blockingMismatch = staleAsset || !(response.ok && response.data?.ok === true && String(response.data.sha || '').trim());
     return {
       uiBuildId: meta.uiBuildId,
       declaredTestCount: meta.declaredTestCount,
@@ -526,7 +534,7 @@
       serverBuiltAt: response.ok && response.data?.ok === true ? String(response.data.built_at || '') : '',
       assetRefreshAttempted: hasAssetRefreshAttempted(),
       mismatches: mismatches,
-      status: mismatches.length ? 'mismatch' : 'current'
+      status: blockingMismatch ? 'mismatch' : 'current'
     };
   }
 

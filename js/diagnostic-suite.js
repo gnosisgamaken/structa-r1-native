@@ -1406,7 +1406,7 @@
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
       expect(assertions, String(result.clean || '').length >= 0, 'bridge image text captured');
-    }, { timeoutMs: 38000, includeInAll: false }));
+    }, { timeoutMs: 38000 }));
     tests.push(makeTest('E3', 'claim extraction stage b', 'image', async function(assertions) {
       var extracted = await llm.extractClaimsFromText({
         input: { text: 'DIAG_FRAME_01\n- DIAG_VISUAL_BOTTLENECK', deviceId: native?.deviceId || '' },

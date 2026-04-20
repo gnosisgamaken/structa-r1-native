@@ -506,6 +506,24 @@
   }
 
   window.onPluginMessage = function(data) {
+    if (native && native.probeMode && native.appendProbeEvent) {
+      var probeName = 'message';
+      try {
+        var payload = data && typeof data === 'object' ? data : {};
+        var correlation = extractCorrelationId(payload);
+        var responseText = extractResponseText(payload);
+        var keys = payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 6).join(',') : typeof data;
+        probeName = 'message in' +
+          (correlation ? ' corr=' + compactText(correlation, 28) : '') +
+          (responseText ? ' text=' + compactText(responseText, 40) : '') +
+          (keys ? ' keys=' + keys : '');
+      } catch (_) {}
+      native.appendProbeEvent({
+        source: 'bridge-in',
+        name: probeName
+      });
+    }
+
     // STT handling — match exact R1 format: { type: 'sttEnded', transcript: '...' }
     if (data && data.type === 'sttEnded' && data.transcript) {
       if (previousHandler) {
@@ -1495,7 +1513,7 @@
       }
       return sendToLLM(prompt, {
         journal: false,
-        timeout: Math.min(prepared.llm.timeout || 3000, 3000),
+        timeout: Math.min(Math.max(prepared.llm.timeout || 22000, 22000), 22000),
         priority: prepared.llm.priority || 'high',
         useSerpAPI: false,
         pluginId: 'com.playgranada.structa',
@@ -1505,7 +1523,7 @@
       new Promise(function(resolve) {
         setTimeout(function() {
           resolve({ ok: false, title: '', error: 'title timeout' });
-        }, 3000);
+        }, 22000);
       })
     ]);
   }

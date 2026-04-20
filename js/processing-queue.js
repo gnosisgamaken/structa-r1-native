@@ -71,8 +71,8 @@
     try {
       window.localStorage?.setItem(STORAGE_KEY, JSON.stringify(snapshot));
     } catch (_) {}
-    if (window.creationStorage?.plain?.setItem) {
-      window.creationStorage.plain.setItem(STORAGE_KEY, JSON.stringify(snapshot)).catch(function() {});
+    if (window.StructaNative?.storage?.plain?.write) {
+      window.StructaNative.storage.plain.write(STORAGE_KEY, snapshot).catch(function() {});
     }
   }
 
@@ -161,9 +161,9 @@
       maybeProcess();
       return snapshot();
     };
-    if (window.creationStorage?.plain?.getItem) {
-      return window.creationStorage.plain.getItem(STORAGE_KEY).then(function(raw) {
-        if (!seeded) hydrateFrom(raw);
+    if (window.StructaNative?.storage?.plain?.read) {
+      return window.StructaNative.storage.plain.read(STORAGE_KEY).then(function(result) {
+        if (!seeded) hydrateFrom(result?.value);
         return finish();
       }).catch(function() {
         return finish();

@@ -108,9 +108,9 @@
 
   function persistPauseState(paused) {
     try {
-      if (!window.creationStorage?.plain) return;
-      if (paused) window.creationStorage.plain.setItem(PAUSE_KEY, '1');
-      else window.creationStorage.plain.removeItem(PAUSE_KEY);
+      if (!native?.storage?.plain) return;
+      if (paused) native.storage.plain.write(PAUSE_KEY, '1');
+      else native.storage.plain.remove(PAUSE_KEY);
     } catch (_) {}
   }
 
@@ -733,12 +733,12 @@
 
   (function restorePauseState() {
     try {
-      if (!window.creationStorage?.plain?.getItem) {
+      if (!native?.storage?.plain?.read) {
         syncPhaseWithFocus();
         return;
       }
-      Promise.resolve(window.creationStorage.plain.getItem(PAUSE_KEY)).then(function(value) {
-        if (value) {
+      Promise.resolve(native.storage.plain.read(PAUSE_KEY)).then(function(result) {
+        if (result?.value) {
           chain.manuallyStopped = true;
           setPhase('paused');
         } else {

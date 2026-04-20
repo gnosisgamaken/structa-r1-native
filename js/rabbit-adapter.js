@@ -168,6 +168,151 @@
     return value.slice(0, Math.max(0, limit - 1)).trimEnd() + '…';
   }
 
+  function encodeStorageValue(value) {
+    var payload = JSON.stringify({
+      __structa_storage_v1: true,
+      value: cloneValue(value)
+    });
+    return btoa(unescape(encodeURIComponent(payload)));
+  }
+
+  function decodeStorageValue(raw) {
+    if (raw == null || raw === '') {
+      return { ok: true, value: null, raw: raw, encoded: false };
+    }
+    var rawString = String(raw);
+    var candidates = [{ value: rawString, encoded: false }];
+    try {
+      candidates.unshift({
+        value: decodeURIComponent(escape(atob(rawString))),
+        encoded: true
+      });
+    } catch (_) {}
+
+    for (var i = 0; i < candidates.length; i += 1) {
+      var candidate = candidates[i];
+      try {
+        var parsed = JSON.parse(candidate.value);
+        if (parsed && typeof parsed === 'object' && parsed.__structa_storage_v1) {
+          return { ok: true, value: parsed.value, raw: rawString, encoded: candidate.encoded };
+        }
+        return { ok: true, value: parsed, raw: rawString, encoded: candidate.encoded };
+      } catch (_) {}
+    }
+
+    return { ok: true, value: rawString, raw: rawString, encoded: false };
+  }
+
+  function getStorageBucket(tier) {
+    if (tier === 'secure') return window.creationStorage?.secure || null;
+    return window.creationStorage?.plain || null;
+  }
+
+  function storageWrite(tier, key, value) {
+    var bucket = getStorageBucket(tier);
+    if (!bucket?.setItem) {
+      return Promise.resolve({ ok: false, error: tier + ' storage unavailable' });
+    }
+    try {
+      var encoded = encodeStorageValue(value);
+      return Promise.resolve(bucket.setItem(key, encoded)).then(function() {
+        return { ok: true, key: key, encoded: true };
+      }).catch(function(error) {
+        return { ok: false, error: error?.message || (tier + ' storage write failed') };
+      });
+    } catch (error) {
+      return Promise.resolve({ ok: false, error: error?.message || (tier + ' storage encode failed') });
+    }
+  }
+
+  function storageRead(tier, key) {
+    var bucket = getStorageBucket(tier);
+    if (!bucket?.getItem) {
+      return Promise.resolve({ ok: false, error: tier + ' storage unavailable', value: null });
+    }
+    return Promise.resolve(bucket.getItem(key)).then(function(raw) {
+      var decoded = decodeStorageValue(raw);
+      return {
+        ok: true,
+        key: key,
+        value: decoded.value,
+        raw: decoded.raw,
+        encoded: decoded.encoded
+      };
+    }).catch(function(error) {
+      return { ok: false, error: error?.message || (tier + ' storage read failed'), value: null };
+    });
+  }
+
+  function storageRemove(tier, key) {
+    var bucket = getStorageBucket(tier);
+    if (!bucket?.removeItem) {
+      return Promise.resolve({ ok: false, error: tier + ' storage unavailable' });
+    }
+    return Promise.resolve(bucket.removeItem(key)).then(function() {
+      return { ok: true, key: key };
+    }).catch(function(error) {
+      return { ok: false, error: error?.message || (tier + ' storage remove failed') };
+    });
+  }
+
+  var storage = Object.freeze({
+    encode: encodeStorageValue,
+    decode: function(raw) { return decodeStorageValue(raw).value; },
+    plain: Object.freeze({
+      write: function(key, value) { return storageWrite('plain', key, value); },
+      read: function(key) { return storageRead('plain', key); },
+      remove: function(key) { return storageRemove('plain', key); }
+    }),
+    secure: Object.freeze({
+      write: function(key, value) { return storageWrite('secure', key, value); },
+      read: function(key) { return storageRead('secure', key); },
+      remove: function(key) { return storageRemove('secure', key); }
+    })
+  });
+
+  function probeStorageHealth() {
+    var cases = [
+      { label: 'empty-object', value: {} },
+      { label: 'ascii-only', value: { text: 'plain ascii ok' } },
+      { label: 'emoji', value: { text: 'queue ready 🚀' } },
+      { label: 'blob-32kb', value: { blob: 'x'.repeat(32768) } },
+      { label: 'symbols', value: { text: 'plus+/ slash/ equals= keep' } }
+    ];
+    ['plain', 'secure'].forEach(function(tier) {
+      var bucket = getStorageBucket(tier);
+      if (!bucket?.setItem || !bucket?.getItem || !bucket?.removeItem) {
+        traceEvent('storage.probe', tier, 'skipped', { reason: 'unavailable' });
+        return;
+      }
+      cases.forEach(function(entry) {
+        var key = '__structa_storage_probe__.' + tier + '.' + entry.label;
+        storageWrite(tier, key, entry.value).then(function(writeResult) {
+          if (!writeResult.ok) {
+            traceEvent('storage.probe', entry.label, 'failed', {
+              tier: tier,
+              reason: writeResult.error || 'write failed'
+            });
+            return;
+          }
+          return storageRead(tier, key).then(function(readResult) {
+            var passed = readResult.ok && JSON.stringify(readResult.value) === JSON.stringify(entry.value);
+            traceEvent('storage.probe', entry.label, passed ? 'passed' : 'failed', {
+              tier: tier,
+              reason: passed ? '' : (readResult.error || 'mismatch')
+            });
+            return storageRemove(tier, key);
+          });
+        }).catch(function(error) {
+          traceEvent('storage.probe', entry.label, 'failed', {
+            tier: tier,
+            reason: error?.message || 'probe failed'
+          });
+        });
+      });
+    });
+  }
+
   function detectDeviceId() {
     const candidates = [
       window.__RABBIT_DEVICE_ID__,
@@ -1839,13 +1984,9 @@
     var snapshotSave = Promise.resolve(false);
     try {
       secureSnapshot = snapshotState();
-      if (window.creationStorage?.secure?.setItem) {
-        snapshotSave = Promise.resolve(window.creationStorage.secure.setItem('structa.snapshot.last', JSON.stringify(secureSnapshot))).then(function() {
-          return true;
-        }).catch(function() {
-          return false;
-        });
-      }
+      snapshotSave = storage.secure.write('structa.snapshot.last', secureSnapshot).then(function(result) {
+        return !!result?.ok;
+      });
     } catch (_) {}
     const fresh = buildInitialMemory();
     Object.keys(memory).forEach(function(key) { delete memory[key]; });
@@ -1896,14 +2037,10 @@
     if (!window.creationStorage?.secure?.getItem) {
       return Promise.resolve({ ok: false, error: 'secure storage unavailable' });
     }
-    return Promise.resolve(window.creationStorage.secure.getItem('structa.snapshot.last')).then(function(raw) {
-      if (!raw) return { ok: false, error: 'no snapshot' };
-      var snapshot = null;
-      try {
-        snapshot = JSON.parse(String(raw));
-      } catch (_) {
-        return { ok: false, error: 'invalid snapshot' };
-      }
+    return storage.secure.read('structa.snapshot.last').then(function(result) {
+      if (!result?.ok) return { ok: false, error: result?.error || 'snapshot unavailable' };
+      var snapshot = result.value;
+      if (!snapshot) return { ok: false, error: 'no snapshot' };
       var restored = snapshot?.memory || snapshot;
       if (!restored || typeof restored !== 'object') {
         return { ok: false, error: 'invalid snapshot' };
@@ -2404,11 +2541,7 @@
     var stamp = new Date().toISOString();
     var key = 'structa.snapshot.debug.' + stamp;
     var snapshot = snapshotState();
-    try {
-      if (window.creationStorage?.plain?.setItem) {
-        window.creationStorage.plain.setItem(key, JSON.stringify(snapshot));
-      }
-    } catch (_) {}
+    storage.plain.write(key, snapshot).catch(function() {});
     if (opts.export) {
       var body = JSON.stringify(snapshot, null, 2);
       postPayload({
@@ -2907,6 +3040,7 @@
     traceEvent,
     getTrace,
     snapshotState,
+    storage,
     recordVoiceCall,
     emitModelChange,
     returnHome,
@@ -2955,4 +3089,8 @@
   window.__structa = Object.freeze({
     snapshot: snapshotState
   });
+
+  setTimeout(function() {
+    try { probeStorageHealth(); } catch (_) {}
+  }, 0);
 })();

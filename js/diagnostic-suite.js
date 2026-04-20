@@ -54,39 +54,23 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
-  function normalizeStorageRead(value) {
-    var results = [];
-    var raw = '';
-    if (typeof value === 'string') raw = value;
-    else if (value != null) {
-      try { raw = JSON.stringify(value); } catch (_) { raw = String(value); }
-    }
-    if (raw) results.push(raw);
-    if (raw) {
-      try {
-        var decoded = atob(raw);
-        if (decoded && results.indexOf(decoded) === -1) results.push(decoded);
-      } catch (_) {}
-    }
-    return results;
+  function hasStorageTier(tier) {
+    return !!native?.storage?.[tier]?.write && !!native?.storage?.[tier]?.read;
   }
 
-  function storagePayload(label) {
-    return JSON.stringify({
+  async function assertStorageRoundTrip(assertions, tier, key, label) {
+    expect(assertions, hasStorageTier(tier), label + ' storage available', label + ' storage unavailable');
+    var payload = {
       ok: true,
       label: label,
       at: nowIso()
-    });
-  }
-
-  async function assertStorageRoundTrip(assertions, storage, key, label) {
-    expect(assertions, !!storage?.setItem && !!storage?.getItem, label + ' storage available', label + ' storage unavailable');
-    var payload = storagePayload(label);
-    await storage.setItem(key, payload);
-    var value = await storage.getItem(key);
-    var candidates = normalizeStorageRead(value);
-    expect(assertions, candidates.indexOf(payload) >= 0, label + ' storage roundtrip', label + ' storage mismatch');
-    await storage.removeItem?.(key);
+    };
+    var write = await native.storage[tier].write(key, payload);
+    expect(assertions, write?.ok === true, label + ' storage write', write?.error || (label + ' storage write failed'));
+    var read = await native.storage[tier].read(key);
+    expect(assertions, read?.ok === true, label + ' storage read', read?.error || (label + ' storage read failed'));
+    expect(assertions, JSON.stringify(read?.value || null) === JSON.stringify(payload), label + ' storage roundtrip', label + ' storage mismatch');
+    await native.storage[tier].remove(key);
   }
 
   function formatReportDigest(report) {
@@ -365,26 +349,16 @@
   }
 
   function saveLocalReport(report) {
-    var storage = window.creationStorage?.plain;
-    if (!storage?.getItem || !storage?.setItem) {
+    if (!hasStorageTier('plain')) {
       return Promise.resolve({ ok: false, error: 'plain storage unavailable' });
     }
-    return Promise.resolve(storage.getItem(REPORT_STORAGE_KEY)).catch(function() {
-      return '[]';
-    }).then(function(raw) {
-      var reports = [];
-      normalizeStorageRead(raw).some(function(candidate) {
-        try {
-          reports = JSON.parse(String(candidate || '[]'));
-          return true;
-        } catch (_) {
-          return false;
-        }
-      });
+    return native.storage.plain.read(REPORT_STORAGE_KEY).then(function(result) {
+      var reports = result?.ok && Array.isArray(result.value) ? result.value : [];
       reports = Array.isArray(reports) ? reports : [];
       reports.unshift(report);
       reports = reports.slice(0, REPORT_LIMIT);
-      return Promise.resolve(storage.setItem(REPORT_STORAGE_KEY, JSON.stringify(reports))).then(function() {
+      return native.storage.plain.write(REPORT_STORAGE_KEY, reports).then(function(write) {
+        if (!write?.ok) throw new Error(write?.error || 'storage failed');
         diagTrace('diag.report.saved_locally', 'report', 'saved', {
           runId: state.currentRunId,
           count: reports.length
@@ -632,13 +606,11 @@
       expect(assertions, typeof window.CreationVoiceHandler !== 'undefined', 'voice bridge available', 'CreationVoiceHandler missing');
     }));
     tests.push(makeTest('A3', 'storage write/read plain', 'runtime', async function(assertions) {
-      var storage = window.creationStorage?.plain;
-      await assertStorageRoundTrip(assertions, storage, '__diag', 'plain');
+      await assertStorageRoundTrip(assertions, 'plain', '__diag', 'plain');
     }));
     tests.push(makeTest('A4', 'storage write/read secure', 'runtime', async function(assertions) {
-      var storage = window.creationStorage?.secure;
-      if (!storage?.setItem || !storage?.getItem) throw new SkipError('secure storage unavailable');
-      await assertStorageRoundTrip(assertions, storage, '__diag.secure', 'secure');
+      if (!hasStorageTier('secure')) throw new SkipError('secure storage unavailable');
+      await assertStorageRoundTrip(assertions, 'secure', '__diag.secure', 'secure');
     }));
     tests.push(makeTest('A5', 'memory snapshot restore', 'runtime', async function(assertions) {
       var before = native.snapshotState();
@@ -1262,10 +1234,9 @@
   }
 
   function clearSavedReports() {
-    var storage = window.creationStorage?.plain;
-    if (!storage?.setItem) return Promise.resolve(false);
-    return Promise.resolve(storage.setItem(REPORT_STORAGE_KEY, '[]')).then(function() {
-      return true;
+    if (!hasStorageTier('plain')) return Promise.resolve(false);
+    return native.storage.plain.write(REPORT_STORAGE_KEY, []).then(function(result) {
+      return !!result?.ok;
     }).catch(function() {
       return false;
     });

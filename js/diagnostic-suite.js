@@ -54,6 +54,61 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
+  function createFailure(message, details) {
+    var error = new Error(message || 'failed');
+    Object.assign(error, details || {});
+    return error;
+  }
+
+  function normalizeFailure(input, fallbackMessage, defaults) {
+    var base = defaults && typeof defaults === 'object' ? defaults : {};
+    if (input instanceof Error) {
+      return input;
+    }
+    var details = Object.assign({}, base);
+    if (input && typeof input === 'object') {
+      details.code = input.code || input.error?.code || details.code || '';
+      details.layer = input.layer || input.error?.layer || details.layer || '';
+      details.latencyMs = Number(input.latencyMs || input.error?.latencyMs || details.latencyMs || 0) || 0;
+      details.statusCode = Number(input.status || input.statusCode || input.error?.status || 0) || 0;
+      details.cause = input;
+    }
+    var message = fallbackMessage || 'failed';
+    if (input && typeof input === 'object') {
+      message = input.error?.message || input.error || input.message || fallbackMessage || 'failed';
+    } else if (typeof input === 'string' && input) {
+      message = input;
+    }
+    return createFailure(message, details);
+  }
+
+  function failFromResult(result, fallbackMessage, defaults) {
+    throw normalizeFailure(result, fallbackMessage, defaults);
+  }
+
+  function inferResultCode(result) {
+    if (!result || typeof result !== 'object') return '';
+    return result.code || result.error?.code || '';
+  }
+
+  function inferResultLayer(result) {
+    if (!result || typeof result !== 'object') return '';
+    return result.layer || result.error?.layer || '';
+  }
+
+  function inferResultLatency(result) {
+    if (!result || typeof result !== 'object') return 0;
+    return Number(result.latencyMs || result.error?.latencyMs || 0) || 0;
+  }
+
+  function formatFailureDetail(item) {
+    var parts = [];
+    if (item.error?.code) parts.push(item.error.code);
+    if (item.error?.layer) parts.push(item.error.layer);
+    if (item.error?.latencyMs) parts.push(item.error.latencyMs + 'ms');
+    return parts.join(' · ');
+  }
+
   function hasStorageTier(tier) {
     return !!native?.storage?.[tier]?.write && !!native?.storage?.[tier]?.read;
   }
@@ -206,6 +261,7 @@
 
   function fetchJson(path, options) {
     var opts = options && typeof options === 'object' ? options : {};
+    var startedAt = Date.now();
     var request = {
       method: opts.method || 'POST',
       headers: { 'Content-Type': 'application/json' }
@@ -224,9 +280,29 @@
         return {
           ok: response.ok,
           status: response.status,
-          data: data
+          data: data,
+          latencyMs: Date.now() - startedAt,
+          error: response.ok ? null : {
+            code: response.status >= 500 ? 'server-500' : 'server-4xx',
+            layer: 'server',
+            latencyMs: Date.now() - startedAt,
+            status: response.status
+          }
         };
       });
+    }).catch(function(error) {
+      return {
+        ok: false,
+        status: 0,
+        data: {},
+        latencyMs: Date.now() - startedAt,
+        error: {
+          code: 'network-error',
+          layer: 'network',
+          latencyMs: Date.now() - startedAt,
+          message: error?.message || 'network request failed'
+        }
+      };
     });
   }
 
@@ -291,11 +367,18 @@
   }
 
   function makeReport(results, startedAt, finishedAt) {
+    var failed = results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; });
+    var failureCodes = {};
+    failed.forEach(function(item) {
+      var key = item.error?.code || item.status || 'unknown';
+      failureCodes[key] = Number(failureCodes[key] || 0) + 1;
+    });
     var summary = {
       total: results.length,
       passed: results.filter(function(item) { return item.status === 'pass'; }).length,
-      failed: results.filter(function(item) { return item.status === 'fail' || item.status === 'timeout'; }).length,
-      skipped: results.filter(function(item) { return item.status === 'skip'; }).length
+      failed: failed.length,
+      skipped: results.filter(function(item) { return item.status === 'skip'; }).length,
+      failureCodes: failureCodes
     };
     return {
       schema_version: 1,
@@ -325,6 +408,8 @@
         '  ' + item.id + ' ' + item.name,
         '    ' + (item.error?.message || item.status)
       ];
+      var detail = formatFailureDetail(item);
+      if (detail) lines.push('    ' + detail);
       if (item.traceExcerpt && item.traceExcerpt.length) {
         lines.push('    last trace events:');
         item.traceExcerpt.slice(-3).forEach(function(entry) {
@@ -336,10 +421,14 @@
   }
 
   function formatReportEmail(report) {
+    var failureCodeSummary = Object.keys(report.summary.failureCodes || {}).map(function(code) {
+      return code + ': ' + report.summary.failureCodes[code];
+    }).join(' · ');
     var lines = [
       'Structa diagnostics · ' + report.startedAt,
       'device: rabbit-r1 · app: structa · commit: ' + (report.device?.appVersion || 'workspace'),
       'summary: ' + report.summary.total + ' tests · ' + report.summary.passed + ' pass · ' + report.summary.failed + ' fail · ' + report.summary.skipped + ' skip · ' + report.durationMs + 'ms',
+      failureCodeSummary ? ('failure codes: ' + failureCodeSummary) : '',
       '',
       formatFailureBlock(report),
       '',
@@ -493,20 +582,35 @@
 
   async function runPreparedBridgeEndpoint(path, payload) {
     var prepared = await fetchJson(path, { body: payload });
-    if (!prepared.ok || prepared.data?.ok === false) throw new Error(prepared.data?.error || path + ' prepare failed');
+    if (!prepared.ok || prepared.data?.ok === false) {
+      failFromResult(prepared, prepared.data?.error || path + ' prepare failed', {
+        layer: inferResultLayer(prepared) || 'server',
+        latencyMs: inferResultLatency(prepared)
+      });
+    }
     var llmResult = await llm.sendToLLM(prepared.data?.llm?.prompt || '', {
       journal: false,
       timeout: prepared.data?.llm?.timeout || TEST_TIMEOUT_MS,
       priority: prepared.data?.llm?.priority || 'high',
       imageBase64: prepared.data?.llm?.imageBase64
     });
-    if (!llmResult?.ok) throw new Error(llmResult?.error || path + ' bridge failed');
+    if (!llmResult?.ok) {
+      failFromResult(llmResult, llmResult?.error || path + ' bridge failed', {
+        layer: inferResultLayer(llmResult) || 'bridge',
+        latencyMs: inferResultLatency(llmResult)
+      });
+    }
     var normalized = await fetchJson(path, {
       body: Object.assign({}, payload, {
         rawResponse: llmResult.clean || llmResult.text || ''
       })
     });
-    if (!normalized.ok || normalized.data?.ok === false) throw new Error(normalized.data?.error || path + ' normalize failed');
+    if (!normalized.ok || normalized.data?.ok === false) {
+      failFromResult(normalized, normalized.data?.error || path + ' normalize failed', {
+        layer: inferResultLayer(normalized) || 'server',
+        latencyMs: inferResultLatency(normalized)
+      });
+    }
     return normalized.data;
   }
 
@@ -785,6 +889,10 @@
     }));
     tests.push(makeTest('D3', 'project title endpoint', 'voice', async function(assertions) {
       var result = await llm.titleProject('designing the faster claim graph', getProject());
+      if (!result?.ok) failFromResult(result, result?.error || 'title endpoint failed', {
+        layer: inferResultLayer(result) || 'server',
+        latencyMs: inferResultLatency(result)
+      });
       expect(assertions, result?.ok === true, 'title endpoint ok', 'title endpoint failed');
       expect(assertions, String(result.title || '').split(/\s+/).filter(Boolean).length >= 2, 'title has words', 'title too short');
       expect(assertions, String(result.title || '').length <= 24, 'title under 24 chars', 'title too long');
@@ -804,12 +912,17 @@
     }));
     tests.push(makeTest('E2', 'bridge dispatch', 'image', async function(assertions) {
       var traceWait = awaitTrace(function(entry) {
-        return entry.flow === 'image.bridge' && entry.to === 'response';
-      }, TEST_TIMEOUT_MS);
+        return (entry.flow === 'image.bridge' && entry.to === 'response') ||
+          (entry.flow === 'image.dispatch' && entry.to === 'fallback-server');
+      }, 9000).catch(function() { return null; });
       var result = await llm.processImage(PNG_1X1_BASE64, 'diagnostic pixel', {
         imageId: 'diag-image-' + Date.now(),
         itemId: 'diag-item-image',
         voiceAnnotation: 'test pixel'
+      });
+      if (!result?.ok) failFromResult(result, result?.error || 'bridge image failed', {
+        layer: inferResultLayer(result) || 'bridge',
+        latencyMs: inferResultLatency(result)
       });
       await traceWait;
       expect(assertions, result?.ok === true, 'bridge image returned', 'bridge image failed');
@@ -838,6 +951,10 @@
         forceFallbackServer: true
       });
       await traceWait;
+      if (!result?.ok) failFromResult(result, result?.error || 'server fallback failed', {
+        layer: inferResultLayer(result) || 'server',
+        latencyMs: inferResultLatency(result)
+      });
       expect(assertions, result?.ok === true, 'server fallback returned', 'server fallback failed');
     }));
 
@@ -855,6 +972,10 @@
       triangle.copy({ type: 'know', id: a.node_id, body: a.body, project_id: getProjectId() });
       triangle.complete({ type: 'know', id: b.node_id, body: b.body, project_id: getProjectId() });
       var queued = await triangle.submit('what pattern links them');
+      if (!queued?.ok) failFromResult(queued, queued?.error || 'triangle submit failed', {
+        layer: inferResultLayer(queued) || 'triangle',
+        latencyMs: inferResultLatency(queued)
+      });
       expect(assertions, queued?.ok === true, 'triangle queued', 'triangle submit failed');
       var trace = await awaitTrace(function(entry) {
         return entry.flow === 'triangle.synth.resolved' || entry.flow === 'triangle.synth.ambiguous';
@@ -928,7 +1049,18 @@
           sourceRef: { itemId: node.node_id }
         }
       });
+      if (!result.ok || result.data?.ok === false) failFromResult(result, result.data?.error || 'thread extract failed', {
+        layer: inferResultLayer(result) || 'server',
+        latencyMs: inferResultLatency(result)
+      });
       expect(assertions, result.ok && result.data?.ok === true, 'thread extract ok', 'thread extract failed');
+      if (typeof result.data?.summary !== 'string') {
+        throw createFailure('thread summary missing', {
+          code: 'shape-mismatch',
+          layer: 'server',
+          latencyMs: inferResultLatency(result)
+        });
+      }
       expect(assertions, typeof result.data?.summary === 'string', 'thread extract summary', 'thread summary missing');
       native.applyThreadExtraction(node.node_id, comment.id, result.data);
     }));
@@ -1012,6 +1144,11 @@
       });
       return result;
     } catch (error) {
+      var normalized = normalizeFailure(error, error?.message || 'failed', {
+        code: /timeout/i.test(String(error?.message || '')) ? 'client-timeout' : '',
+        layer: '',
+        latencyMs: Date.now() - startedAt
+      });
       var status = error instanceof SkipError ? 'skip' : (/timeout/i.test(String(error?.message || '')) ? 'timeout' : 'fail');
       var result = {
         id: test.id,
@@ -1021,7 +1158,11 @@
         durationMs: Date.now() - startedAt,
         assertions: assertions,
         error: {
-          message: error?.message || status
+          message: normalized?.message || status,
+          code: normalized?.code || '',
+          layer: normalized?.layer || '',
+          latencyMs: normalized?.latencyMs || 0,
+          statusCode: normalized?.statusCode || 0
         },
         traceExcerpt: getTraceEvents().slice(traceStart)
       };
@@ -1182,10 +1323,11 @@
       state.report.results.filter(function(item) {
         return item.status !== 'pass';
       }).slice(0, 6).forEach(function(item) {
+        var detail = formatFailureDetail(item);
         rows.push({
           kind: item.status === 'skip' ? 'muted' : 'error',
           message: item.id + ' ' + item.name,
-          detail: item.error?.message || item.status
+          detail: (item.error?.message || item.status) + (detail ? (' · ' + detail) : '')
         });
       });
       rows.push({

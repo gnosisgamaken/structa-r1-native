@@ -101,7 +101,21 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
+  function traceEmail(flow, from, to, ctx) {
+    native?.traceEvent?.(flow, from, to, ctx || {});
+  }
+
+  function probeEmailCapability() {
+    var available = typeof window.r1?.messaging?.emailUser === 'function';
+    commitRuntimeCaps({ hasNativeEmail: available });
+    traceEmail('email.native.available', 'boot', available ? 'true' : 'false', {
+      available: available
+    });
+    return available;
+  }
+
   probeCapabilities();
+  probeEmailCapability();
 
   function getNextId() {
     requestId++;
@@ -205,7 +219,13 @@
     return new Promise(function(resolve) {
       if (typeof PluginMessageHandler === 'undefined') {
         clearBridgeRequest(request);
-        resolve({ ok: false, error: 'PluginMessageHandler not available' });
+        resolve({
+          ok: false,
+          error: 'PluginMessageHandler not available',
+          code: 'bridge-unavailable',
+          layer: 'bridge',
+          latencyMs: Date.now() - (request.startedAt || request.createdAt || Date.now())
+        });
         return;
       }
 
@@ -222,6 +242,8 @@
           ok: false,
           error: 'BridgeTimeout',
           code: BRIDGE_TIMEOUT_CODE,
+          layer: 'bridge',
+          latencyMs: Date.now() - (request.startedAt || request.createdAt || Date.now()),
           correlationId: request.correlationId
         });
         processQueue();
@@ -244,7 +266,13 @@
         resolve(null);
       } catch (err) {
         clearBridgeRequest(request);
-        resolve({ ok: false, error: 'postMessage failed: ' + err.message });
+        resolve({
+          ok: false,
+          error: 'postMessage failed: ' + err.message,
+          code: 'bridge-post-failed',
+          layer: 'bridge',
+          latencyMs: Date.now() - (request.startedAt || request.createdAt || Date.now())
+        });
       }
     });
   }
@@ -265,6 +293,7 @@
         correlationId: createCorrelationId(),
         message: protectedMessage,
         opts: opts,
+        createdAt: Date.now(),
         resolve: resolve
       };
 
@@ -295,6 +324,7 @@
       if (!request) return;
 
       lastCallTime = Date.now();
+      request.startedAt = lastCallTime;
       activeRequest = request;
       bridgeSend(request).then(function(dispatchResult) {
         if (!dispatchResult) return;
@@ -696,13 +726,26 @@
       safeBody = safeBody.slice(0, 2799).trimEnd() + '…';
     }
     var messaging = window.r1?.messaging;
+    traceEmail('email.attempt', 'idle', messaging?.emailUser ? 'native' : 'bridge-llm', {
+      subject: safeSubject,
+      bodyBytes: safeBody.length
+    });
     if (messaging?.emailUser) {
       return Promise.resolve(messaging.emailUser({
         subject: safeSubject,
         body: safeBody
       })).then(function() {
+        traceEmail('email.native.result', 'pending', 'ok', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length
+        });
         return { ok: true, mode: 'native', subject: safeSubject };
       }).catch(function(error) {
+        traceEmail('email.native.result', 'pending', 'failed', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length,
+          error: error?.message || 'email failed'
+        });
         return { ok: false, error: error?.message || 'email failed', mode: 'native' };
       });
     }
@@ -714,11 +757,24 @@
           wantsR1Response: false,
           wantsJournalEntry: false
         }));
+        traceEmail('email.bridge.dispatched', 'pending', 'requested', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length
+        });
         return Promise.resolve({ ok: true, mode: 'bridge-requested', subject: safeSubject });
       } catch (error) {
+        traceEmail('email.bridge.dispatched', 'pending', 'failed', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length,
+          error: error?.message || 'bridge email failed'
+        });
         return Promise.resolve({ ok: false, error: error?.message || 'bridge email failed', mode: 'bridge-requested' });
       }
     }
+    traceEmail('email.native.result', 'pending', 'unavailable', {
+      subject: safeSubject,
+      bodyBytes: safeBody.length
+    });
     return Promise.resolve({ ok: false, error: 'email unavailable', mode: 'unavailable' });
   }
 

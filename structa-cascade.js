@@ -1260,11 +1260,12 @@
     const traceFilter = stateData.logTraceFilter || 'all';
     const showDiagnostics = !!stateData.logDiagnosticMode;
     const diagnosticRows = (logOpen && showDiagnostics && diagnostics?.getDrawerRows) ? diagnostics.getDrawerRows() : null;
+    const actionRows = (!traceMode && !diagnosticRows && logOpen) ? buildProductLogActions() : [];
     const entries = traceMode
       ? getTraceEntries(logOpen ? 20 : 5, traceFilter)
       : (diagnosticRows && diagnosticRows.length
         ? diagnosticRows
-        : (native?.getRecentLogEntries?.(limit, { visible_only: true, product_only: true }) || []).slice(-limit));
+        : actionRows.concat((native?.getRecentLogEntries?.(limit, { visible_only: true, product_only: true }) || []).slice(-limit)));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
@@ -1326,6 +1327,120 @@
     return true;
   }
 
+  const IMAGE_PROBE_VARIANTS = [
+    {
+      id: 'alpha',
+      keyword: 'probe-alpha-raven',
+      label: 'probe alpha',
+      prompt: 'debug keyword: probe-alpha-raven\nAnalyze this image.\nDescribe only visible objects.\nWrite one short sentence.'
+    },
+    {
+      id: 'beta',
+      keyword: 'probe-beta-cedar',
+      label: 'probe beta',
+      prompt: 'debug keyword: probe-beta-cedar\nWhat is visible in this image?\nUse two short factual sentences.\nNo speculation.'
+    },
+    {
+      id: 'gamma',
+      keyword: 'probe-gamma-ember',
+      label: 'probe gamma',
+      prompt: 'debug keyword: probe-gamma-ember\nDescribe this photo plainly.\nVisible facts only.\nKeep it brief.'
+    },
+    {
+      id: 'delta',
+      keyword: 'probe-delta-glass',
+      label: 'probe delta',
+      prompt: 'debug keyword: probe-delta-glass\nImage description only.\nTwo concise sentences.\nNo extra formatting.'
+    }
+  ];
+
+  function getCurrentProbeCapture() {
+    const summary = buildShowSummary();
+    const capture = summary.current;
+    if (!capture) return null;
+    const href = getCaptureImageHref(capture);
+    if (!href) return null;
+    return {
+      capture: capture,
+      captureId: capture?.entry_id || capture?.id || capture?.node_id || '',
+      imageHref: href,
+      imageBase64: String(href).split(',').pop() || ''
+    };
+  }
+
+  function buildProductLogActions() {
+    const rows = [];
+    const probeCapture = getCurrentProbeCapture();
+    if (!probeCapture || !probeCapture.imageBase64) {
+      rows.push({
+        kind: 'action',
+        actionId: 'image-probe-missing',
+        message: 'capture a frame in show first',
+        detail: 'image probes need the current frame'
+      });
+      return rows;
+    }
+    rows.push({
+      kind: 'action',
+      actionId: 'image-probe-run-all',
+      message: 'run image probes',
+      detail: 'alpha · beta · gamma · delta'
+    });
+    IMAGE_PROBE_VARIANTS.forEach(function(variant) {
+      rows.push({
+        kind: 'action',
+        actionId: 'image-probe-' + variant.id,
+        message: variant.label,
+        detail: variant.keyword
+      });
+    });
+    return rows;
+  }
+
+  function runImageProbeVariant(variantId) {
+    const probeCapture = getCurrentProbeCapture();
+    const variant = IMAGE_PROBE_VARIANTS.find(function(entry) { return entry.id === variantId; });
+    if (!probeCapture || !probeCapture.imageBase64 || !variant) {
+      native?.recordProductEvent?.('background work failed', {
+        captureId: probeCapture?.captureId || '',
+        detail: 'image probe unavailable'
+      });
+      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+      return Promise.resolve({ ok: false, error: 'image probe unavailable' });
+    }
+    native?.recordProductEvent?.('description requested', {
+      captureId: probeCapture.captureId,
+      detail: variant.keyword
+    });
+    return window.StructaLLM?.probeImagePrompt?.(probeCapture.imageBase64, variant.prompt, {
+      captureId: probeCapture.captureId,
+      keyword: variant.keyword,
+      label: variant.label
+    }).then(function(result) {
+      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
+      return result;
+    });
+  }
+
+  function runAllImageProbeVariants() {
+    return IMAGE_PROBE_VARIANTS.reduce(function(chain, variant) {
+      return chain.then(function() {
+        return runImageProbeVariant(variant.id);
+      }).then(function() {
+        return new Promise(function(resolve) { setTimeout(resolve, 160); });
+      });
+    }, Promise.resolve());
+  }
+
+  function handleDrawerAction(actionId) {
+    if (actionId === 'image-probe-missing') {
+      return Promise.resolve({ ok: false, error: 'capture a frame first' });
+    }
+    if (actionId === 'image-probe-run-all') return runAllImageProbeVariants();
+    if (actionId.indexOf('image-probe-') === 0) return runImageProbeVariant(actionId.replace('image-probe-', ''));
+    return Promise.resolve({ ok: false, error: 'unknown drawer action' });
+  }
+
   function setLogDrawer(open) {
     logOpen = !!open;
     logDrawer.classList.toggle('open', logOpen);
@@ -1350,11 +1465,14 @@
     const row = event.target && event.target.closest ? event.target.closest('[data-action]') : null;
     if (!row || row.getAttribute('aria-disabled') === 'true') return;
     const actionId = row.dataset.action || '';
-    if (!actionId || !diagnostics?.handleAction) return;
+    if (!actionId) return;
     event.preventDefault();
     event.stopPropagation();
     fireFeedback('touch-commit');
-    diagnostics.handleAction(actionId).then(function() {
+    const actionPromise = actionId.indexOf('image-probe-') === 0
+      ? handleDrawerAction(actionId)
+      : (diagnostics?.handleAction ? diagnostics.handleAction(actionId) : Promise.resolve({ ok: false, error: 'action unavailable' }));
+    actionPromise.then(function() {
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     }).catch(function() {
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
@@ -2164,9 +2282,9 @@
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
     const decIdx = stateData.decisionIndex || 0;
-    const guidedNowPrompt = onboardingStep === 2
+    const guidedNowPrompt = onboardingActive()
       ? 'what is this project about?'
-      : (onboardingStep === 3 ? 'open know to review the project map' : '');
+      : '';
 
     // Impact chain state
     const chain = window.StructaImpactChain || {};
@@ -2243,9 +2361,9 @@
     if (activeSurface() === 'project' && surfaceMode() !== 'stable') return false;
     const step = getOnboardingStep();
     const cardY = 84;
-    mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
 
     if (data.flushUndoAvailable) {
+      mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
       text(18, cardY + 18, 'flush complete', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2268,6 +2386,7 @@
     }
 
     if (data.flushRequested) {
+      mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
       text(18, cardY + 18, 'flush tutorial state?', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -2281,72 +2400,6 @@
         'font-size': '12'
       });
       text(226, 276, 'side click cancels', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
-    if (step === 0) {
-      text(18, cardY + 18, 'welcome to structa', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      wrapTextBlock(undefined, 'this is your project surface. everything starts here.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 4);
-      mk('rect', { x: 18, y: cardY + 116, width: 116, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, cardY + 132, 'click → begin', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'lesson 1 of 4', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
-    if (step === 1) {
-      text(18, cardY + 18, 'lesson 1 · open now', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      wrapTextBlock(undefined, 'click now to open the live project view. shake remains available, but it is no longer the gate.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
-      text(18, cardY + 132, 'click now →', {
-        fill: 'rgba(8,8,8,0.54)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'lesson 2 begins after now opens', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
-    if (step === 2) return false;
-
-    if (step === 3) {
-      text(18, cardY + 18, 'lesson 3 · open know', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      wrapTextBlock(undefined, 'know is ready. click know to open the project map.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
-      text(18, cardY + 132, 'click know →', {
-        fill: 'rgba(8,8,8,0.54)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'show is next', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4578,31 +4631,6 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
-    if (onboardingActive() && getOnboardingStep() === 4) {
-      const cameraDenied = !!getUIState().tutorial_step4_camera_denied;
-      mk('rect', { x: 10, y: 84, width: 220, height: 152, rx: 12, fill: 'rgba(8,8,8,0.12)' });
-      text(18, 104, 'lesson 4 · open show', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      wrapTextBlock(undefined, cameraDenied
-        ? 'camera needs permission first. click once to allow camera, or long-press home to skip.'
-        : 'back once, then open show. add one frame to finish the tutorial.',
-      18, 132, 194, 14, 'rgba(8,8,8,0.78)', '13', 6);
-      text(18, 218, cameraDenied ? 'click once → allow camera' : 'back → show', {
-        fill: 'rgba(8,8,8,0.54)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'show → first frame', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return;
-    }
     const LAYOUT = { top: 72, tabsH: 22, branchH: 16, footerY: 282, gap: 4 };
     const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [

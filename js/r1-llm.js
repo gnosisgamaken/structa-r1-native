@@ -1448,6 +1448,72 @@
     });
   }
 
+  function probeImagePrompt(rawBase64, prompt, meta) {
+    var options = meta || {};
+    if (!rawBase64) {
+      native?.recordProductEvent?.('background work failed', {
+        captureId: options.captureId || '',
+        detail: 'probe image missing'
+      });
+      return Promise.resolve({ ok: false, error: 'probe image missing', code: 'probe-image-missing' });
+    }
+    var timeoutMs = Number(options.timeout || 14000);
+    native?.traceEvent?.('image.probe', 'prepare', 'bridge', {
+      captureId: options.captureId || '',
+      label: options.label || '',
+      keyword: options.keyword || '',
+      timeoutMs: timeoutMs
+    });
+    return withOperationPolicy({
+      allowSpeech: false,
+      silent: true,
+      source: 'image-probe',
+      reason: 'image prompt probes stay quiet'
+    }, function() {
+      return sendBridgeImage(rawBase64, String(prompt || '').trim(), {
+        journal: false,
+        timeout: timeoutMs
+      }).then(function(result) {
+        if (!result || !result.ok || !result.clean) {
+          native?.appendLogEntry?.({
+            kind: 'product',
+            message: lower((options.label || 'image probe') + ' unavailable'),
+            linked_capture_id: options.captureId || null,
+            meta: {
+              keyword: options.keyword || '',
+              code: result?.code || '',
+              error: result?.error || ''
+            }
+          });
+          native?.traceEvent?.('image.probe', 'bridge', 'timeout', {
+            captureId: options.captureId || '',
+            label: options.label || '',
+            keyword: options.keyword || '',
+            code: result?.code || '',
+            error: result?.error || ''
+          });
+          return result;
+        }
+        native?.appendLogEntry?.({
+          kind: 'product',
+          message: lower((options.label || 'image probe') + ' stored'),
+          linked_capture_id: options.captureId || null,
+          meta: {
+            keyword: options.keyword || '',
+            text: compactText(result.clean || result.text || '', 120)
+          }
+        });
+        native?.traceEvent?.('image.probe', 'bridge', 'stored', {
+          captureId: options.captureId || '',
+          label: options.label || '',
+          keyword: options.keyword || '',
+          text: compactText(result.clean || result.text || '', 120)
+        });
+        return result;
+      });
+    });
+  }
+
   function extractClaimsFromText(payload) {
     var orchestrator = window.StructaOrchestrator;
     if (!orchestrator || !orchestrator.extractClaimsFromText) {
@@ -1915,6 +1981,7 @@
     speakMilestone: speakMilestone,
     evaluateMilestone: evaluateMilestone,
     requestCaptureDescription: requestCaptureDescription,
+    probeImagePrompt: probeImagePrompt,
     sendBridgeImage: sendBridgeImage,
     askRabbitAboutImage: sendBridgeImage,
     buildBridgeImagePrompt: buildBridgeImagePrompt,

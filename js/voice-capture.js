@@ -308,6 +308,26 @@
     });
   }
 
+  function enqueueProjectBrief(rawText, project, options) {
+    if (!queue || !project) return;
+    const opts = options && typeof options === 'object' ? options : {};
+    queue.enqueue({
+      kind: 'project-brief',
+      priority: 'P1',
+      payload: {
+        transcript: rawText,
+        projectId: project.project_id || project.id || '',
+        voiceEntryId: opts.voiceEntryId || '',
+        operationId: opts.operationId || ''
+      },
+      origin: {
+        screen: 'onboarding',
+        itemId: project.project_id || project.id || ''
+      },
+      timeoutMs: 28000
+    });
+  }
+
   function enqueueThreadRefine(payload) {
     if (!queue || !payload?.nodeId || !payload?.commentId) return;
     queue.enqueue({
@@ -390,6 +410,135 @@
         if (sourceNode.links.indexOf(insightNode.node_id) === -1) sourceNode.links.push(insightNode.node_id);
         if (insightNode.links.indexOf(sourceNode.node_id) === -1) insightNode.links.push(sourceNode.node_id);
       }
+    });
+  }
+
+  function emptyCandidateBuckets() {
+    return { decisions: [], asks: [], blockers: [], themes: [] };
+  }
+
+  function mergeCandidateText(list, text, kind, sourceRef) {
+    var value = String(text || '').trim();
+    if (!value) return;
+    var exists = list.some(function(entry) {
+      return lower(entry?.text || '') === lower(value);
+    });
+    if (exists) return;
+    list.push({
+      kind: kind,
+      text: value,
+      confidence: 'med',
+      source: 'voice-note',
+      sourceRef: sourceRef || {},
+      created_at: new Date().toISOString()
+    });
+  }
+
+  function deriveVoiceCandidates(result, transcript, sourceRef) {
+    var buckets = emptyCandidateBuckets();
+    var clean = String(result?.clean || '').trim();
+    var structured = result?.structured || {};
+    var decision = String(structured?.decision || '').trim();
+    var next = String(structured?.next || '').trim();
+    var kind = lower(structured?.type || structured?.kind || '');
+    var body = String(transcript || '').trim();
+    if (decision) mergeCandidateText(buckets.decisions, decision, 'decision', sourceRef);
+    if (kind === 'question' || /\?$/.test(body)) {
+      mergeCandidateText(buckets.asks, body || clean, 'ask', sourceRef);
+    }
+    if (/(blocked|stuck|waiting|can.t|cannot|risk|issue|problem|missing|delayed)/i.test(clean) || /(blocked|stuck|waiting|risk|issue|problem)/i.test(body)) {
+      mergeCandidateText(buckets.blockers, clean || body, 'blocker', sourceRef);
+    }
+    if (next && /\?/.test(next)) {
+      mergeCandidateText(buckets.asks, next, 'ask', sourceRef);
+    }
+    mergeCandidateText(buckets.themes, clean || body, 'theme', sourceRef);
+    return buckets;
+  }
+
+  function storeVoiceInterpretation(payload, result) {
+    var voiceEntryId = payload.voiceEntryId || payload.buildContext?.nodeId || '';
+    var transcript = payload.transcript || '';
+    var sourceRef = voiceEntryId ? { itemId: voiceEntryId } : {};
+    var candidates = deriveVoiceCandidates(result, transcript, sourceRef);
+    if (voiceEntryId && native?.touchProjectMemory) {
+      native.touchProjectMemory(function(project) {
+        var node = (project.nodes || []).find(function(entry) {
+          return entry.node_id === voiceEntryId && entry.type === 'voice-entry';
+        });
+        if (!node) return;
+        node.meta = {
+          ...(node.meta || {}),
+          transformed_text: result?.clean || '',
+          transformed_structured: result?.structured || null,
+          transformed_at: new Date().toISOString(),
+          operation_id: payload.operationId || node.meta?.operation_id || ''
+        };
+      });
+    }
+    var writeVerdict = native?.recordOperationWrite?.(payload.operationId || '', 'derived_candidate', {
+      source: 'voice-note',
+      nodeId: voiceEntryId || ''
+    });
+    if (native?.saveDerivedCandidates && (!writeVerdict || writeVerdict.ok !== false)) {
+      native.saveDerivedCandidates(candidates, {
+        source: 'voice-note',
+        sourceRef: sourceRef,
+        operation_id: payload.operationId || ''
+      });
+    }
+    native?.appendLogEntry?.({ kind: 'llm', message: 'note clarified' });
+    native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
+    return candidates;
+  }
+
+  function applyProjectBriefResult(payload, result) {
+    var title = String(result?.title || '').trim();
+    var brief = String(result?.brief || '').trim();
+    if (title && lower(title) !== 'untitled project') {
+      native?.setProjectName?.(title);
+    }
+    var briefWrite = native?.recordOperationWrite?.(payload.operationId || '', 'project_brief', {
+      voiceEntryId: payload.voiceEntryId || ''
+    });
+    if (brief && native?.setProjectBrief && (!briefWrite || briefWrite.ok !== false)) {
+      native.setProjectBrief(brief, {
+        source: 'onboarding',
+        operation_id: payload.operationId || '',
+        voice_entry_id: payload.voiceEntryId || ''
+      });
+    }
+    var candidateWrite = native?.recordOperationWrite?.(payload.operationId || '', 'derived_candidate', {
+      voiceEntryId: payload.voiceEntryId || ''
+    });
+    if (result?.candidates && native?.saveDerivedCandidates && (!candidateWrite || candidateWrite.ok !== false)) {
+      native.saveDerivedCandidates(result.candidates, {
+        source: 'project-brief',
+        sourceRef: payload.voiceEntryId ? { itemId: payload.voiceEntryId } : {},
+        replace: true,
+        operation_id: payload.operationId || ''
+      });
+    }
+    if (payload.voiceEntryId && native?.touchProjectMemory) {
+      native.touchProjectMemory(function(project) {
+        var node = (project.nodes || []).find(function(entry) {
+          return entry.node_id === payload.voiceEntryId && entry.type === 'voice-entry';
+        });
+        if (!node) return;
+        node.meta = {
+          ...(node.meta || {}),
+          onboarding_brief: brief || '',
+          onboarding_title: title || '',
+          onboarding_candidates: result?.candidates || emptyCandidateBuckets(),
+          transformed_at: new Date().toISOString(),
+          operation_id: payload.operationId || node.meta?.operation_id || ''
+        };
+      });
+    }
+    native?.appendLogEntry?.({ kind: 'llm', message: 'project brief ready' });
+    native?.updateUIState?.({
+      last_insight_summary: (brief || title || '').slice(0, 60),
+      user_status: title ? ('project: ' + title) : 'project brief ready'
     });
   }
 
@@ -533,24 +682,61 @@
         }
 
         if (result && result.ok) {
-          var createdInsight = window.StructaLLM.storeAsInsight(result, 'voice');
-          linkInsightToContext(payload.buildContext, createdInsight);
-          native?.appendLogEntry?.({ kind: 'llm', message: 'insight extracted' });
-          native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+          storeVoiceInterpretation(payload, result);
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-            detail: { source: 'insight' }
+            detail: { source: 'voice-transform' }
           }));
           window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         } else {
-          native?.appendLogEntry?.({ kind: 'llm', message: 'insight unavailable' });
+          native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification unavailable' });
         }
         return result;
       }).catch(function(err) {
         if (payload.mode !== 'question') {
-          native?.appendLogEntry?.({ kind: 'llm', message: 'insight failed' });
+          native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification failed' });
         }
         window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         throw err;
+      }).finally(function() {
+        native?.finishOperation?.(payload.operationId || '', {
+          kind: payload.mode || 'voice'
+        });
+      });
+    });
+
+    queue.registerHandler('project-brief', function(job) {
+      const payload = job.payload || {};
+      const project = native?.getProjectMemory?.();
+      if (!project || (project.project_id || project.id || '') !== (payload.projectId || '')) {
+        return { ok: false, stale: true };
+      }
+      if (!window.StructaLLM?.buildProjectBrief) {
+        return { ok: false, error: 'brief unavailable' };
+      }
+      native?.traceEvent?.('project', 'queued', 'briefing', {
+        jobId: job.id || '',
+        projectId: payload.projectId || '',
+        voiceEntryId: payload.voiceEntryId || ''
+      });
+      return window.StructaLLM.buildProjectBrief(payload.transcript || '', project).then(function(result) {
+        if (result && result.ok) {
+          applyProjectBriefResult(payload, result);
+          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+            detail: { source: 'project-brief' }
+          }));
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        } else {
+          native?.appendLogEntry?.({ kind: 'llm', message: 'project brief unavailable' });
+        }
+        return result;
+      }).catch(function(err) {
+        native?.appendLogEntry?.({ kind: 'llm', message: 'project brief failed' });
+        window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        throw err;
+      }).finally(function() {
+        native?.finishOperation?.(payload.operationId || '', {
+          kind: 'project-brief'
+        });
       });
     });
 
@@ -690,34 +876,38 @@
         onboarding: !!question.onboarding,
         text: question.text || ''
       });
-      var onboardingFinalized = false;
-
-      function finalizeOnboardingAnswer() {
-        if (!question.onboarding || onboardingFinalized) return;
-        onboardingFinalized = true;
-        var currentProject = native?.getProjectMemory?.();
-        var heuristicName = inferProjectName(text);
-        window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
-          detail: {
-            answer: text,
-            inferredName: heuristicName || ''
-          }
-        }));
-        if (heuristicName) native?.setProjectName?.(heuristicName);
-        enqueueProjectTitle(text, currentProject);
-      }
-
       native?.appendLogEntry?.({ kind: 'voice', message: 'question answered' });
       var resolution = null;
+      var onboardingVoiceEntry = null;
+      var onboardingOperationId = question.onboarding
+        ? (native?.beginOperation?.({
+            kind: 'onboarding',
+            allowed: {
+              voice_note: 1,
+              project_brief: 1,
+              derived_candidate: 1
+            }
+          }) || '')
+        : '';
 
       // Store the answer in project memory
       if (question.onboarding) {
-        native?.addVoiceEntry?.({
+        onboardingVoiceEntry = native?.addVoiceEntry?.({
           title: text.slice(0, 42) || 'project foundation',
           body: text,
           source: 'onboarding',
-          entry_mode: 'onboarding'
+          entry_mode: 'onboarding',
+          operation_id: onboardingOperationId
         });
+        native?.recordOperationWrite?.(onboardingOperationId, 'voice_note', {
+          nodeId: onboardingVoiceEntry?.node_id || ''
+        });
+        window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
+          detail: {
+            answer: text,
+            inferredName: ''
+          }
+        }));
       } else {
         resolution = native?.resolveQuestion?.({
           index: question.index,
@@ -730,11 +920,15 @@
         detail: { source: 'question-answer' }
       }));
       if (question.onboarding) {
-        finalizeOnboardingAnswer();
+        var currentProject = native?.getProjectMemory?.();
+        enqueueProjectBrief(text, currentProject, {
+          voiceEntryId: onboardingVoiceEntry?.node_id || '',
+          operationId: onboardingOperationId
+        });
+        return;
       }
 
       // Send to LLM for structured extraction (answer mode)
-      finalizeOnboardingAnswer();
       queueVoiceInterpret({
         mode: 'question',
         transcript: text,
@@ -836,33 +1030,36 @@
 
     // === Normal voice input ===
     native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
+    var operationId = native?.beginOperation?.({
+      kind: 'tell',
+      allowed: {
+        voice_note: 1,
+        derived_candidate: 1
+      }
+    }) || '';
+    var voiceEntry = null;
     if (buildContext && buildContext.kind === 'voice-entry' && buildContext.nodeId && native?.appendToVoiceEntry) {
-      native.appendToVoiceEntry(buildContext.nodeId, text, {
+      voiceEntry = native.appendToVoiceEntry(buildContext.nodeId, text, {
         entry_mode: 'contextual-build',
-        surface: buildContext.surface || 'tell'
+        surface: buildContext.surface || 'tell',
+        operation_id: operationId
       });
     } else {
-      native?.addVoiceEntry?.({
+      voiceEntry = native?.addVoiceEntry?.({
         title: text.slice(0, 42) || 'voice note',
         body: text,
         source: 'voice',
         entry_mode: buildContext ? 'contextual' : 'auto',
+        operation_id: operationId,
         meta: buildContext ? { build_surface: buildContext.surface || 'tell' } : {}
       });
     }
+    native?.recordOperationWrite?.(operationId, 'voice_note', {
+      nodeId: voiceEntry?.node_id || buildContext?.nodeId || ''
+    });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
     }));
-
-    // Try to detect project name from first meaningful voice input
-    if (text.length > 3 && text.length < 50) {
-      var project = native?.getProjectMemory?.();
-      if (project && project.name === 'untitled project') {
-        var heuristicProjectName = inferProjectName(text);
-        if (heuristicProjectName) native?.setProjectName?.(heuristicProjectName);
-        enqueueProjectTitle(text, project);
-      }
-    }
 
     // Try to detect a decision and add it as pending
     var decisionMatch = text.match(/^(?:we |i |let.s |i.ll |we.ve )?(decided|agreed|chose|will|plan to|going to|should)\b(.{5,80})/i);
@@ -911,7 +1108,9 @@
     queueVoiceInterpret({
       mode: 'voice',
       transcript: text,
-      buildContext: buildContext || null
+      buildContext: buildContext || null,
+      voiceEntryId: voiceEntry?.node_id || buildContext?.nodeId || '',
+      operationId: operationId
     });
   }
 

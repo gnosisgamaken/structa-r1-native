@@ -107,6 +107,12 @@
     return run('/v1/project/title', envelope, executeLLM);
   }
 
+  function buildProjectBrief(payload, executeLLM) {
+    var envelope = Object.assign({}, payload || {});
+    envelope.policy = normalizePolicy(envelope.policy);
+    return run('/v1/project/brief', envelope, executeLLM);
+  }
+
   function refineThread(payload, executeLLM) {
     var envelope = Object.assign({}, payload || {});
     envelope.policy = normalizePolicy(envelope.policy || { priority: 'low' });
@@ -128,6 +134,7 @@
     synthesizeTriangle: synthesizeTriangle,
     backfillClaims: backfillClaims,
     titleProject: titleProject,
+    buildProjectBrief: buildProjectBrief,
     refineThread: refineThread
   });
 })();

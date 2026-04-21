@@ -367,6 +367,9 @@
       name: input.name || 'untitled project',
       type: input.type || 'general',
       user_role: input.user_role || '',
+      brief: input.brief || '',
+      derived_candidates: input.derived_candidates || null,
+      promoted_items: input.promoted_items || [],
       nodes: input.nodes || [],
       impact_chain: input.impact_chain || [],
       exports: input.exports || [],
@@ -398,6 +401,14 @@
 
   function ensureProjectKnowledge(project) {
     if (!project || typeof project !== 'object') return project;
+    project.brief = typeof project.brief === 'string' ? project.brief : '';
+    project.derived_candidates = project.derived_candidates && typeof project.derived_candidates === 'object'
+      ? project.derived_candidates
+      : { decisions: [], asks: [], blockers: [], themes: [] };
+    ['decisions', 'asks', 'blockers', 'themes'].forEach(function(key) {
+      project.derived_candidates[key] = Array.isArray(project.derived_candidates[key]) ? project.derived_candidates[key] : [];
+    });
+    project.promoted_items = Array.isArray(project.promoted_items) ? project.promoted_items : [];
     project.claims = Array.isArray(project.claims) ? project.claims : [];
     project.answers = Array.isArray(project.answers) ? project.answers : [];
     project.claimIndex = project.claimIndex && typeof project.claimIndex === 'object' ? project.claimIndex : {
@@ -1089,8 +1100,10 @@
       body: text,
       source: raw.source || 'voice',
       meta: {
+        ...(raw.meta || {}),
         entry_mode: raw.entry_mode || 'auto',
-        created_via: raw.created_via || 'tell'
+        created_via: raw.created_via || 'tell',
+        operation_id: raw.operation_id || ''
       }
     });
   }
@@ -1161,6 +1174,175 @@
       emitModelChange({ scope: 'item', itemId: updated.nodeId || updated.entryId });
     }
     return updated;
+  }
+
+  function normalizeCandidateText(text) {
+    return compact(String(text || '').trim(), 160);
+  }
+
+  function normalizeCandidateBuckets(raw) {
+    var input = raw && typeof raw === 'object' ? raw : {};
+    var buckets = { decisions: [], asks: [], blockers: [], themes: [] };
+    Object.keys(buckets).forEach(function(key) {
+      var seen = {};
+      buckets[key] = (Array.isArray(input[key]) ? input[key] : []).map(function(entry) {
+        if (typeof entry === 'string') {
+          return { kind: key.slice(0, -1), text: normalizeCandidateText(entry) };
+        }
+        if (!entry || typeof entry !== 'object') return null;
+        return {
+          id: entry.id || '',
+          kind: entry.kind || key.slice(0, -1),
+          text: normalizeCandidateText(entry.text || entry.body || ''),
+          confidence: entry.confidence || 'med',
+          source: entry.source || 'derive',
+          sourceRef: entry.sourceRef && typeof entry.sourceRef === 'object' ? cloneValue(entry.sourceRef) : {},
+          created_at: entry.created_at || new Date().toISOString()
+        };
+      }).filter(function(entry) {
+        if (!entry || !entry.text) return false;
+        var token = lower(entry.text);
+        if (seen[token]) return false;
+        seen[token] = true;
+        return true;
+      });
+    });
+    return buckets;
+  }
+
+  function setProjectBrief(brief, meta) {
+    var value = compact(String(brief || '').trim(), 320);
+    if (!value) return '';
+    touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
+      project.brief = value;
+      project.meta = {
+        ...(project.meta || {}),
+        brief_meta: {
+          ...(project.meta?.brief_meta || {}),
+          ...(meta && typeof meta === 'object' ? cloneValue(meta) : {}),
+          updated_at: new Date().toISOString()
+        }
+      };
+    });
+    traceEvent('project', 'brief', 'stored', {
+      brief: value,
+      operationId: meta?.operation_id || ''
+    });
+    return value;
+  }
+
+  function saveDerivedCandidates(raw, options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var normalized = normalizeCandidateBuckets(raw);
+    var summary = { decisions: 0, asks: 0, blockers: 0, themes: 0 };
+    touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
+      var target = project.derived_candidates;
+      Object.keys(normalized).forEach(function(key) {
+        var existing = opts.replace ? [] : (Array.isArray(target[key]) ? target[key].slice() : []);
+        var seen = {};
+        existing.forEach(function(entry) {
+          var token = lower(entry?.text || '');
+          if (token) seen[token] = true;
+        });
+        normalized[key].forEach(function(entry) {
+          var next = {
+            id: entry.id || contracts.makeEntryId('candidate'),
+            kind: entry.kind || key.slice(0, -1),
+            text: entry.text,
+            confidence: entry.confidence || 'med',
+            source: entry.source || opts.source || 'derive',
+            sourceRef: entry.sourceRef && typeof entry.sourceRef === 'object'
+              ? cloneValue(entry.sourceRef)
+              : (opts.sourceRef && typeof opts.sourceRef === 'object' ? cloneValue(opts.sourceRef) : {}),
+            created_at: entry.created_at || new Date().toISOString(),
+            status: 'candidate'
+          };
+          var token = lower(next.text || '');
+          if (!token || seen[token]) return;
+          seen[token] = true;
+          existing.unshift(next);
+        });
+        target[key] = existing.slice(0, opts.limit || 12);
+        summary[key] = target[key].length;
+      });
+    });
+    traceEvent('derive', 'candidates', 'stored', {
+      decisions: summary.decisions,
+      asks: summary.asks,
+      blockers: summary.blockers,
+      themes: summary.themes,
+      operationId: opts.operation_id || ''
+    });
+    return cloneValue(normalized);
+  }
+
+  function ensureOperationBudgetStore() {
+    memory.uiState = memory.uiState || {};
+    memory.uiState.operation_budgets = memory.uiState.operation_budgets && typeof memory.uiState.operation_budgets === 'object'
+      ? memory.uiState.operation_budgets
+      : {};
+    return memory.uiState.operation_budgets;
+  }
+
+  function beginOperation(spec) {
+    var input = spec && typeof spec === 'object' ? spec : {};
+    var operationId = input.id || contracts.makeEntryId('op');
+    var store = ensureOperationBudgetStore();
+    store[operationId] = {
+      id: operationId,
+      kind: input.kind || 'operation',
+      allowed: cloneValue(input.allowed || {}),
+      counts: {},
+      created_at: new Date().toISOString()
+    };
+    persist();
+    return operationId;
+  }
+
+  function recordOperationWrite(operationId, kind, detail) {
+    if (!operationId || !kind) return { ok: true, skipped: true };
+    var store = ensureOperationBudgetStore();
+    var entry = store[operationId];
+    if (!entry) return { ok: true, skipped: true };
+    entry.counts[kind] = Number(entry.counts[kind] || 0) + 1;
+    var limit = Number(entry.allowed?.[kind] || 0);
+    var ok = !limit || entry.counts[kind] <= limit;
+    if (!ok) {
+      traceEvent('operation', 'write', 'rejected', {
+        operationId: operationId,
+        kind: kind,
+        count: entry.counts[kind],
+        limit: limit,
+        detail: sanitizeTraceValue(detail || {})
+      });
+      entry.counts[kind] = limit;
+      persist();
+      return { ok: false, error: 'write budget exceeded' };
+    }
+    traceEvent('operation', 'write', 'recorded', {
+      operationId: operationId,
+      kind: kind,
+      count: entry.counts[kind],
+      limit: limit,
+      detail: sanitizeTraceValue(detail || {})
+    });
+    persist();
+    return { ok: true, count: entry.counts[kind] };
+  }
+
+  function finishOperation(operationId, meta) {
+    if (!operationId) return false;
+    var store = ensureOperationBudgetStore();
+    if (!store[operationId]) return false;
+    traceEvent('operation', 'running', 'complete', {
+      operationId: operationId,
+      meta: sanitizeTraceValue(meta || {})
+    });
+    delete store[operationId];
+    persist();
+    return true;
   }
 
   function cloneThread(thread) {
@@ -3343,7 +3525,12 @@
     setProjectName,
     setProjectType,
     setUserRole,
+    setProjectBrief,
+    saveDerivedCandidates,
     getActiveProject,
+    beginOperation,
+    recordOperationWrite,
+    finishOperation,
     appendThreadComment,
     setThreadCommentSummary,
     applyThreadExtraction,

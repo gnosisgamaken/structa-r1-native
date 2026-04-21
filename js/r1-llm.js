@@ -1864,6 +1864,75 @@
     ]);
   }
 
+  function buildProjectBrief(transcript, project) {
+    var orchestrator = window.StructaOrchestrator;
+    if (!orchestrator || !orchestrator.buildProjectBrief) {
+      return Promise.resolve({ ok: false, title: '', brief: '', candidates: {} });
+    }
+    return Promise.all([
+      titleProject(transcript, project).catch(function() {
+        return { ok: false, title: '' };
+      }),
+      Promise.race([
+        orchestrator.buildProjectBrief({
+          project: {
+            id: project?.project_id || project?.id || '',
+            name: project?.name || 'untitled project',
+            type: project?.type || 'general',
+            brief: project?.brief || '',
+            topQuestions: (project?.open_questions || []).slice(0, 3),
+            selectedSurface: 'tell',
+            summary: buildProjectContext({ deep: true })
+          },
+          selection: null,
+          input: {
+            transcript: transcript
+          },
+          transcript: transcript,
+          policy: {
+            priority: 'high',
+            allowSearch: false,
+            allowSpeech: false
+          }
+        }, function(prepared) {
+          if (!prepared || !prepared.llm) {
+            return Promise.resolve({ ok: false, error: 'llm payload unavailable' });
+          }
+          var prompt = prepared.llm.prompt || '';
+          if (currentOperationPolicy().silent || currentOperationPolicy().allowSpeech === false) {
+            prompt = protectSilentPrompt(prompt);
+          }
+          return sendToLLM(prompt, {
+            journal: false,
+            timeout: Math.min(Math.max(prepared.llm.timeout || 22000, 22000), 22000),
+            priority: prepared.llm.priority || 'high',
+            useSerpAPI: false,
+            pluginId: 'com.playgranada.structa',
+            policy: currentOperationPolicy()
+          });
+        }),
+        new Promise(function(resolve) {
+          setTimeout(function() {
+            resolve({ ok: false, error: 'project brief timeout' });
+          }, 22000);
+        })
+      ])
+    ]).then(function(results) {
+      var titleResult = results[0] || {};
+      var briefResult = results[1] || {};
+      var mergedCandidates = briefResult.candidates && typeof briefResult.candidates === 'object'
+        ? briefResult.candidates
+        : { decisions: [], asks: [], blockers: [], themes: [] };
+      return {
+        ok: !!(briefResult.ok || titleResult.title),
+        title: titleResult.title || '',
+        brief: briefResult.brief || '',
+        candidates: mergedCandidates,
+        suggestedNext: briefResult.suggestedNext || ''
+      };
+    });
+  }
+
   window.StructaLLM = Object.freeze({
     sendToLLM: sendToLLM,
     executePreparedLLM: executePreparedLLM,
@@ -1880,6 +1949,7 @@
     generateExport: generateExport,
     emailText: emailText,
     titleProject: titleProject,
+    buildProjectBrief: buildProjectBrief,
     speakMilestone: speakMilestone,
     evaluateMilestone: evaluateMilestone,
     sendBridgeImage: sendBridgeImage,

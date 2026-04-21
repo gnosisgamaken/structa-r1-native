@@ -383,6 +383,7 @@ def voice_normalize(payload):
         "clean": insight,
         "structured": {
             "raw": normalize_multiline(raw),
+            "type": kind,
             "insight": insight,
             "next": next_step,
             "decision": decision,
@@ -1155,6 +1156,96 @@ def project_title_normalize(payload):
     return {"ok": True, "title": title}
 
 
+def project_brief_prepare(payload):
+    transcript = compact(payload.get("transcript") or ((payload.get("input") or {}).get("transcript")) or "", 360)
+    project = payload.get("project") or {}
+    lines = [
+        "You are Structa, structuring one new project from the user's description.",
+        "Return labeled lines only. No prose outside the labels.",
+        "Keep the brief concrete and easy to act on.",
+        "",
+        "TRANSCRIPT",
+        transcript,
+        "",
+        "PROJECT",
+    ] + build_project_lines(project)
+    lines.extend([
+        "",
+        "Return exactly:",
+        "BRIEF: <2 short sentences>",
+        "DECISION1: <candidate or omit>",
+        "DECISION2: <candidate or omit>",
+        "DECISION3: <candidate or omit>",
+        "ASK1: <candidate or omit>",
+        "ASK2: <candidate or omit>",
+        "ASK3: <candidate or omit>",
+        "BLOCKER1: <candidate or omit>",
+        "BLOCKER2: <candidate or omit>",
+        "BLOCKER3: <candidate or omit>",
+        "THEME1: <candidate or omit>",
+        "THEME2: <candidate or omit>",
+        "THEME3: <candidate or omit>",
+        "NEXT: <one short suggested next action>",
+    ])
+    return {
+        "ok": True,
+        "llm": {
+            "prompt": "\n".join(lines),
+            "timeout": 22000,
+            "priority": payload.get("policy", {}).get("priority", "high"),
+        },
+        "ui": {
+            "summary": "project brief",
+            "logLine": "building brief",
+        },
+        "meta": {
+            "kind": "project-brief",
+        },
+    }
+
+
+def project_brief_normalize(payload):
+    raw_text = payload.get("rawResponse") or ""
+    transcript = compact(payload.get("transcript") or ((payload.get("input") or {}).get("transcript")) or "", 160)
+    parsed = parse_labeled_lines(raw_text)
+    brief = compact(parsed.get("BRIEF") or transcript or "new project", 220)
+
+    def collect(prefix, kind):
+        items = []
+        for idx in range(1, 4):
+            value = compact(parsed.get(f"{prefix}{idx}") or "", 140)
+            if not value or value.lower() == "omit":
+                continue
+            items.append({
+                "kind": kind,
+                "text": value,
+                "confidence": "med",
+                "source": "project-brief",
+            })
+        return items
+
+    candidates = {
+        "decisions": collect("DECISION", "decision"),
+        "asks": collect("ASK", "ask"),
+        "blockers": collect("BLOCKER", "blocker"),
+        "themes": collect("THEME", "theme"),
+    }
+    next_step = compact(parsed.get("NEXT") or "", 80)
+    return {
+        "ok": True,
+        "brief": brief,
+        "candidates": candidates,
+        "suggestedNext": next_step,
+        "ui": {
+            "summary": brief,
+            "logLine": "brief ready",
+        },
+        "meta": {
+            "kind": "project-brief",
+        },
+    }
+
+
 class StructaHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -1234,6 +1325,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
                     "/v1/triangle/synthesize",
                     "/v1/thread/extract",
                     "/v1/project/title",
+                    "/v1/project/brief",
                 ],
             })
             return
@@ -1295,6 +1387,7 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             "/v1/thread/extract": (thread_refine_prepare, thread_refine_normalize),
             "/v1/claims/backfill": (claims_backfill_prepare, claims_backfill_normalize),
             "/v1/project/title": (project_title_prepare, project_title_normalize),
+            "/v1/project/brief": (project_brief_prepare, project_brief_normalize),
         }
         handler = handlers.get(parsed.path)
         if not handler:

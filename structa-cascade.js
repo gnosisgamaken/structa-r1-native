@@ -850,6 +850,7 @@
       'triangle-synthesize': 'synthesizing triangle',
       'image-analyze': 'analyzing frame',
       'project-title': 'titling project',
+      'project-brief': 'building project brief',
       'voice-interpret': 'interpreting voice',
       'thread-refine': 'refining comment',
       'chain-step': 'running chain'
@@ -876,6 +877,8 @@
         return 'interpretation stalled — click retry, double side skips';
       case 'project-title':
         return 'project naming stalled — click retry, double side skips';
+      case 'project-brief':
+        return 'project brief stalled — click retry, double side skips';
       default:
         return 'queue stalled — click retry, double side skips';
     }
@@ -2167,7 +2170,7 @@
       title: project?.name || 'new project',
       changed: ui.user_status || ui.last_event_summary || '',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
-      insight: ui.last_insight_summary || (insights[0]?.body || ''),
+      insight: ui.last_insight_summary || project?.brief || (insights[0]?.body || ''),
       next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : ''),
       openQuestions: openQuestions.length,
       captures: captures.length,

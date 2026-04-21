@@ -203,6 +203,14 @@
       type: projectTypes.includes(input.type) ? input.type : 'general',
       user_role: (input.user_role || '').toLowerCase(),
       device_scope_key: input.device_scope_key || '',
+      brief: typeof input.brief === 'string' ? input.brief : '',
+      derived_candidates: input.derived_candidates && typeof input.derived_candidates === 'object' ? input.derived_candidates : {
+        decisions: [],
+        asks: [],
+        blockers: [],
+        themes: []
+      },
+      promoted_items: Array.isArray(input.promoted_items) ? input.promoted_items : [],
       nodes: Array.isArray(input.nodes) ? input.nodes : [],
       claims: Array.isArray(input.claims) ? input.claims : [],
       answers: Array.isArray(input.answers) ? input.answers : [],

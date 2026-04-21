@@ -389,6 +389,10 @@
           annotation_window_until: 0
         };
       }
+      native?.updateUIState?.({
+        last_capture_summary: fallbackText || 'image description unavailable',
+        user_status: job.annotation ? 'show+tell saved' : 'image description unavailable'
+      });
     });
     native?.traceEvent?.('image', 'analyzing', 'blocked', {
       entryId: job.entryId || '',

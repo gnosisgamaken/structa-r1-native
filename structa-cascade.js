@@ -1526,9 +1526,15 @@
 
   // --- VOICE_OPEN ---
   stateEnterHandlers[STATES.VOICE_OPEN] = function(data) {
-    document.title = 'tell';
+    const voiceSurface = data.inlinePTTSurface || data.buildContext?.surface || stateData.inlinePTTSurface || 'tell';
+    const selectedCardId = voiceSurface === 'project'
+      ? 'now'
+      : (voiceSurface === 'insight'
+        ? 'know'
+        : (voiceSurface === 'camera' ? 'show' : voiceSurface));
+    document.title = selectedCardId;
     native?.setActiveNode?.('tell');
-    native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'voice' });
+    native?.updateUIState?.({ selected_card_id: selectedCardId, last_surface: voiceSurface });
     window.__STRUCTA_PTT_TARGET__ = 'voice';
     window.__STRUCTA_INLINE_PTT__ = !!data.fromPTT;
     stateData.inlinePTTSurface = data.inlinePTTSurface || stateData.inlinePTTSurface || '';
@@ -1548,16 +1554,13 @@
     const voiceOverlay = document.getElementById('voice-overlay');
     const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision', log: 'to log' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
-    const suppressTutorialVoiceChrome = !!(onboardingActive() && getOnboardingStep() === 2);
     const contextLabelText = data.triangleMode
       ? 'your angle'
-      : suppressTutorialVoiceChrome
-        ? ''
-        : data.answeringQuestion
+      : data.answeringQuestion
         ? 'answering ask'
         : (surface && surfaceMap[surface] ? surfaceMap[surface] : '');
     if (voiceOverlay) {
-      if (data.answeringQuestion && !suppressTutorialVoiceChrome) voiceOverlay.classList.add('answer-mode');
+      if (data.answeringQuestion) voiceOverlay.classList.add('answer-mode');
       else voiceOverlay.classList.remove('answer-mode');
     }
     window.StructaVoice?.setContextLabel?.(contextLabelText);
@@ -2071,6 +2074,15 @@
     }
   }
 
+  function surfaceMode() {
+    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE || currentState === STATES.SHOW_PRIMED) {
+      return 'camera';
+    }
+    if (currentState === STATES.VOICE_OPEN) return 'recording';
+    if (currentState === STATES.VOICE_PROCESSING) return 'processing';
+    return 'stable';
+  }
+
   function surfaceIsVisible(surface) {
     return !!surface && activeSurface() === surface;
   }
@@ -2132,16 +2144,18 @@
             createdAt: question?.created_at || ''
           }) !== false;
         });
-    const openQuestions = openQuestionNodes.length
+    const openQuestions = suppressBlockers
+      ? []
+      : openQuestionNodes.length
       ? openQuestionNodes.map(function(question) {
           return softenGuidedAsk(question?.body || question);
         })
       : (project?.open_questions || []).map(function(question) {
           return softenGuidedAsk(question);
         });
-    const queueBlockers = Array.isArray(ui.queue_blockers) ? ui.queue_blockers : [];
+    const queueBlockers = suppressBlockers ? [] : (Array.isArray(ui.queue_blockers) ? ui.queue_blockers : []);
     const queueBlocker = queueBlockers[0] || null;
-    const projectCapNotice = lower(ui.project_cap_notice || '');
+    const projectCapNotice = suppressBlockers ? '' : lower(ui.project_cap_notice || '');
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
@@ -2163,6 +2177,7 @@
     const storedImpacts = project?.impact_chain || [];
     const blockerQuestion = queueBlocker?.body || projectCapNotice || openQuestions[0] || '';
     const blockerCount = pendingDecisions.length + openQuestions.length + (queueBlocker ? 1 : 0) + (projectCapNotice ? 1 : 0);
+    const visibleQueueCount = suppressBlockers ? 0 : getQueuePendingJobs().length;
     const activePendingDecision = pendingDecisions.length ? (pendingDecisions[decIdx] || pendingDecisions[0]) : null;
     const activeQuestionNode = openQuestionNodes[0] || null;
     const activeThread = activePendingDecision?.thread || activeQuestionNode?.thread || [];
@@ -2190,6 +2205,7 @@
       activeThreadDepth: threadDepth(activeThread),
       blockerCount,
       blockerQuestion,
+      visibleQueueCount,
       queueBlocker,
       projectCapNotice,
       chainPhase,
@@ -2206,7 +2222,7 @@
       onboardingPaused: false,
       flushRequested: !!stateData.flushRequestSource,
       flushRequestSource: stateData.flushRequestSource || '',
-      tutorialStep2FallbackVisible: !!ui.tutorial_step2_fallback_visible,
+      tutorialStep2FallbackVisible: !!ui.tutorial_step2_fallback_visible && !suppressBlockers,
       tutorialStep2FallbackReason: ui.tutorial_step2_fallback_reason || '',
       tutorialStep2FallbackIndex: tutorialFallbackIndex,
       tutorialStep2FallbackOptions: TUTORIAL_FALLBACK_OPTIONS.slice(),
@@ -2217,6 +2233,7 @@
   }
 
   function drawOnboardingNowPanel(nowCard, data) {
+    if (activeSurface() === 'project' && surfaceMode() !== 'stable') return false;
     const step = getOnboardingStep();
     const cardY = 84;
     mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
@@ -3331,8 +3348,7 @@
 
   function drawSurfaceHeader(card, options = {}) {
     const project = getProjectMemory();
-    const suppressTutorialRecordingChrome = onboardingActive() && (getOnboardingStep() === 2 || getOnboardingStep() === 4);
-    if (recordingActive() && activeSurface() !== 'home' && !suppressTutorialRecordingChrome) {
+    if ((surfaceMode() === 'recording' || recordingActive()) && activeSurface() !== 'home') {
       recordingDot(23, 26, 10, svg);
     } else if (card.iconPath) {
       drawFramedIcon(card.iconPath, {
@@ -3612,7 +3628,14 @@
     const canReprompt = !!(model.current && model.analysisReady);
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
-    drawSurfaceHeader(showCard);
+    drawSurfaceHeader(showCard, { hideSubtitle: true });
+    const previewY = 108;
+    const previewH = 84;
+    const detailY = 196;
+    const detailH = 60;
+    const thumbY = 262;
+    const thumbW = 56;
+    const thumbH = 28;
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
     text(24, 92, 'open lens', {
@@ -3632,38 +3655,49 @@
       openCameraFromShow('touch');
     });
 
-    mk('rect', { x: 14, y: 112, width: 212, height: 112, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
+    mk('rect', { x: 14, y: previewY, width: 212, height: previewH, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
     if (currentState === STATES.SHOW_PRIMED) {
-      text(20, 148, 'click to start camera', {
+      text(20, previewY + 36, 'click to start camera', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, 172, 'then click shoots · status tap exits · hold ptt narrates', {
+      text(20, previewY + 60, 'then click shoots · status tap exits · hold ptt narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
     } else if (model.imageHref) {
       drawRasterFrame(model.imageHref, {
-        x: 14, y: 112, width: 212, height: 112, preserveAspectRatio: 'xMidYMid slice', opacity: 1, rx: 12, ry: 12
+        x: 14, y: previewY, width: 212, height: previewH, preserveAspectRatio: 'xMidYMid slice', opacity: 1, rx: 12, ry: 12
       });
-      mk('rect', { x: 14, y: 186, width: 212, height: 38, fill: 'rgba(5,5,5,0.58)' });
-      text(22, 206, recentTimeLabel(model.createdAt), {
-        fill: 'rgba(244,239,228,0.58)',
+      mk('rect', { x: 14, y: detailY, width: 212, height: detailH, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.12)' });
+      text(22, detailY + 12, recentTimeLabel(model.createdAt), {
+        fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
+        'font-size': '9'
       });
-      wrapTextBlock(undefined, (model.descriptionText || (model.analysisReady ? model.summary : model.processingLine)).slice(0, 58), 22, 217, 188, 11, 'rgba(244,239,228,0.92)', '10', 1);
-      if (model.latestCommentText) {
-        wrapTextBlock(undefined, 'comment · ' + model.latestCommentText.slice(0, 42), 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
-      } else if (model.captureCommentCount > 0) {
-        wrapTextBlock(undefined, model.captureCommentCount + ' capture comments', 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
-      } else if (model.claimSummary) {
-        wrapTextBlock(undefined, 'claim · ' + model.claimSummary.slice(0, 42), 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
+      const detailText = String(
+        model.descriptionText ||
+        (model.analysisReady ? model.summary : '') ||
+        (model.analysisState === 'unavailable' ? 'image description unavailable' : model.processingLine)
+      ).slice(0, 170);
+      wrapTextBlock(undefined, detailText, 22, detailY + 24, 182, 11, 'rgba(8,8,8,0.92)', '10', 3);
+      const metaShowLine = model.latestCommentText
+        ? 'comment · ' + model.latestCommentText.slice(0, 34)
+        : (model.captureCommentCount > 0
+          ? model.captureCommentCount + ' comments'
+          : (model.claimSummary ? 'claim · ' + model.claimSummary.slice(0, 26) : ''));
+      if (metaShowLine) {
+        text(22, detailY + 52, metaShowLine, {
+          fill: 'rgba(8,8,8,0.52)',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '9',
+          'text-anchor': 'start'
+        });
       }
       if (!model.analysisReady) {
-        text(210, 129, model.processingLine, {
+        text(210, previewY + 16, model.processingLine, {
           fill: 'rgba(244,239,228,0.88)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10',
@@ -3671,38 +3705,38 @@
         });
       }
       if (inlineListening && canReprompt) {
-        mk('rect', { x: 18, y: 118, width: 132, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.78)' });
-        text(28, 130, 'release to reprompt', {
+        mk('rect', { x: 18, y: previewY + 6, width: 132, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.78)' });
+        text(28, previewY + 18, 'release to reprompt', {
           fill: 'rgba(244,239,228,0.96)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '10'
         });
       }
     } else if (model.captures.length) {
-      text(20, 148, COPY.frameSaved, {
+      text(20, previewY + 34, COPY.frameSaved, {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, 170, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
-      text(20, 206, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
+      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, previewY + 56, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      text(20, detailY + 18, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
     } else {
       const cameraRecoveryCue = !model.captures.length && (getUIState().onboarding_step4_skipped || getUIState().tutorial_step4_camera_denied);
-      text(20, 146, 'gallery starts here', {
+      text(20, previewY + 34, 'gallery starts here', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      text(20, 168, cameraRecoveryCue ? 'camera not enabled — click shutter to allow' : 'click open lens to begin', {
+      text(20, previewY + 56, cameraRecoveryCue ? 'camera not enabled — click shutter to allow' : 'click open lens to begin', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      text(20, 188, 'frames appear here immediately', {
+      text(20, previewY + 76, 'frames appear here immediately', {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3710,7 +3744,7 @@
     }
 
     if (currentState === STATES.SHOW_PRIMED) {
-      text(226, 276, 'waiting for click', {
+      text(226, footerY, 'waiting for click', {
         fill: 'rgba(8,8,8,0.34)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
         'text-anchor': 'end'
@@ -3718,15 +3752,14 @@
       return;
     }
 
-    const thumbY = 236;
     const recent = model.captures.slice().reverse().slice(0, 3);
     recent.forEach((capture, i) => {
       const x = 14 + (i * 70);
       const href = getCaptureImageHref(capture);
       const active = capture === model.current;
-      mk('rect', { x, y: thumbY, width: 62, height: 42, rx: 8, ry: 8, fill: active ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.10)' });
+      mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: active ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.10)' });
       if (href) {
-        drawRasterFrame(href, { x, y: thumbY, width: 62, height: 42, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68, rx: 8, ry: 8 });
+        drawRasterFrame(href, { x, y: thumbY, width: thumbW, height: thumbH, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68, rx: 8, ry: 8 });
       } else {
         text(x + 8, thumbY + 24, `${i + 1}`, {
           fill: 'rgba(8,8,8,0.48)',
@@ -3735,10 +3768,10 @@
         });
       }
       if (active) {
-        mk('rect', { x, y: thumbY, width: 62, height: 42, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.01)', stroke: 'rgba(244,239,228,0.38)', 'stroke-width': 2 });
+        mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.01)', stroke: 'rgba(244,239,228,0.38)', 'stroke-width': 2 });
       }
       const thumbTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x, y: thumbY, width: 62, height: 42, rx: 8, ry: 8, fill: 'transparent' }, thumbTap);
+      mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: 'transparent' }, thumbTap);
       thumbTap.addEventListener('pointerup', event => {
         event.preventDefault();
         event.stopPropagation();
@@ -3750,12 +3783,11 @@
         render();
       });
     });
-
-      const showFooter = getShowFooter(model);
-    text(226, 276, showFooter, {
-      fill: 'rgba(8,8,8,0.38)',
+    const showFooter = getShowFooter(model);
+    text(226, 286, showFooter, {
+      fill: 'rgba(8,8,8,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
+      'font-size': '9',
       'text-anchor': 'end'
     });
   }
@@ -4239,10 +4271,50 @@
       return;
     }
     const inlineListening = recordingActive() && activeSurface() === 'project';
-    const queueCount = getQueuePendingJobs().length;
+    const queueCount = data.visibleQueueCount || 0;
+    const projectSurfaceMode = activeSurface() === 'project' ? surfaceMode() : 'stable';
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
+    if (projectSurfaceMode === 'recording' || projectSurfaceMode === 'processing') {
+      const promptText = lower(
+        stateData.answeringQuestion?.text ||
+        data.blockerQuestion ||
+        data.pendingDecisionText ||
+        data.next ||
+        'hold ptt to continue'
+      );
+      const progressLabel = lower(String(stateData.nowFeedback || (projectSurfaceMode === 'recording' ? 'recording answer' : 'answer queued · working quietly')));
+      const queueLine = getQueueLine();
+      mk('rect', { x: 10, y: 84, width: 220, height: 162, rx: 12, fill: 'rgba(8,8,8,0.13)' });
+      text(18, 102, projectSurfaceMode === 'recording' ? 'recording answer' : 'processing answer', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16'
+      });
+      wrapTextBlock(undefined, promptText, 18, 130, 194, 14, 'rgba(8,8,8,0.86)', '13', 4);
+      text(18, 212, queueCount ? `${queueCount} queued` : 'queue clear', {
+        fill: 'rgba(8,8,8,0.48)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(222, 212, projectSurfaceMode === 'recording' ? 'release to send' : progressLabel, {
+        fill: 'rgba(8,8,8,0.48)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      if (queueLine) {
+        wrapTextBlock(undefined, lower(queueLine), 18, 230, 194, 11, 'rgba(8,8,8,0.66)', '10', 2);
+      }
+      text(226, 276, projectSurfaceMode === 'recording' ? 'release to send' : 'background queue running', {
+        fill: 'rgba(8,8,8,0.36)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
     if (drawOnboardingNowPanel(nowCard, data)) return;
     const hasBlockers = data.pendingDecisions.length > 0 || data.openQuestions > 0;
     const chainY = 78;
@@ -4490,28 +4562,28 @@
       });
       return;
     }
-    const LAYOUT = { top: 72, tabsH: 20, branchH: 18, footerY: 282, gap: 5 };
+    const LAYOUT = { top: 72, tabsH: 16, branchH: 14, footerY: 282, gap: 3 };
     const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [
-      { id: 'questions', label: 'asks', width: 42 },
-      { id: 'signals', label: 'signals', width: 48 },
-      { id: 'decisions', label: 'decided', width: 54 },
-      { id: 'open loops', label: 'loops', width: 42 }
+      { id: 'questions', label: 'asks', width: 34 },
+      { id: 'signals', label: 'signals', width: 40 },
+      { id: 'decisions', label: 'decided', width: 46 },
+      { id: 'open loops', label: 'loops', width: 34 }
     ];
     let tabX = 14;
     laneTabs.forEach((tab, i) => {
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: LAYOUT.top, width: tab.width, height: LAYOUT.tabsH, rx: 6, ry: 6,
+        x: tabX, y: LAYOUT.top, width: tab.width, height: LAYOUT.tabsH, rx: 5, ry: 5,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: LAYOUT.top + 14,
+        x: tabX + tab.width / 2, y: LAYOUT.top + 11.5,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11', 'text-anchor': 'middle'
+        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9', 'text-anchor': 'middle'
       }, pillGroup);
       tabText.textContent = lower(tab.label);
       pillGroup.addEventListener('pointerup', (e) => {
@@ -4527,7 +4599,7 @@
         if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
         render();
       });
-      tabX += tab.width + 6;
+      tabX += tab.width + 3;
     });
 
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
@@ -4538,7 +4610,7 @@
       activeChips.forEach((c) => {
         const realIndex = model.chips.indexOf(c);
         const isActive = realIndex === safeChipIdx;
-        const chipWidth = Math.max(38, c.label.length * 6 + 16);
+        const chipWidth = Math.max(28, c.label.length * 5 + 10);
         const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
         mk('rect', {
           x: chipX, y: contentCursorY, width: chipWidth, height: LAYOUT.branchH, rx: 6, ry: 6,
@@ -4546,9 +4618,9 @@
           stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
         }, chipGroup);
         const chipText = mk('text', {
-          x: chipX + chipWidth / 2, y: contentCursorY + 12,
+          x: chipX + chipWidth / 2, y: contentCursorY + 10,
           fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'middle'
+          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '8', 'text-anchor': 'middle'
         }, chipGroup);
         chipText.textContent = lower(c.label);
         chipGroup.addEventListener('pointerup', (e) => {
@@ -4560,7 +4632,7 @@
           stateData.knowBodyScrollTop = 0;
           render();
         });
-        chipX += chipWidth + 6;
+        chipX += chipWidth + 3;
       });
       contentCursorY += LAYOUT.branchH + LAYOUT.gap;
     }
@@ -6004,18 +6076,24 @@
     if (source === 'visual-insight' || source === 'insight' || source === 'question-answer') notifyCard('know', 'soft');
     if (source === 'project-switch') notifyCard('now', 'soft');
     if (currentState === STATES.NOW_BROWSE && source === 'question-answer') {
-      stateData.nowHideQuestionsUntil = Date.now() + 200;
-      stateData.nowFeedback = 'answer queued';
+      stateData.nowHideQuestionsUntil = Date.now() + 2600;
+      stateData.nowFeedback = 'answer queued · working quietly';
+      if (onboardingActive() && getOnboardingStep() === 2) {
+        native?.updateUIState?.({
+          tutorial_step2_fallback_visible: false,
+          tutorial_step2_fallback_reason: ''
+        });
+      }
       scheduleRender();
       setTimeout(function() {
-        if (stateData.nowFeedback === 'answer queued') {
+        if (stateData.nowFeedback === 'answer queued · working quietly') {
           stateData.nowFeedback = '';
           scheduleRender();
         }
-      }, 1200);
+      }, 1800);
       setTimeout(function() {
         scheduleRender();
-      }, 220);
+      }, 2620);
     }
   });
 

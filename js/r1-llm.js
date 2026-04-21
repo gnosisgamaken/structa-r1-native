@@ -1103,7 +1103,7 @@
     var lines = [
       'Analyze this image for the current project.',
       'Describe only visible facts relevant to the project context.',
-      'Write 2 short sentences in plain prose.',
+      'Write 2 to 4 short sentences in plain prose.',
       'project: ' + projectName,
       'context: ' + context,
       'intent: ' + (intent || 'none')
@@ -1346,7 +1346,7 @@
       facingMode: options.facingMode || '',
       description: description || '',
       priority: options.priority || 'low',
-      timeout: options.timeout || 12000
+      timeout: options.timeout || 22000
     });
   }
 
@@ -1377,7 +1377,7 @@
     }, function() {
       return sendBridgeImage(imageBase64, prompt, {
         journal: false,
-        timeout: Number(options.timeout || 12000)
+        timeout: Number(options.timeout || 22000)
       }).then(function(result) {
         if (!result || !result.ok || !result.clean) return result;
         return extractClaimsFromText({

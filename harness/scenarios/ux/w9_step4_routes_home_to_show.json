@@ -1,0 +1,12 @@
+{
+  "id": "w9_step4_routes_home_to_show",
+  "title": "step 4 routes home to show and keeps know available",
+  "runtime_dump": "runtime/synthetic/w9_step4_routes_home_to_show.json",
+  "expect_ui_state": {
+    "onboarding_step": 4,
+    "allowed_card_ids": ["now", "show", "know"],
+    "preferred_home_card_id": "show",
+    "effective_selected_card_id": "show",
+    "show_available": true
+  }
+}

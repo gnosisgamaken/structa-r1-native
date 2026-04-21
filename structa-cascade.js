@@ -608,9 +608,24 @@
 
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
     if (step === 'complete') return cards.map(card => card.id);
-    if (step === 3) return ['now', 'know'];
-    if (step === 4) return ['know', 'show'];
-    return ['now'];
+    if (step === 3 || step === 4) return ['now', 'show', 'know'];
+    return ['now', 'show'];
+  }
+
+  function preferredHomeCardId(step = getOnboardingStep(), allowed = onboardingAllowedCardIds(step)) {
+    if (step === 4 && allowed.includes('show')) return 'show';
+    if (step === 3 && allowed.includes('know')) return 'know';
+    return allowed[0] || 'now';
+  }
+
+  function getEffectiveHomeSelectedCardId(selectedCardId, step = getOnboardingStep()) {
+    const allowed = onboardingAllowedCardIds(step);
+    const preferred = preferredHomeCardId(step, allowed);
+    const selected = selectedCardId || 'now';
+    if (!allowed.length) return selected;
+    if (step === 'complete') return cards.some(card => card.id === selected) ? selected : 'now';
+    if (!allowed.includes(selected) || (preferred && selected !== preferred)) return preferred;
+    return selected;
   }
 
   function onboardingAllowsLogs() {
@@ -722,6 +737,41 @@
     if (lower(meta.analysis_status || '') === 'saved') return 'hold ptt to describe';
     if (meta.claim_extraction_pending) return 'will finish soon';
     return 'done';
+  }
+
+  function getShowFooter(model) {
+    if (model.annotationPending) return 'hold ptt · tag frame';
+    if (model.claimExtractionPending) return COPY.backgroundWorking;
+    if (model.pendingQueueCount > 0) return COPY.queuedWorking(model.pendingQueueCount);
+    if (model.captures.length) {
+      return model.claimCount > 0 ? `${model.claimCount} claims · ${COPY.holdPttComment}` : COPY.holdPttComment;
+    }
+    return COPY.readyForFrame;
+  }
+
+  function buildUISnapshot() {
+    const ui = getUIState();
+    const step = getOnboardingStep();
+    const allowed = onboardingAllowedCardIds(step);
+    const preferred = preferredHomeCardId(step, allowed);
+    const effectiveSelected = getEffectiveHomeSelectedCardId(ui?.selected_card_id || currentCard()?.id || 'now', step);
+    const model = buildShowSummary();
+    return {
+      ...ui,
+      onboarding_step: step,
+      allowed_card_ids: allowed,
+      preferred_home_card_id: preferred,
+      effective_selected_card_id: effectiveSelected,
+      show_available: allowed.includes('show'),
+      queue_blocker_count: Array.isArray(ui?.queue_blockers) ? ui.queue_blockers.length : 0,
+      show_capture_count: model.captures.length,
+      show_status: model.status,
+      show_current_summary: model.summary,
+      show_current_processing_line: model.processingLine || 'ready',
+      show_current_analysis_state: model.analysisState || '',
+      show_claim_count: Number(model.claimCount || 0),
+      show_footer: getShowFooter(model)
+    };
   }
 
   function latestLogText() {
@@ -1335,7 +1385,7 @@
       const step = getOnboardingStep();
       markTutorialStepEntered(step);
       const allowed = onboardingAllowedCardIds(step);
-      const preferredCardId = step === 4 ? 'show' : (step === 3 ? 'know' : allowed[0]);
+      const preferredCardId = preferredHomeCardId(step, allowed);
       if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
         const nextIndex = cards.findIndex(function(card) { return card.id === preferredCardId; });
         if (nextIndex >= 0) selectedIndex = nextIndex;
@@ -3692,13 +3742,7 @@
       });
     });
 
-      const showFooter = model.annotationPending
-        ? 'hold ptt · tag frame'
-        : model.claimExtractionPending
-          ? COPY.backgroundWorking
-          : model.pendingQueueCount > 0
-            ? COPY.queuedWorking(model.pendingQueueCount)
-            : (model.captures.length ? (model.claimCount > 0 ? `${model.claimCount} claims · ${COPY.holdPttComment}` : COPY.holdPttComment) : COPY.readyForFrame);
+      const showFooter = getShowFooter(model);
     text(226, 276, showFooter, {
       fill: 'rgba(8,8,8,0.38)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -5840,11 +5884,9 @@
   selectedIndex = Math.max(0, cards.findIndex(card => card.id === (initialState.selected_card_id || 'now')));
   if (selectedIndex < 0) selectedIndex = 3;
   if (onboardingActive()) {
-    const allowed = onboardingAllowedCardIds();
-    if (!allowed.includes(currentCard()?.id)) {
-      const nextIndex = cards.findIndex(card => card.id === allowed[0]);
-      if (nextIndex >= 0) selectedIndex = nextIndex;
-    }
+    const nextCardId = getEffectiveHomeSelectedCardId(currentCard()?.id || initialState.selected_card_id || 'now');
+    const nextIndex = cards.findIndex(card => card.id === nextCardId);
+    if (nextIndex >= 0) selectedIndex = nextIndex;
   }
 
   native?.setActiveNode?.(currentCard().id);
@@ -6123,7 +6165,8 @@
     showLogTraceView: showLogTraceView,
     setLogTraceMode: setLogTraceMode,
     toggleLogTraceMode: toggleLogTraceMode,
-    dumpLogDebugSnapshot: dumpLogDebugSnapshot
+    dumpLogDebugSnapshot: dumpLogDebugSnapshot,
+    getUISnapshot: buildUISnapshot
   });
 
   window.StructaPanel = Object.freeze({

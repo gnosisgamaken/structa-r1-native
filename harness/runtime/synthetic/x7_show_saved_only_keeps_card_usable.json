@@ -1,0 +1,40 @@
+{
+  "memory": {
+    "uiState": {
+      "onboarded": true,
+      "onboarding_step": "complete",
+      "selected_card_id": "show",
+      "last_capture_entry_id": "cap-1"
+    },
+    "captures": [
+      {
+        "entry_id": "cap-1",
+        "node_id": "cap-node-1",
+        "project_id": "prj-1",
+        "captured_at": "2026-04-21T10:00:00.000Z",
+        "summary": "frame saved",
+        "meta": {
+          "analysis_status": "saved",
+          "analysis_stage": "saved"
+        }
+      }
+    ]
+  },
+  "trace": {
+    "events": [
+      { "t": "2026-04-21T10:00:00.000Z", "flow": "image", "from": "captured", "to": "saved", "ctx": { "entryId": "cap-1" } }
+    ],
+    "voiceCalls": { "total": 0, "violations": 0, "byKind": {} }
+  },
+  "project": {
+    "project_id": "prj-1",
+    "claims": [],
+    "answers": [],
+    "nodes": [],
+    "open_question_nodes": [],
+    "focuses": [],
+    "activeFocusId": null,
+    "chainHistory": [],
+    "captures": []
+  }
+}

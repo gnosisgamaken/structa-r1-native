@@ -898,6 +898,7 @@
       system_status: '',
       diagnostic_status: '',
       last_capture_summary: '',
+      last_capture_entry_id: '',
       last_insight_summary: '',
       last_event_summary: '',
       onboarded: false,

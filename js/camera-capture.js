@@ -4,9 +4,10 @@
  * Changes (2026-04-16):
  * - SHOW+TELL: PTT during camera opens a voice strip at bottom
  * - Voice annotation is captured alongside the image
- * - Image + voice go to LLM together via processImage({ voiceAnnotation })
+ * - Captures are saved first and remain usable even if native image callbacks do not return
+ * - show+tell semantics come from the reliable Rabbit text lane via processImage({ voiceAnnotation })
  * - Audio engine: play capture sound on frame grab
- * - capture() now uses StructaLLM.processImage() for analysis
+ * - capture() still uses StructaLLM.processImage(), but that path is deterministic-by-default
  */
 (() => {
   const native = window.StructaNative;

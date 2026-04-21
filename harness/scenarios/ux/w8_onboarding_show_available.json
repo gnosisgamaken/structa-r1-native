@@ -1,0 +1,14 @@
+{
+  "id": "w8_onboarding_show_available",
+  "title": "onboarding keeps show available before step 4",
+  "runtime_dump": "runtime/synthetic/w8_onboarding_show_available.json",
+  "expect_ui_state": {
+    "onboarding_step": 2,
+    "allowed_card_ids": ["now", "show"],
+    "preferred_home_card_id": "now",
+    "effective_selected_card_id": "now",
+    "show_available": true,
+    "show_capture_count": 0,
+    "show_footer": "ready for a frame"
+  }
+}

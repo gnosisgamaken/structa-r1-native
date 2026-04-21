@@ -1,0 +1,14 @@
+{
+  "id": "x7_show_saved_only_keeps_card_usable",
+  "title": "plain show saves a frame and leaves the card usable",
+  "runtime_dump": "runtime/synthetic/x7_show_saved_only_keeps_card_usable.json",
+  "expect_ui_state": {
+    "onboarding_step": "complete",
+    "effective_selected_card_id": "show",
+    "show_available": true,
+    "show_capture_count": 1,
+    "show_current_processing_line": "hold ptt to describe",
+    "show_footer": "hold ptt · comment"
+  },
+  "expect_no_orphan_evidence": true
+}

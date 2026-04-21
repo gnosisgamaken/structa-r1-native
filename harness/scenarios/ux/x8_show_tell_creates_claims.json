@@ -1,0 +1,18 @@
+{
+  "id": "x8_show_tell_creates_claims",
+  "title": "show plus tell creates claims while keeping the frame linked",
+  "runtime_dump": "runtime/synthetic/x8_show_tell_creates_claims.json",
+  "expect_ui_state": {
+    "onboarding_step": "complete",
+    "effective_selected_card_id": "show",
+    "show_available": true,
+    "show_capture_count": 1,
+    "show_claim_count": 1,
+    "show_footer": "1 claims · hold ptt · comment",
+    "show_analysis_ready": true
+  },
+  "expect_claims": [
+    { "source": "show-tell", "minCount": 1 }
+  ],
+  "expect_no_orphan_evidence": true
+}

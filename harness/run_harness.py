@@ -18,6 +18,7 @@ DEFAULT_SCENARIOS = ROOT / "scenarios" / "batch_v1.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs"
 DEFAULT_LMSTUDIO_BASE = "http://127.0.0.1:1234/v1"
 DEFAULT_TRACE_RUNTIME_DIR = ROOT / "runtime" / "from_device"
+CARD_IDS = ["show", "tell", "know", "now"]
 
 
 SYSTEM_PROMPT = textwrap.dedent(
@@ -317,10 +318,253 @@ def build_model_summary(snapshot: dict) -> dict:
     }
 
 
+def normalize_onboarding_step(ui: dict) -> str | int:
+    if ui.get("onboarded") or ui.get("onboarding_step") == "complete":
+        return "complete"
+    step = ui.get("onboarding_step")
+    if isinstance(step, int):
+        return step
+    return 0
+
+
+def onboarding_allowed_card_ids(step: str | int) -> list[str]:
+    if step == "complete":
+        return list(CARD_IDS)
+    if step in {3, 4}:
+        return ["now", "show", "know"]
+    return ["now", "show"]
+
+
+def preferred_home_card_id(step: str | int, allowed: list[str]) -> str:
+    if step == 4 and "show" in allowed:
+        return "show"
+    if step == 3 and "know" in allowed:
+        return "know"
+    return allowed[0] if allowed else "now"
+
+
+def effective_selected_card_id(selected_card_id: str, step: str | int, allowed: list[str]) -> str:
+    selected = selected_card_id or "now"
+    preferred = preferred_home_card_id(step, allowed)
+    if not allowed:
+        return selected
+    if step == "complete":
+        return selected if selected in CARD_IDS else "now"
+    if selected not in allowed or (preferred and selected != preferred):
+        return preferred
+    return selected
+
+
+def _capture_key(capture: dict) -> str:
+    return capture.get("entry_id") or capture.get("id") or capture.get("node_id") or ""
+
+
+def merged_capture_list(snapshot: dict) -> list[dict]:
+    memory = snapshot.get("memory") or {}
+    project = snapshot.get("project") or memory.get("projectMemory") or {}
+    active_project_id = project.get("project_id") or ""
+    memory_captures = [
+        capture for capture in (memory.get("captures") or [])
+        if isinstance(capture, dict) and (not capture.get("project_id") or capture.get("project_id") == active_project_id)
+    ]
+    project_captures = []
+    for capture in (project.get("captures") or []):
+        if not isinstance(capture, dict):
+            continue
+        project_captures.append(
+            capture if capture.get("project_id") or not active_project_id else {**capture, "project_id": active_project_id}
+        )
+    merged: dict[str, dict] = {}
+    for capture in memory_captures:
+        key = _capture_key(capture)
+        if key:
+            merged[key] = dict(capture)
+    for capture in project_captures:
+        key = _capture_key(capture)
+        if not key:
+            continue
+        existing = merged.get(key, {})
+        merged[key] = {
+            **existing,
+            **capture,
+            "meta": {**(existing.get("meta") or {}), **(capture.get("meta") or {})},
+            "image_asset": capture.get("image_asset") or existing.get("image_asset") or None,
+        }
+
+    def capture_ts(capture: dict) -> float:
+        for candidate in (
+            capture.get("captured_at"),
+            capture.get("created_at"),
+            (capture.get("meta") or {}).get("captured_at"),
+        ):
+            if not candidate:
+                continue
+            try:
+                return dt.datetime.fromisoformat(str(candidate).replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+        return 0.0
+
+    return sorted(merged.values(), key=capture_ts)
+
+
+def get_capture_summary(capture: dict | None) -> str:
+    if not capture:
+        return "no frames"
+    meta = capture.get("meta") or {}
+    status = str(meta.get("analysis_status") or "").lower()
+    if status == "pending":
+        return "analyzing…"
+    if status == "saved":
+        return str(
+            capture.get("summary")
+            or capture.get("prompt_text")
+            or capture.get("voice_annotation")
+            or "frame saved"
+        ).lower()
+    if status == "unavailable":
+        fallback = str(
+            capture.get("summary")
+            or capture.get("prompt_text")
+            or capture.get("voice_annotation")
+            or "frame saved"
+        ).lower()
+        return "unanalyzed · " + fallback
+    raw = str(
+        capture.get("ai_analysis")
+        or capture.get("ai_response")
+        or capture.get("summary")
+        or capture.get("prompt_text")
+        or "untitled capture"
+    )
+    marker = "signal:"
+    if marker in raw.lower():
+        _, _, tail = raw.partition(marker)
+        return tail.strip().lower()
+    return raw.lower()
+
+
+def get_capture_processing_line(capture: dict | None) -> str:
+    if not capture:
+        return "ready"
+    meta = capture.get("meta") or {}
+    if int(meta.get("annotation_window_until") or 0) > 0:
+        return "speak to tag, or wait"
+    stage = str(meta.get("analysis_stage") or "").lower()
+    if stage == "capturing":
+        return "capturing"
+    if stage == "queued":
+        return "working in background"
+    if stage == "analyzing":
+        return "analyzing"
+    if stage == "extracting claims":
+        return "extracting claims"
+    if stage == "saved":
+        return "hold ptt to describe"
+    status = str(meta.get("analysis_status") or "").lower()
+    if status == "pending":
+        return "working in background"
+    if status == "saved":
+        return "hold ptt to describe"
+    if meta.get("claim_extraction_pending"):
+        return "will finish soon"
+    return "done"
+
+
+def capture_analysis_ready(capture: dict | None) -> bool:
+    if not capture:
+        return False
+    meta = capture.get("meta") or {}
+    if str(meta.get("analysis_status") or "").lower() == "ready":
+        return True
+    summary = str(capture.get("ai_analysis") or capture.get("summary") or "").lower()
+    if not summary:
+        return False
+    blocked = [
+        "analyzing",
+        "image captured",
+        "show+tell captured",
+        "image saved",
+        "frame saved",
+        "preview unavailable",
+        "visual capture",
+    ]
+    return not any(token in summary for token in blocked)
+
+
+def capture_claims_for_refs(project: dict, refs: list[str], capture_count: int) -> list[dict]:
+    claims = [claim for claim in (project.get("claims") or []) if isinstance(claim, dict)]
+    ref_set = {ref for ref in refs if ref}
+    matched = [
+        claim for claim in claims
+        if any(ref in ref_set for ref in (claim.get("evidence") or []))
+        or any(
+            str((claim.get("sourceRef") or {}).get(key) or "") in ref_set
+            for key in ("itemId", "imageId")
+        )
+    ]
+    if matched or capture_count != 1:
+        return matched
+    return [
+        claim for claim in claims
+        if str(claim.get("source") or "").lower() in {"image", "show-tell"}
+    ]
+
+
+def pending_capture_queue_count(captures: list[dict]) -> int:
+    return sum(
+        1
+        for capture in captures
+        if str((capture.get("meta") or {}).get("analysis_status") or "").lower() == "pending"
+    )
+
+
 def build_ui_state_summary(snapshot: dict) -> dict:
     memory = snapshot.get("memory") or {}
-    ui = memory.get("uiState") or {}
-    return dict(ui)
+    ui = dict(memory.get("uiState") or {})
+    project = snapshot.get("project") or memory.get("projectMemory") or {}
+    step = normalize_onboarding_step(ui)
+    allowed = onboarding_allowed_card_ids(step)
+    selected = ui.get("selected_card_id") or "now"
+    captures = merged_capture_list(snapshot)
+    preferred_entry_id = ui.get("last_capture_entry_id") or ""
+    current = None
+    if preferred_entry_id:
+        current = next((capture for capture in captures if _capture_key(capture) == preferred_entry_id), None)
+    if current is None and captures:
+        current = captures[-1]
+    refs = [(current or {}).get("node_id") or "", (current or {}).get("entry_id") or "", (current or {}).get("id") or ""]
+    current_claims = capture_claims_for_refs(project, refs, len(captures))
+    annotation_pending = int((((current or {}).get("meta") or {}).get("annotation_window_until") or 0)) > 0
+    claim_extraction_pending = bool((((current or {}).get("meta") or {}).get("claim_extraction_pending")))
+    pending_queue = pending_capture_queue_count(captures)
+    if annotation_pending:
+        show_footer = "hold ptt · tag frame"
+    elif claim_extraction_pending:
+        show_footer = "working in background"
+    elif pending_queue > 0:
+        show_footer = f"{pending_queue} queued · working in background"
+    elif captures:
+        show_footer = f"{len(current_claims)} claims · hold ptt · comment" if current_claims else "hold ptt · comment"
+    else:
+        show_footer = "ready for a frame"
+    ui.update({
+        "onboarding_step": step,
+        "allowed_card_ids": allowed,
+        "preferred_home_card_id": preferred_home_card_id(step, allowed),
+        "effective_selected_card_id": effective_selected_card_id(selected, step, allowed),
+        "show_available": "show" in allowed,
+        "queue_blocker_count": len(ui.get("queue_blockers") or []),
+        "show_capture_count": len(captures),
+        "show_status": "reviewing" if captures else "empty",
+        "show_current_summary": get_capture_summary(current),
+        "show_current_processing_line": get_capture_processing_line(current),
+        "show_current_analysis_state": str((((current or {}).get("meta") or {}).get("analysis_status") or "")).lower(),
+        "show_claim_count": len(current_claims),
+        "show_footer": show_footer,
+        "show_analysis_ready": capture_analysis_ready(current),
+    })
+    return ui
 
 
 def match_expect_claims(snapshot: dict, expected_claims: list[dict]) -> list[dict]:

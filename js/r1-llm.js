@@ -1476,31 +1476,31 @@
       return normalizeBridgeImageDataUrl(imageBase64).then(function(normalizedImage) {
         var bridgeAttempts = [
           {
-            label: 'magic-norm',
+            label: 'magic-norm-r1-guarded',
+            image: normalizedImage,
+            prompt: prompt + '\nReturn text only. Do not speak aloud.',
+            options: {
+              timeout: Number(options.timeout || 22000),
+              pluginId: 'com.r1.pixelart',
+              omitUseLLM: true,
+              wantsR1Response: true,
+              omitWantsJournalEntry: true
+            }
+          },
+          {
+            label: 'magic-norm-r1',
             image: normalizedImage,
             prompt: prompt,
             options: {
               timeout: Number(options.timeout || 22000),
               pluginId: 'com.r1.pixelart',
               omitUseLLM: true,
-              omitWantsR1Response: true,
+              wantsR1Response: true,
               omitWantsJournalEntry: true
             }
           },
           {
-            label: 'magic-norm-quiet',
-            image: normalizedImage,
-            prompt: prompt,
-            options: {
-              timeout: Number(options.timeout || 22000),
-              pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              wantsR1Response: false,
-              omitWantsJournalEntry: true
-            }
-          },
-          {
-            label: 'magic-norm-bare',
+            label: 'magic-norm-r1-bare',
             image: normalizedImage,
             prompt: '',
             options: {
@@ -1508,7 +1508,7 @@
               pluginId: 'com.r1.pixelart',
               omitMessage: true,
               omitUseLLM: true,
-              omitWantsR1Response: true,
+              wantsR1Response: true,
               omitWantsJournalEntry: true
             }
           }

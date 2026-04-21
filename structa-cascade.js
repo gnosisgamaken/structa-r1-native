@@ -1329,37 +1329,37 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'magic-norm',
-      keyword: 'probe-magic-norm-an1',
-      label: 'probe magic norm',
-      prompt: 'debug keyword: probe-magic-norm-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-r1',
+      keyword: 'probe-magic-norm-r1-an1',
+      label: 'probe magic norm+r1',
+      prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
-      omitWantsR1Response: true,
+      wantsR1Response: true,
       omitWantsJournalEntry: true
     },
     {
-      id: 'magic-norm-quiet',
-      keyword: 'probe-magic-norm-quiet-an1',
-      label: 'probe magic norm quiet',
-      prompt: 'debug keyword: probe-magic-norm-quiet-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-r1-guarded',
+      keyword: 'probe-magic-norm-r1-guarded-an1',
+      label: 'probe magic norm+r1 guarded',
+      prompt: 'debug keyword: probe-magic-norm-r1-guarded-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only. Do not speak aloud.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
-      wantsR1Response: false,
+      wantsR1Response: true,
       omitWantsJournalEntry: true
     },
     {
-      id: 'magic-norm-bare',
-      keyword: 'probe-magic-norm-bare-an1',
-      label: 'probe magic norm bare',
+      id: 'magic-norm-r1-bare',
+      keyword: 'probe-magic-norm-r1-bare-an1',
+      label: 'probe magic norm+r1 bare',
       prompt: '',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitMessage: true,
       omitUseLLM: true,
-      omitWantsR1Response: true,
+      wantsR1Response: true,
       omitWantsJournalEntry: true
     }
   ];
@@ -1442,7 +1442,7 @@
       kind: 'action',
       actionId: 'image-probe-run-all',
       message: 'run image probes',
-      detail: 'magic norm · quiet · bare'
+      detail: 'norm+r1 · guarded · bare'
     });
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
       rows.push({

@@ -1311,178 +1311,105 @@
    */
   function processImage(rawBase64, description, meta) {
     var options = meta || {};
-    var useBridgeAssist = options.useRabbitImageBridge === true || options.forceBridgeOnly || options.forceFallbackServer;
-    if (!useBridgeAssist) {
-      if (String(options.voiceAnnotation || '').trim()) {
-        return withOperationPolicy({
-          allowSpeech: false,
-          silent: true,
-          source: 'show-tell',
-          reason: 'show+tell stays quiet'
-        }, function() {
-          return analyzeShowTell(rawBase64, description, options).then(function(result) {
-            if (result && result.ok) return result;
-            native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
-              entryId: options.imageId || '',
-              error: result?.error || 'show-tell failed'
-            });
-            return storeCaptureOnlyResult(Object.assign({}, options, {
-              savedSummary: 'show+tell saved',
-              savedPrompt: 'hold ptt to describe'
-            }));
-          }).catch(function(error) {
-            native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
-              entryId: options.imageId || '',
-              error: error?.message || 'show-tell failed'
-            });
-            return storeCaptureOnlyResult(Object.assign({}, options, {
-              savedSummary: 'show+tell saved',
-              savedPrompt: 'hold ptt to describe'
-            }));
+    if (String(options.voiceAnnotation || '').trim()) {
+      return withOperationPolicy({
+        allowSpeech: false,
+        silent: true,
+        source: 'show-tell',
+        reason: 'show+tell stays quiet'
+      }, function() {
+        return analyzeShowTell(rawBase64, description, options).then(function(result) {
+          if (result && result.ok) return result;
+          native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
+            entryId: options.imageId || '',
+            error: result?.error || 'show-tell failed'
           });
+          return storeCaptureOnlyResult(Object.assign({}, options, {
+            savedSummary: 'show+tell saved',
+            savedPrompt: 'hold ptt to describe'
+          }));
+        }).catch(function(error) {
+          native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
+            entryId: options.imageId || '',
+            error: error?.message || 'show-tell failed'
+          });
+          return storeCaptureOnlyResult(Object.assign({}, options, {
+            savedSummary: 'show+tell saved',
+            savedPrompt: 'hold ptt to describe'
+          }));
         });
-      }
-      return storeCaptureOnlyResult(options);
-    }
-
-    var orchestrator = window.StructaOrchestrator;
-    var priority = 'high';
-    var projectEnvelope = buildProjectEnvelope('show');
-    var selection = {
-      kind: 'capture',
-      id: options.itemId || options.imageId || '',
-      body: description || 'camera capture',
-      claims: options.itemId && native?.getClaimsForItem ? native.getClaimsForItem(options.itemId).slice(0, 6) : []
-    };
-    var payload = {
-      project: projectEnvelope,
-      selection: selection,
-      input: {
-        transcript: options.voiceAnnotation || '',
-        voiceAnnotation: options.voiceAnnotation || '',
-        imageId: options.imageId || '',
-        itemId: options.itemId || '',
-        imageRef: description || 'camera capture',
-        imageBase64: rawBase64
-      },
-      meta: options,
-      policy: {
-        priority: priority,
-        allowSearch: false,
-        allowSpeech: false
-      }
-    };
-    var startedAt = Date.now();
-
-    if (options.forceFallbackServer || !runtimeCaps.hasBridge) {
-      if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
-        return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
-      }
-      native?.traceEvent?.('image.dispatch', 'bridge-unavailable', 'fallback-server', {
-        entryId: options.imageId || '',
-        reason: options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
       });
-      return runImageServerFallback(
-        orchestrator,
-        payload,
-        options,
-        options.forceFallbackServer ? 'forced-fallback' : 'bridge-unavailable',
-        options.forceFallbackServer ? 'forced fallback' : 'bridge unavailable'
-      );
     }
 
+    return requestCaptureDescription(options.imageId || '', rawBase64, {
+      itemId: options.itemId || '',
+      facingMode: options.facingMode || '',
+      description: description || '',
+      priority: options.priority || 'low',
+      timeout: options.timeout || 12000
+    });
+  }
+
+  function requestCaptureDescription(captureId, imageBase64, context) {
+    var options = context || {};
+    if (!imageBase64) {
+      return Promise.resolve({
+        ok: false,
+        error: 'image missing',
+        code: 'image-missing',
+        layer: 'bridge',
+        captureId: captureId || ''
+      });
+    }
+    var projectEnvelope = buildProjectEnvelope('show');
+    var prompt = buildBridgeImagePrompt(projectEnvelope, options.description || 'camera capture', {
+      voiceAnnotation: '',
+      itemId: options.itemId || '',
+      imageId: captureId || '',
+      facingMode: options.facingMode || '',
+      promptContext: options.promptContext || ''
+    });
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
       source: 'image',
-      reason: 'visual notes stay quiet'
+      reason: 'image description stays quiet'
     }, function() {
-      var prompt = buildBridgeImagePrompt(projectEnvelope, description, options);
-      native?.traceEvent?.('image.dispatch', 'prepare', 'bridge', {
-        entryId: options.imageId || '',
-        projectId: projectEnvelope.id || '',
-        promptLength: prompt.length
-      });
-      return sendBridgeImage(rawBase64, prompt, {
-        journal: options.journal === true,
+      return sendBridgeImage(imageBase64, prompt, {
+        journal: false,
         timeout: Number(options.timeout || 12000)
-      }).then(function(bridgeResult) {
-          if (!bridgeResult || !bridgeResult.ok || !bridgeResult.clean) {
-            if (!bridgeResult?.ok) {
-              native?.traceEvent?.('image.bridge', 'pending', 'failed', {
-                entryId: options.imageId || '',
-                imageRunId: bridgeResult?.imageRunId || '',
-                code: bridgeResult?.code || '',
-                error: bridgeResult?.error || ''
-              });
-            }
-            if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE && options.forceBridgeOnly) {
-              return bridgeResult;
-            }
-            if (!orchestrator || !orchestrator.prepareImageContextPrompt) {
-              return bridgeResult || { ok: false, error: 'orchestrator unavailable' };
-            }
-            if (bridgeResult?.code === BRIDGE_TIMEOUT_CODE) {
-              return runImageServerFallback(orchestrator, payload, options, 'bridge-timeout', 'bridge timeout');
-            }
-            return bridgeResult;
+      }).then(function(result) {
+        if (!result || !result.ok || !result.clean) return result;
+        return extractClaimsFromText({
+          project: projectEnvelope,
+          input: {
+            text: result.clean || '',
+            deviceId: native?.deviceId || ''
+          },
+          source: 'image',
+          sourceRef: {
+            imageId: captureId || '',
+            itemId: options.itemId || ''
+          },
+          meta: {
+            deviceId: native?.deviceId || '',
+            imageId: captureId || ''
           }
-          native?.traceEvent?.('image.bridge', 'pending', 'response', {
-            entryId: options.imageId || '',
-            imageRunId: bridgeResult?.imageRunId || '',
-            textLength: String(bridgeResult.clean || bridgeResult.text || '').length,
-            latencyMs: Date.now() - startedAt
-          });
-          if (native && native.probeMode && native.appendProbeEvent) {
-            native.appendProbeEvent({
-              source: 'server-normalize',
-              name: 'claims extraction',
-              payload: {
-                imageRunId: bridgeResult?.imageRunId || '',
-                imageId: options.imageId || '',
-                chars: String(bridgeResult.clean || bridgeResult.text || '').length
-              }
-            });
-          }
-          return extractClaimsFromText({
-            project: projectEnvelope,
-            input: {
-              text: bridgeResult.clean || bridgeResult.text || '',
-              deviceId: native?.deviceId || ''
-            },
-            source: options.voiceAnnotation ? 'show-tell' : 'image',
-            sourceRef: {
-              imageId: options.imageId || '',
-              itemId: options.itemId || ''
-            },
-            meta: {
-              deviceId: native?.deviceId || '',
-              imageId: options.imageId || ''
-            }
-          }).then(function(extracted) {
-            var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
-            if (claims.length) {
-              native?.traceEvent?.('image.claims', 'pending', 'extracted', {
-                entryId: options.imageId || '',
-                count: claims.length
-              });
-            } else if (!extracted?.ok) {
-              native?.traceEvent?.('image.claims', 'pending', 'extraction_failed', {
-                entryId: options.imageId || '',
-                reason: extracted?.error || 'extraction failed'
-              });
-            }
-            return {
-              ok: true,
-              text: bridgeResult.text || bridgeResult.clean || '',
-              clean: bridgeResult.clean || bridgeResult.text || '',
-              structured: extractFields(bridgeResult.clean || bridgeResult.text || ''),
-              claims: claims,
-              claim_extraction_pending: !claims.length,
-              bridge: true
-            };
-          });
+        }).then(function(extracted) {
+          var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
+          return {
+            ok: true,
+            text: result.text || result.clean || '',
+            clean: result.clean || result.text || '',
+            raw: result.raw || '',
+            structured: extractFields(result.clean || result.text || ''),
+            claims: claims,
+            claim_extraction_pending: !claims.length,
+            captureId: captureId || '',
+            bridge: true
+          };
         });
+      });
     });
   }
 
@@ -1952,6 +1879,7 @@
     buildProjectBrief: buildProjectBrief,
     speakMilestone: speakMilestone,
     evaluateMilestone: evaluateMilestone,
+    requestCaptureDescription: requestCaptureDescription,
     sendBridgeImage: sendBridgeImage,
     askRabbitAboutImage: sendBridgeImage,
     buildBridgeImagePrompt: buildBridgeImagePrompt,

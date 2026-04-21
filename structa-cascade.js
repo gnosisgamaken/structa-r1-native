@@ -466,7 +466,7 @@
     if (!capture) return false;
     const state = lower(capture?.meta?.analysis_status || '');
     if (state === 'ready') return true;
-    const summary = lower(capture?.ai_analysis || capture?.summary || '');
+    const summary = lower(capture?.description_text || capture?.meta?.description_text || capture?.ai_analysis || capture?.summary || '');
     if (!summary) return false;
     return !summary.includes('analyzing') &&
       !summary.includes('image captured') &&
@@ -632,7 +632,7 @@
   }
 
   function canOpenProjectSwitcherFromState(state = currentState) {
-    if (state === STATES.CAMERA_OPEN || state === STATES.CAMERA_CAPTURE) return false;
+    if (state === STATES.CAMERA_CAPTURE) return false;
     if (recordingActive()) return false;
     return true;
   }
@@ -713,6 +713,8 @@
 
   function getCaptureSummary(capture) {
     if (!capture) return 'no frames';
+    const descriptionText = String(capture?.description_text || capture?.meta?.description_text || '').trim();
+    if (descriptionText) return lower(descriptionText);
     const status = lower(capture?.meta?.analysis_status || '');
     if (status === 'pending') return 'analyzing…';
     if (status === 'saved') {
@@ -734,10 +736,10 @@
     if (Number(meta.annotation_window_until || 0) > Date.now()) return 'speak to tag, or wait';
     const stage = lower(meta.analysis_stage || '');
     if (stage === 'capturing') return 'capturing';
-    if (stage === 'queued') return 'working in background';
-    if (stage === 'analyzing') return 'analyzing';
+    if (stage === 'queued' || stage === 'analyzing') return 'describing image...';
     if (stage === 'extracting claims') return 'extracting claims';
     if (stage === 'saved') return 'hold ptt to describe';
+    if (stage === 'blocked' || lower(meta.analysis_status || '') === 'unavailable') return 'image description unavailable';
     if (lower(meta.analysis_status || '') === 'pending') return 'working in background';
     if (lower(meta.analysis_status || '') === 'saved') return 'hold ptt to describe';
     if (meta.claim_extraction_pending) return 'will finish soon';
@@ -747,6 +749,7 @@
   function getShowFooter(model) {
     if (model.annotationPending) return 'hold ptt · tag frame';
     if (model.claimExtractionPending) return COPY.backgroundWorking;
+    if (model.processingLine === 'describing image...' || model.processingLine === 'image description unavailable') return model.processingLine;
     if (model.pendingQueueCount > 0) return COPY.queuedWorking(model.pendingQueueCount);
     if (model.captures.length) {
       if (model.processingLine === 'hold ptt to describe' && !model.claimCount) {
@@ -1452,7 +1455,7 @@
     const maxIndex = Math.max(0, captures.length - 1);
     stateData.showCaptureIndex = Math.min(stateData.showCaptureIndex || 0, maxIndex);
     if (!stateData.showStatus) {
-      stateData.showStatus = captures.length ? 'reviewing' : 'empty';
+      stateData.showStatus = captures.length ? 'capture ready' : 'empty';
     }
   };
 
@@ -1646,6 +1649,10 @@
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
     if (onboardingActive()) {
+      if (getOnboardingStep() === 1) {
+        setOnboardingStep(2, { via: 'primary' });
+        pushLog('lesson 1 complete', 'system');
+      }
       markTutorialStepEntered(getOnboardingStep());
       armTutorialStep2HintTimer();
     } else {
@@ -1904,10 +1911,6 @@
     }
     const project = row.project;
     fireFeedback('touch-commit');
-    if (onboardingActive() && getOnboardingStep() === 1) {
-      setOnboardingStep(2, { via: 'primary' });
-      pushLog('lesson 1 complete', 'system');
-    }
     native?.switchProject?.(project.project_id);
     pushLog(`project: ${project.name}`, 'voice');
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -2285,18 +2288,18 @@
     }
 
     if (step === 1) {
-      text(18, cardY + 18, 'lesson 1 · shake to stack', {
+      text(18, cardY + 18, 'lesson 1 · open now', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, 'shake the device to see your projects. this is how you switch context.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
-      text(18, cardY + 132, 'shake now →', {
+      wrapTextBlock(undefined, 'click now to open the live project view. shake remains available, but it is no longer the gate.', 18, cardY + 46, 194, 14, 'rgba(8,8,8,0.78)', '13', 5);
+      text(18, cardY + 132, 'click now →', {
         fill: 'rgba(8,8,8,0.54)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
       });
-      text(226, 276, 'lesson 2 unlocks after stack', {
+      text(226, 276, 'lesson 2 begins after now opens', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -3317,7 +3320,7 @@
     }
 
     text(226, 268, onboardingProjectLesson
-      ? 'lesson 1 · click opens'
+      ? 'projects · optional'
       : `${activeCount} of 3`, {
       fill: 'rgba(244,239,228,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -3585,6 +3588,9 @@
       analysisReady: current ? captureAnalysisReady(current) : false,
       analysisState: lower(current?.meta?.analysis_status || ''),
       processingLine: current ? getCaptureProcessingLine(current) : 'ready',
+      descriptionText: lower(String(current?.description_text || current?.meta?.description_text || '')),
+      latestCommentText: lower(String(current?.latest_comment_text || current?.meta?.latest_comment_text || current?.thread_summary || '')),
+      captureCommentCount: Number(current?.meta?.capture_semantic_result_count || current?.thread_depth || 0),
       annotationPending: Number(current?.meta?.annotation_window_until || 0) > Date.now(),
       claimExtractionPending: !!current?.meta?.claim_extraction_pending,
       createdAt: current?.captured_at || current?.created_at || current?.meta?.captured_at || null,
@@ -3633,7 +3639,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, 172, 'then click shoots · hold ptt narrates', {
+      text(20, 172, 'then click shoots · status tap exits · hold ptt narrates', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3642,19 +3648,19 @@
       drawRasterFrame(model.imageHref, {
         x: 14, y: 112, width: 212, height: 112, preserveAspectRatio: 'xMidYMid slice', opacity: 1, rx: 12, ry: 12
       });
-      mk('rect', { x: 14, y: 192, width: 212, height: 32, fill: 'rgba(5,5,5,0.54)' });
+      mk('rect', { x: 14, y: 186, width: 212, height: 38, fill: 'rgba(5,5,5,0.58)' });
       text(22, 206, recentTimeLabel(model.createdAt), {
         fill: 'rgba(244,239,228,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      wrapTextBlock(undefined, model.analysisReady ? model.summary.slice(0, 52) : model.processingLine, 22, 217, 190, 11, 'rgba(244,239,228,0.92)', '10', 1);
-      if (model.claimSummary) {
-        wrapTextBlock(undefined, 'claim · ' + model.claimSummary.slice(0, 42), 22, 204, 172, 10, 'rgba(244,239,228,0.84)', '9', 1);
-      }
-      if (model.threadSummary) {
-        wrapTextBlock(undefined, 'comment · ' + lower(model.threadSummary).slice(0, 42), 22, model.claimSummary ? 216 : 204, 172, 10, 'rgba(244,239,228,0.78)', '9', 1);
-        drawKnowDepthGlyph(model.threadDepth || 0, 204, model.claimSummary ? 214 : 202);
+      wrapTextBlock(undefined, (model.descriptionText || (model.analysisReady ? model.summary : model.processingLine)).slice(0, 58), 22, 217, 188, 11, 'rgba(244,239,228,0.92)', '10', 1);
+      if (model.latestCommentText) {
+        wrapTextBlock(undefined, 'comment · ' + model.latestCommentText.slice(0, 42), 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
+      } else if (model.captureCommentCount > 0) {
+        wrapTextBlock(undefined, model.captureCommentCount + ' capture comments', 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
+      } else if (model.claimSummary) {
+        wrapTextBlock(undefined, 'claim · ' + model.claimSummary.slice(0, 42), 22, 195, 176, 10, 'rgba(244,239,228,0.78)', '9', 1);
       }
       if (!model.analysisReady) {
         text(210, 129, model.processingLine, {
@@ -3862,8 +3868,8 @@
     return {
       kind: 'thread-comment',
       nodeId: capture.node_id,
-      title: capture.summary || 'visual note',
-      text: [capture.summary || '', capture.voice_annotation || ''].filter(Boolean).join(' · '),
+      title: capture.description_text || capture.summary || 'visual note',
+      text: [capture.description_text || capture.summary || '', capture.latest_comment_text || '', capture.voice_annotation || ''].filter(Boolean).join(' · '),
       surface: 'show',
       createdAt: capture.created_at || capture.captured_at || '',
       commentKind: 'comment',
@@ -5186,24 +5192,6 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        if (window.StructaCamera?.getPendingAnnotation?.()) {
-          const pendingAnnotation = window.StructaCamera.beginPendingAnnotation?.();
-          if (!pendingAnnotation) break;
-          voiceReturnState = STATES.SHOW_BROWSE;
-          transition(STATES.VOICE_OPEN, {
-            fromPTT: true,
-            tellStatus: 'tagging frame',
-            inlinePTTSurface: 'show',
-            buildContext: {
-              kind: 'capture-annotation',
-              nodeId: pendingAnnotation.nodeId || '',
-              entryId: pendingAnnotation.entryId || '',
-              surface: 'show',
-              text: 'tag this frame for the project'
-            }
-          });
-          break;
-        }
         if (!buildShowCommentContext()) {
           break;
         }
@@ -5391,6 +5379,11 @@
     if (stateData.flushRequestSource) {
       clearFlushRequest();
     }
+    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
+      cameraReturnState = STATES.HOME;
+      window.StructaCamera?.close?.();
+      return;
+    }
     transition(STATES.HOME);
   }
 
@@ -5575,9 +5568,9 @@
         stateData.showCaptureIndex = captures.length - 1;
         stateData.showCaptureEntryId = lastCapture?.entry_id || lastCapture?.id || '';
       }
-      transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, {
-        showStatus: 'latest visual memory'
-      });
+      transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, returnState === STATES.SHOW_BROWSE ? {
+        showStatus: 'capture ready'
+      } : {});
     }
     scheduleLogRefresh({ forceFollow: true });
   });
@@ -5594,7 +5587,7 @@
       stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
     }
     if (currentState === STATES.SHOW_BROWSE) {
-      stateData.showStatus = 'working in background';
+      stateData.showStatus = 'describing image...';
       render();
     }
     native?.updateUIState?.({ tutorial_step4_camera_denied: false });

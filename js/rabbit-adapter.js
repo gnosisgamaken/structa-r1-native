@@ -1141,20 +1141,19 @@
       if (capture) {
         capture.voice_annotation = bodyText || capture.voice_annotation || '';
         capture.prompt_text = bodyText || capture.prompt_text || '';
-        capture.summary = bodyText ? compact(bodyText, 72) : capture.summary;
         capture.meta = {
           ...(capture.meta || {}),
           voiceAnnotation: capture.voice_annotation || '',
+          annotation_text: bodyText || '',
           annotation_updated_at: new Date().toISOString(),
           annotation_window_until: 0
         };
       }
       if (node) {
         node.voice_annotation = bodyText || node.voice_annotation || '';
-        node.body = bodyText || node.body || '';
-        node.title = bodyText ? compact(bodyText, 42) : (node.title || 'visual capture');
         node.meta = {
           ...(node.meta || {}),
+          annotation_text: bodyText || '',
           annotation_updated_at: new Date().toISOString(),
           annotation_window_until: 0
         };
@@ -1832,6 +1831,8 @@
           entry_id: meta.bundle_id || n.capture_image || n.node_id,
           type: n.capture_image ? 'image' : 'voice',
           summary: n.body || n.title,
+          description_text: meta.description_text || '',
+          latest_comment_text: meta.latest_comment_text || '',
           ai_analysis: n.body,
           created_at: n.created_at,
           captured_at: meta.captured_at || n.created_at,
@@ -2800,6 +2801,7 @@
 
   function inferCaptureInsight(bundle) {
     if (!bundle) return '';
+    if (bundle.description_text) return lower(bundle.description_text);
     if (bundle.ai_response) return lower(bundle.ai_response);
     if (bundle.ai_analysis) return lower(bundle.ai_analysis);
     if (bundle.summary) return lower(bundle.summary);
@@ -2814,6 +2816,8 @@
         id: bundle.entry_id,
         type: bundle.input_type,
         summary: lower(bundle.summary || bundle.prompt_text || 'capture'),
+        description_text: lower(bundle.description_text || ''),
+        latest_comment_text: lower(bundle.latest_comment_text || ''),
         ai_analysis: lower(bundle.ai_analysis || bundle.ai_response || bundle.summary || bundle.prompt_text || 'capture'),
         image_asset: bundle.image_asset || null,
         prompt_text: bundle.prompt_text || '',

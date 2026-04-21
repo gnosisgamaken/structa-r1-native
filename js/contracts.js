@@ -57,6 +57,8 @@
       image_asset: input.image_asset || null,
       audio_asset: input.audio_asset || null,
       prompt_text: input.prompt_text || '',
+      description_text: input.description_text || '',
+      latest_comment_text: input.latest_comment_text || '',
       ai_response: input.ai_response || '',
       summary: input.summary || '',
       approval_state: input.approval_state || 'draft',

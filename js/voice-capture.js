@@ -592,43 +592,50 @@
       return window.StructaLLM.processVoice(payload.transcript || '', options).then(function(result) {
         if (payload.mode === 'question') {
           if (result && result.ok && result.clean) {
-            var createdInsight = window.StructaLLM.storeAsInsight(result, 'answer', {
+            var sourceRef = {
+              itemId: payload.answerNodeId || payload.questionNodeId || '',
               questionId: payload.questionNodeId || '',
               answerId: payload.answerNodeId || ''
-            });
-            var storedClaims = Array.isArray(createdInsight?.meta?.claim_ids) ? createdInsight.meta.claim_ids.slice() : [];
-            if (!storedClaims.length && Array.isArray(result.claims) && native?.ingestClaims) {
+            };
+            var storedClaims = [];
+            if (Array.isArray(result.claims) && native?.ingestClaims) {
               storedClaims = native.ingestClaims(result.claims, {
                 source: 'answer',
-                sourceRef: {
-                  itemId: createdInsight?.node_id || '',
-                  questionId: payload.questionNodeId || '',
-                  answerId: payload.answerNodeId || ''
-                },
+                sourceRef: sourceRef,
                 sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
               }).map(function(entry) { return entry.id; });
+            }
+            if (native?.saveDerivedCandidates) {
+              native.saveDerivedCandidates(deriveVoiceCandidates(result, payload.transcript || '', sourceRef), {
+                source: 'answer',
+                sourceRef: sourceRef
+              });
             }
             if (payload.answerNodeId && native?.enrichAnswerNode) {
               native.enrichAnswerNode(payload.answerNodeId, {
                 claims: storedClaims,
-                sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
+                sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null,
+                transformed_text: result.clean || '',
+                transformed_structured: result.structured || null
               });
             }
-            if (createdInsight?.node_id && payload.questionNodeId && native?.touchProjectMemory) {
+            if (payload.answerNodeId && payload.questionNodeId && native?.touchProjectMemory) {
               native.touchProjectMemory(function(project) {
                 var nodes = Array.isArray(project.nodes) ? project.nodes : [];
                 var questionNode = nodes.find(function(entry) { return entry.node_id === payload.questionNodeId; });
-                var insightNode = nodes.find(function(entry) { return entry.node_id === createdInsight.node_id; });
-                if (questionNode && insightNode) {
+                var answerNode = nodes.find(function(entry) { return entry.node_id === payload.answerNodeId; });
+                if (questionNode && answerNode) {
                   questionNode.links = Array.isArray(questionNode.links) ? questionNode.links : [];
-                  insightNode.links = Array.isArray(insightNode.links) ? insightNode.links : [];
-                  insightNode.meta = {
-                    ...(insightNode.meta || {}),
+                  answerNode.links = Array.isArray(answerNode.links) ? answerNode.links : [];
+                  answerNode.meta = {
+                    ...(answerNode.meta || {}),
                     question_node_id: payload.questionNodeId,
-                    answer_node_id: payload.answerNodeId || ''
+                    answer_node_id: payload.answerNodeId || '',
+                    transformed_text: result.clean || '',
+                    transformed_structured: result.structured || null
                   };
-                  if (questionNode.links.indexOf(insightNode.node_id) === -1) questionNode.links.push(insightNode.node_id);
-                  if (insightNode.links.indexOf(questionNode.node_id) === -1) insightNode.links.push(questionNode.node_id);
+                  if (questionNode.links.indexOf(answerNode.node_id) === -1) questionNode.links.push(answerNode.node_id);
+                  if (answerNode.links.indexOf(questionNode.node_id) === -1) answerNode.links.push(questionNode.node_id);
                 }
               });
             }
@@ -641,7 +648,7 @@
             native?.traceEvent?.('blocker', 'answered', 'insight-created', {
               jobId: job.id || '',
               nodeId: payload.questionNodeId || '',
-              insightId: createdInsight?.node_id || '',
+              insightId: payload.answerNodeId || '',
               clean: result.clean || ''
             });
             if (result.followUpQuestion && native?.addNode) {
@@ -952,18 +959,6 @@
       return;
     }
 
-    if (buildContext && buildContext.kind === 'capture-annotation') {
-      voiceTarget = null;
-      window.StructaCamera?.completePendingAnnotation?.(text);
-      if (text.length >= 3) {
-        window.StructaFeedback?.fire?.('resolve');
-        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-          detail: { source: 'capture-annotation' }
-        }));
-      }
-      return;
-    }
-
     if (buildContext && buildContext.kind === 'thread-comment') {
       voiceTarget = null;
       if (text.length < 3) return;
@@ -1060,30 +1055,6 @@
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
     }));
-
-    // Try to detect a decision and add it as pending
-    var decisionMatch = text.match(/^(?:we |i |let.s |i.ll |we.ve )?(decided|agreed|chose|will|plan to|going to|should)\b(.{5,80})/i);
-    if (decisionMatch) {
-      var decisionText = text.slice(0, 120).trim();
-      var decisionNorm = decisionText.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-      native?.touchProjectMemory?.(function(project) {
-        project.pending_decisions = Array.isArray(project.pending_decisions) ? project.pending_decisions : [];
-        // Fuzzy dedup: normalize and compare first 30 chars
-        var exists = project.pending_decisions.some(function(d) {
-          var existing = ((d.text || d) || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
-          return existing === decisionNorm || (existing.length > 20 && decisionNorm.length > 20 && (existing.startsWith(decisionNorm.slice(0, 30)) || decisionNorm.startsWith(existing.slice(0, 30))));
-        });
-        if (!exists) {
-          project.pending_decisions.unshift({
-            text: decisionText,
-            source: 'voice-direct',
-            insight_body: '',
-            created_at: new Date().toISOString()
-          });
-          project.pending_decisions = project.pending_decisions.slice(0, 8);
-        }
-      });
-    }
 
     // Try to detect a task and add to backlog
     var taskMatch = text.match(/^(?:need to|must|have to|gotta|remember to|don't forget to)\b(.{5,80})/i);

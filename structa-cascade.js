@@ -1329,34 +1329,6 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'structa-raw',
-      keyword: 'probe-structa-raw-an1',
-      label: 'probe structa raw',
-      prompt: 'debug keyword: probe-structa-raw-an1\nAnalyze this image.\nDescribe only visible objects.\nWrite one short sentence.'
-    },
-    {
-      id: 'magic-data',
-      keyword: 'probe-magic-data-an1',
-      label: 'probe magic data',
-      prompt: 'debug keyword: probe-magic-data-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
-      imageInputMode: 'dataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      omitWantsR1Response: true,
-      omitWantsJournalEntry: true
-    },
-    {
-      id: 'magic-data-r1',
-      keyword: 'probe-magic-data-r1-an1',
-      label: 'probe magic data+r1',
-      prompt: 'debug keyword: probe-magic-data-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
-      imageInputMode: 'dataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      wantsR1Response: true,
-      omitWantsJournalEntry: true
-    },
-    {
       id: 'magic-norm',
       keyword: 'probe-magic-norm-an1',
       label: 'probe magic norm',
@@ -1368,14 +1340,26 @@
       omitWantsJournalEntry: true
     },
     {
-      id: 'magic-norm-r1',
-      keyword: 'probe-magic-norm-r1-an1',
-      label: 'probe magic norm+r1',
-      prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-quiet',
+      keyword: 'probe-magic-norm-quiet-an1',
+      label: 'probe magic norm quiet',
+      prompt: 'debug keyword: probe-magic-norm-quiet-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
-      wantsR1Response: true,
+      wantsR1Response: false,
+      omitWantsJournalEntry: true
+    },
+    {
+      id: 'magic-norm-bare',
+      keyword: 'probe-magic-norm-bare-an1',
+      label: 'probe magic norm bare',
+      prompt: '',
+      imageInputMode: 'normalizedDataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitMessage: true,
+      omitUseLLM: true,
+      omitWantsR1Response: true,
       omitWantsJournalEntry: true
     }
   ];
@@ -1458,7 +1442,7 @@
       kind: 'action',
       actionId: 'image-probe-run-all',
       message: 'run image probes',
-      detail: 'structa · magic data · magic norm'
+      detail: 'magic norm · quiet · bare'
     });
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
       rows.push({
@@ -1497,6 +1481,7 @@
         imageInputMode: variant.imageInputMode || 'raw',
         pluginId: variant.pluginId || '',
         wantsR1Response: variant.wantsR1Response === true,
+        omitMessage: variant.omitMessage === true,
         omitUseLLM: variant.omitUseLLM === true,
         omitWantsR1Response: variant.omitWantsR1Response === true,
         omitWantsJournalEntry: variant.omitWantsJournalEntry === true

@@ -104,6 +104,56 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
+  function normalizeBridgeImageDataUrl(input) {
+    return new Promise(function(resolve) {
+      var source = String(input || '');
+      if (!source) {
+        resolve('');
+        return;
+      }
+      var dataUrl = /^data:image\//i.test(source) ? source : ('data:image/png;base64,' + source);
+      var image = new Image();
+      image.onload = function() {
+        var targetWidth = image.width;
+        var targetHeight = Math.round(targetWidth * 4 / 3);
+        if (image.height > targetHeight) {
+          targetHeight = image.height;
+          targetWidth = Math.round(targetHeight * 3 / 4);
+        }
+        if (targetWidth > 2048) {
+          var scaleDown = 2048 / targetWidth;
+          targetWidth = 2048;
+          targetHeight = Math.round(targetHeight * scaleDown);
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+        var scale = Math.min(targetWidth / Math.max(1, image.width), targetHeight / Math.max(1, image.height));
+        var drawWidth = Math.round(image.width * scale);
+        var drawHeight = Math.round(image.height * scale);
+        var offsetX = Math.floor((targetWidth - drawWidth) / 2);
+        var offsetY = Math.floor((targetHeight - drawHeight) / 2);
+        ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+        try {
+          resolve(canvas.toDataURL('image/jpeg', 0.92));
+        } catch (_) {
+          resolve(dataUrl);
+        }
+      };
+      image.onerror = function() {
+        resolve(dataUrl);
+      };
+      image.src = dataUrl;
+    });
+  }
+
   function lower(text) {
     return String(text || '').toLowerCase();
   }
@@ -498,9 +548,11 @@
     var timeoutMs = Number(opts.timeout || 30000);
     var expectResponse = opts.expectResponse !== false;
     var payload = {
-      message: String(prompt || '').trim() || 'Describe what you see in this image',
       imageBase64: imageBase64
     };
+    if (!opts.omitMessage) {
+      payload.message = String(prompt || '').trim() || 'Describe what you see in this image';
+    }
     if (!opts.omitUseLLM) payload.useLLM = opts.useLLM !== false;
     if (!opts.omitWantsR1Response) payload.wantsR1Response = opts.wantsR1Response === true;
     if (!opts.omitWantsJournalEntry) payload.wantsJournalEntry = opts.journal === true;
@@ -511,7 +563,7 @@
         name: 'image request',
         payload: {
           imageRunId: imageRunId,
-          message: compactText(payload.message, 140),
+          message: compactText(payload.message || '', 140),
           wantsR1Response: payload.wantsR1Response === true,
           journal: payload.wantsJournalEntry === true,
           timeoutMs: timeoutMs,
@@ -1406,41 +1458,6 @@
       facingMode: options.facingMode || '',
       promptContext: options.promptContext || ''
     });
-    var dataUrlImage = /^data:image\//i.test(String(imageBase64 || ''))
-      ? String(imageBase64 || '')
-      : ('data:image/png;base64,' + String(imageBase64 || ''));
-    var bridgeAttempts = [
-      {
-        label: 'structa-default',
-        image: imageBase64,
-        options: {
-          journal: false,
-          timeout: Number(options.timeout || 22000)
-        }
-      },
-      {
-        label: 'magic-plugin-dataurl',
-        image: dataUrlImage,
-        options: {
-          timeout: Number(options.timeout || 22000),
-          pluginId: 'com.r1.pixelart',
-          omitUseLLM: true,
-          omitWantsR1Response: true,
-          omitWantsJournalEntry: true
-        }
-      },
-      {
-        label: 'magic-plugin-dataurl-r1',
-        image: dataUrlImage,
-        options: {
-          timeout: Number(options.timeout || 22000),
-          pluginId: 'com.r1.pixelart',
-          omitUseLLM: true,
-          wantsR1Response: true,
-          omitWantsJournalEntry: true
-        }
-      }
-    ];
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
@@ -1456,29 +1473,70 @@
         timeoutMs: Number(options.timeout || 22000),
         itemId: options.itemId || ''
       });
-      function runAttempt(index) {
-        var attempt = bridgeAttempts[index];
-        native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
-          captureId: captureId || '',
-          itemId: options.itemId || '',
-          index: index + 1,
-          total: bridgeAttempts.length
-        });
-        return sendBridgeImage(attempt.image, prompt, attempt.options).then(function(result) {
-          if ((!result || !result.ok || !result.clean) && index < bridgeAttempts.length - 1) {
-            native?.traceEvent?.('image.truth', 'fallback', attempt.label, {
-              captureId: captureId || '',
-              itemId: options.itemId || '',
-              code: result?.code || '',
-              error: result?.error || ''
-            });
-            return runAttempt(index + 1);
+      return normalizeBridgeImageDataUrl(imageBase64).then(function(normalizedImage) {
+        var bridgeAttempts = [
+          {
+            label: 'magic-norm',
+            image: normalizedImage,
+            prompt: prompt,
+            options: {
+              timeout: Number(options.timeout || 22000),
+              pluginId: 'com.r1.pixelart',
+              omitUseLLM: true,
+              omitWantsR1Response: true,
+              omitWantsJournalEntry: true
+            }
+          },
+          {
+            label: 'magic-norm-quiet',
+            image: normalizedImage,
+            prompt: prompt,
+            options: {
+              timeout: Number(options.timeout || 22000),
+              pluginId: 'com.r1.pixelart',
+              omitUseLLM: true,
+              wantsR1Response: false,
+              omitWantsJournalEntry: true
+            }
+          },
+          {
+            label: 'magic-norm-bare',
+            image: normalizedImage,
+            prompt: '',
+            options: {
+              timeout: Number(options.timeout || 22000),
+              pluginId: 'com.r1.pixelart',
+              omitMessage: true,
+              omitUseLLM: true,
+              omitWantsR1Response: true,
+              omitWantsJournalEntry: true
+            }
           }
-          if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
-          return result;
-        });
-      }
-      return runAttempt(0).then(function(result) {
+        ];
+        function runAttempt(index) {
+          var attempt = bridgeAttempts[index];
+          native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
+            captureId: captureId || '',
+            itemId: options.itemId || '',
+            index: index + 1,
+            total: bridgeAttempts.length
+          });
+          return sendBridgeImage(attempt.image, attempt.prompt, attempt.options).then(function(result) {
+            if ((!result || !result.ok || !result.clean) && index < bridgeAttempts.length - 1) {
+              native?.traceEvent?.('image.truth', 'fallback', attempt.label, {
+                captureId: captureId || '',
+                itemId: options.itemId || '',
+                code: result?.code || '',
+                error: result?.error || ''
+              });
+              return runAttempt(index + 1);
+            }
+            if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
+            return result;
+          });
+        }
+        return runAttempt(0);
+      }).then(function(result) {
         if (!result || !result.ok || !result.clean) {
           native?.recordProductEvent?.('description unavailable', {
             captureId: captureId || '',
@@ -1568,6 +1626,7 @@
         pluginId: options.pluginId || '',
         useLLM: options.useLLM,
         wantsR1Response: options.wantsR1Response === true,
+        omitMessage: options.omitMessage === true,
         omitUseLLM: options.omitUseLLM === true,
         omitWantsR1Response: options.omitWantsR1Response === true,
         omitWantsJournalEntry: options.omitWantsJournalEntry === true

@@ -655,6 +655,145 @@
     });
   }
 
+  function sendR1CoverSpeech(message, options) {
+    var text = String(message || '').trim();
+    if (!text || typeof PluginMessageHandler === 'undefined') {
+      return Promise.resolve({ ok: false, error: 'cover unavailable', code: 'cover-unavailable' });
+    }
+    var opts = options || {};
+    return Promise.resolve().then(function() {
+      PluginMessageHandler.postMessage(JSON.stringify({
+        message: text,
+        useLLM: false,
+        wantsR1Response: true,
+        wantsJournalEntry: false
+      }));
+      native?.traceEvent?.('image.cover', 'posted', compactText(text, 16), {
+        delayMs: Number(opts.delay || 0)
+      });
+      return { ok: true, posted: true, text: text };
+    }).catch(function(error) {
+      return {
+        ok: false,
+        error: error?.message || 'cover failed',
+        code: 'cover-post-failed'
+      };
+    });
+  }
+
+  function listenForNativeSpeechResult(options) {
+    var opts = options || {};
+    if (typeof CreationVoiceHandler === 'undefined') {
+      return Promise.resolve({
+        ok: false,
+        error: 'native stt unavailable',
+        code: 'listenback-unavailable'
+      });
+    }
+    var warmupMs = Number(opts.warmupMs || 120);
+    var stopAfterMs = Number(opts.stopAfterMs || 5200);
+    var timeoutMs = Number(opts.timeoutMs || 7000);
+    return new Promise(function(resolve) {
+      var settled = false;
+      var timeoutHandle = null;
+      var stopHandle = null;
+
+      function cleanup() {
+        window.removeEventListener('structa-stt-ended', handleEnded);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (stopHandle) clearTimeout(stopHandle);
+        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
+      }
+
+      function finish(result) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      }
+
+      function handleEnded(event) {
+        var transcript = String(event?.detail?.transcript || '').trim();
+        if (!transcript) return;
+        var clean = sanitizeResponse(transcript);
+        finish({
+          ok: true,
+          text: transcript,
+          clean: clean || transcript,
+          raw: transcript,
+          mode: 'listenback'
+        });
+      }
+
+      window.addEventListener('structa-stt-ended', handleEnded);
+      try {
+        CreationVoiceHandler.postMessage('start');
+      } catch (error) {
+        finish({
+          ok: false,
+          error: error?.message || 'native stt start failed',
+          code: 'listenback-start-failed'
+        });
+        return;
+      }
+
+      stopHandle = setTimeout(function() {
+        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
+      }, warmupMs + stopAfterMs);
+      timeoutHandle = setTimeout(function() {
+        finish({
+          ok: false,
+          error: 'native stt timeout',
+          code: 'listenback-timeout'
+        });
+      }, timeoutMs);
+    });
+  }
+
+  function sendBridgeImageWithListenback(imageBase64, prompt, options) {
+    var opts = options || {};
+    var warmupMs = Number(opts.listenbackWarmupMs || 120);
+    var listenPromise = listenForNativeSpeechResult({
+      warmupMs: warmupMs,
+      stopAfterMs: Number(opts.listenbackStopAfterMs || 5200),
+      timeoutMs: Number(opts.listenbackTimeoutMs || 7000)
+    });
+    return new Promise(function(resolve) {
+      setTimeout(function() {
+        sendBridgeImage(imageBase64, prompt, Object.assign({}, opts, {
+          expectResponse: false
+        })).then(function(postResult) {
+          if (!postResult || !postResult.ok) {
+            resolve(postResult || {
+              ok: false,
+              error: 'listenback post failed',
+              code: 'listenback-post-failed'
+            });
+            return;
+          }
+          listenPromise.then(function(listenResult) {
+            if (!listenResult || !listenResult.ok || !listenResult.clean) {
+              resolve(listenResult || {
+                ok: false,
+                error: 'listenback failed',
+                code: 'listenback-failed'
+              });
+              return;
+            }
+            resolve({
+              ok: true,
+              text: listenResult.text,
+              clean: listenResult.clean,
+              raw: listenResult.raw,
+              mode: 'listenback',
+              posted: true
+            });
+          });
+        });
+      }, warmupMs);
+    });
+  }
+
   function processQueue() {
     if (activeRequest || !requestQueue.length || dispatchTimer) return;
 
@@ -1187,8 +1326,8 @@
     var intent = compactText(options?.voiceAnnotation || '', 96);
     var lines = [
       'Analyze this image for the current project.',
-      'Describe only visible facts relevant to the project context.',
-      'Write 2 to 4 short sentences in plain prose.',
+      'Visible facts only.',
+      'One short sentence.',
       'project: ' + projectName,
       'context: ' + context,
       'intent: ' + (intent || 'none')
@@ -1480,33 +1619,8 @@
             image: normalizedImage,
             prompt: prompt + '\nReturn text only. Do not speak aloud.',
             options: {
-              timeout: Number(options.timeout || 22000),
+              timeout: Number(options.timeout || 9000),
               pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              wantsR1Response: true,
-              omitWantsJournalEntry: true
-            }
-          },
-          {
-            label: 'magic-norm-r1',
-            image: normalizedImage,
-            prompt: prompt,
-            options: {
-              timeout: Number(options.timeout || 22000),
-              pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              wantsR1Response: true,
-              omitWantsJournalEntry: true
-            }
-          },
-          {
-            label: 'magic-norm-r1-bare',
-            image: normalizedImage,
-            prompt: '',
-            options: {
-              timeout: Number(options.timeout || 22000),
-              pluginId: 'com.r1.pixelart',
-              omitMessage: true,
               omitUseLLM: true,
               wantsR1Response: true,
               omitWantsJournalEntry: true
@@ -1620,17 +1734,64 @@
       source: 'image-probe',
       reason: 'image prompt probes stay quiet'
     }, function() {
-      return sendBridgeImage(imageInput, String(prompt || '').trim(), {
-        journal: false,
-        timeout: timeoutMs,
-        pluginId: options.pluginId || '',
-        useLLM: options.useLLM,
-        wantsR1Response: options.wantsR1Response === true,
-        omitMessage: options.omitMessage === true,
-        omitUseLLM: options.omitUseLLM === true,
-        omitWantsR1Response: options.omitWantsR1Response === true,
-        omitWantsJournalEntry: options.omitWantsJournalEntry === true
-      }).then(function(result) {
+      var bridgeCall;
+      if (options.listenback === true) {
+        bridgeCall = sendBridgeImageWithListenback(imageInput, String(prompt || '').trim(), {
+          journal: options.journal === true,
+          timeout: timeoutMs,
+          pluginId: options.pluginId || '',
+          useLLM: options.useLLM,
+          wantsR1Response: options.wantsR1Response === true,
+          omitMessage: options.omitMessage === true,
+          omitUseLLM: options.omitUseLLM === true,
+          omitWantsR1Response: options.omitWantsR1Response === true,
+          omitWantsJournalEntry: options.omitWantsJournalEntry === true,
+          listenbackWarmupMs: options.listenbackWarmupMs || 120,
+          listenbackStopAfterMs: options.listenbackStopAfterMs || 5200,
+          listenbackTimeoutMs: options.listenbackTimeoutMs || 7000
+        });
+      } else {
+        bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
+          journal: options.journal === true,
+          timeout: timeoutMs,
+          expectResponse: options.expectResponse !== false,
+          pluginId: options.pluginId || '',
+          useLLM: options.useLLM,
+          wantsR1Response: options.wantsR1Response === true,
+          omitMessage: options.omitMessage === true,
+          omitUseLLM: options.omitUseLLM === true,
+          omitWantsR1Response: options.omitWantsR1Response === true,
+          omitWantsJournalEntry: options.omitWantsJournalEntry === true
+        }).then(function(result) {
+          if (options.coverText && result && result.ok) {
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                sendR1CoverSpeech(options.coverText, { delay: options.coverDelayMs || 260 }).finally(function() {
+                  resolve(Object.assign({}, result, { mode: 'cover' }));
+                });
+              }, Number(options.coverDelayMs || 260));
+            });
+          }
+          return result;
+        });
+      }
+      return bridgeCall.then(function(result) {
+        if (options.expectResponse === false && result && result.ok && !result.clean) {
+          native?.appendLogEntry?.({
+            kind: 'product',
+            message: lower((options.label || 'image harness') + ' posted'),
+            linked_capture_id: options.captureId || null,
+            meta: {
+              keyword: options.keyword || '',
+              mode: result.mode || 'posted'
+            }
+          });
+          return {
+            ok: true,
+            posted: true,
+            mode: result.mode || 'posted'
+          };
+        }
         if (!result || !result.ok || !result.clean) {
           native?.appendLogEntry?.({
             kind: 'product',

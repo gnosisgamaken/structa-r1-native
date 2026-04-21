@@ -1331,7 +1331,7 @@
     {
       id: 'magic-norm-r1',
       keyword: 'probe-magic-norm-r1-an1',
-      label: 'probe magic norm+r1',
+      label: 'img r1',
       prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
@@ -1340,27 +1340,46 @@
       omitWantsJournalEntry: true
     },
     {
-      id: 'magic-norm-r1-guarded',
-      keyword: 'probe-magic-norm-r1-guarded-an1',
-      label: 'probe magic norm+r1 guarded',
-      prompt: 'debug keyword: probe-magic-norm-r1-guarded-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only. Do not speak aloud.',
+      id: 'magic-norm-r1-loop',
+      keyword: 'probe-magic-norm-r1-loop-an1',
+      label: 'img loop',
+      prompt: 'debug keyword: probe-magic-norm-r1-loop-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       wantsR1Response: true,
-      omitWantsJournalEntry: true
+      omitWantsJournalEntry: true,
+      listenback: true,
+      expectResponse: false,
+      listenbackWarmupMs: 120,
+      listenbackStopAfterMs: 5600,
+      listenbackTimeoutMs: 7600
     },
     {
-      id: 'magic-norm-r1-bare',
-      keyword: 'probe-magic-norm-r1-bare-an1',
-      label: 'probe magic norm+r1 bare',
-      prompt: '',
+      id: 'magic-norm-r1-hush',
+      keyword: 'probe-magic-norm-r1-hush-an1',
+      label: 'img hush',
+      prompt: 'debug keyword: probe-magic-norm-r1-hush-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
-      omitMessage: true,
       omitUseLLM: true,
       wantsR1Response: true,
-      omitWantsJournalEntry: true
+      omitWantsJournalEntry: true,
+      expectResponse: false,
+      coverText: 'hm',
+      coverDelayMs: 260
+    },
+    {
+      id: 'magic-norm-journal',
+      keyword: 'probe-magic-norm-journal-an1',
+      label: 'img journal',
+      prompt: 'debug keyword: probe-magic-norm-journal-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'normalizedDataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      omitWantsR1Response: true,
+      journal: true,
+      expectResponse: false
     }
   ];
 
@@ -1438,18 +1457,19 @@
       });
       return rows;
     }
-    rows.push({
-      kind: 'action',
-      actionId: 'image-probe-run-all',
-      message: 'run image probes',
-      detail: 'norm+r1 · guarded · bare'
-    });
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
+      const shortDetail = variant.id === 'magic-norm-r1'
+        ? 'speak'
+        : variant.id === 'magic-norm-r1-loop'
+          ? 'listenback'
+          : variant.id === 'magic-norm-r1-hush'
+            ? 'cover hm'
+            : 'journal';
       rows.push({
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
         message: variant.label,
-        detail: variant.keyword
+        detail: shortDetail
       });
     });
     return rows;
@@ -1466,10 +1486,6 @@
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
       return Promise.resolve({ ok: false, error: 'image probe unavailable' });
     }
-    native?.recordProductEvent?.('description requested', {
-      captureId: probeCapture.captureId,
-      detail: variant.keyword
-    });
     const imagePromise = variant.imageInputMode === 'normalizedDataUrl'
       ? normalizeProbeImageHref(probeCapture.imageHref)
       : Promise.resolve(probeCapture.imageBase64);
@@ -1480,7 +1496,15 @@
         label: variant.label,
         imageInputMode: variant.imageInputMode || 'raw',
         pluginId: variant.pluginId || '',
+        journal: variant.journal === true,
         wantsR1Response: variant.wantsR1Response === true,
+        expectResponse: variant.expectResponse !== false,
+        listenback: variant.listenback === true,
+        listenbackWarmupMs: variant.listenbackWarmupMs || 120,
+        listenbackStopAfterMs: variant.listenbackStopAfterMs || 5200,
+        listenbackTimeoutMs: variant.listenbackTimeoutMs || 7000,
+        coverText: variant.coverText || '',
+        coverDelayMs: variant.coverDelayMs || 260,
         omitMessage: variant.omitMessage === true,
         omitUseLLM: variant.omitUseLLM === true,
         omitWantsR1Response: variant.omitWantsR1Response === true,
@@ -1506,7 +1530,6 @@
     if (actionId === 'image-probe-missing') {
       return Promise.resolve({ ok: false, error: 'capture a frame first' });
     }
-    if (actionId === 'image-probe-run-all') return runAllImageProbeVariants();
     if (actionId.indexOf('image-probe-') === 0) return runImageProbeVariant(actionId.replace('image-probe-', ''));
     return Promise.resolve({ ok: false, error: 'unknown drawer action' });
   }

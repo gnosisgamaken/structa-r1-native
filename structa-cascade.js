@@ -1252,7 +1252,7 @@
   }
 
   function refreshLogFromMemory(options = {}) {
-    const limit = logOpen ? 33 : 5;
+    const limit = logOpen ? 12 : 5;
     const previousScroll = log.scrollTop;
     const previousBottomOffset = Math.max(0, log.scrollHeight - (log.scrollTop + log.clientHeight));
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
@@ -1331,55 +1331,56 @@
     {
       id: 'magic-norm-r1',
       keyword: 'probe-magic-norm-r1-an1',
-      label: 'img r1',
+      label: 'img speak',
       prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       wantsR1Response: true,
-      omitWantsJournalEntry: true
+      omitWantsJournalEntry: true,
+      expectResponse: false
     },
     {
-      id: 'magic-norm-r1-loop',
-      keyword: 'probe-magic-norm-r1-loop-an1',
-      label: 'img loop',
-      prompt: 'debug keyword: probe-magic-norm-r1-loop-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-silent',
+      keyword: 'probe-magic-norm-silent-an1',
+      label: 'img silent',
+      prompt: 'debug keyword: probe-magic-norm-silent-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
-      wantsR1Response: true,
+      wantsR1Response: false,
       omitWantsJournalEntry: true,
-      listenback: true,
-      expectResponse: false,
-      listenbackWarmupMs: 120,
-      listenbackStopAfterMs: 5600,
-      listenbackTimeoutMs: 7600
+      expectResponse: true
     },
     {
-      id: 'magic-norm-r1-hush',
-      keyword: 'probe-magic-norm-r1-hush-an1',
-      label: 'img hush',
-      prompt: 'debug keyword: probe-magic-norm-r1-hush-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
-      imageInputMode: 'normalizedDataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      wantsR1Response: true,
-      omitWantsJournalEntry: true,
-      expectResponse: false,
-      coverText: 'hm',
-      coverDelayMs: 260
-    },
-    {
-      id: 'magic-norm-journal',
-      keyword: 'probe-magic-norm-journal-an1',
-      label: 'img journal',
-      prompt: 'debug keyword: probe-magic-norm-journal-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-omit-r1',
+      keyword: 'probe-magic-norm-omit-r1-an1',
+      label: 'img omit',
+      prompt: 'debug keyword: probe-magic-norm-omit-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       omitWantsR1Response: true,
-      journal: true,
-      expectResponse: false
+      omitWantsJournalEntry: true,
+      expectResponse: true
+    },
+    {
+      id: 'magic-norm-r1-reclaim',
+      keyword: 'probe-magic-norm-r1-reclaim-an1',
+      label: 'img reclaim',
+      prompt: 'debug keyword: probe-magic-norm-r1-reclaim-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'normalizedDataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      wantsR1Response: true,
+      omitWantsJournalEntry: true,
+      expectResponse: false,
+      listenback: true,
+      listenbackPostFirst: true,
+      listenbackStartDelayMs: 320,
+      listenbackWarmupMs: 0,
+      listenbackStopAfterMs: 6800,
+      listenbackTimeoutMs: 9400
     }
   ];
 
@@ -1459,12 +1460,12 @@
     }
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
       const shortDetail = variant.id === 'magic-norm-r1'
-        ? 'speak'
-        : variant.id === 'magic-norm-r1-loop'
-          ? 'listenback'
-          : variant.id === 'magic-norm-r1-hush'
-            ? 'cover hm'
-            : 'journal';
+        ? 'baseline speak'
+        : variant.id === 'magic-norm-silent'
+          ? 'silent callback'
+          : variant.id === 'magic-norm-omit-r1'
+            ? 'omit r1 flag'
+            : 'delayed reclaim';
       rows.push({
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
@@ -1500,6 +1501,8 @@
         wantsR1Response: variant.wantsR1Response === true,
         expectResponse: variant.expectResponse !== false,
         listenback: variant.listenback === true,
+        listenbackPostFirst: variant.listenbackPostFirst === true,
+        listenbackStartDelayMs: variant.listenbackStartDelayMs || 320,
         listenbackWarmupMs: variant.listenbackWarmupMs || 120,
         listenbackStopAfterMs: variant.listenbackStopAfterMs || 5200,
         listenbackTimeoutMs: variant.listenbackTimeoutMs || 7000,
@@ -1514,16 +1517,6 @@
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
       return result;
     });
-  }
-
-  function runAllImageProbeVariants() {
-    return IMAGE_PROBE_VARIANTS.reduce(function(chain, variant) {
-      return chain.then(function() {
-        return runImageProbeVariant(variant.id);
-      }).then(function() {
-        return new Promise(function(resolve) { setTimeout(resolve, 320); });
-      });
-    }, Promise.resolve());
   }
 
   function handleDrawerAction(actionId) {

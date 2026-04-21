@@ -753,10 +753,58 @@
   function sendBridgeImageWithListenback(imageBase64, prompt, options) {
     var opts = options || {};
     var warmupMs = Number(opts.listenbackWarmupMs || 120);
+    var stopAfterMs = Number(opts.listenbackStopAfterMs || 5200);
+    var timeoutMs = Number(opts.listenbackTimeoutMs || 7000);
+    var listenbackPostFirst = opts.listenbackPostFirst === true;
+    var listenbackStartDelayMs = Number(opts.listenbackStartDelayMs || 320);
+
+    function normalizeListenResult(listenResult) {
+      if (!listenResult || !listenResult.ok || !listenResult.clean) {
+        return listenResult || {
+          ok: false,
+          error: 'listenback failed',
+          code: 'listenback-failed'
+        };
+      }
+      return {
+        ok: true,
+        text: listenResult.text,
+        clean: listenResult.clean,
+        raw: listenResult.raw,
+        mode: 'listenback',
+        posted: true
+      };
+    }
+
+    if (listenbackPostFirst) {
+      return sendBridgeImage(imageBase64, prompt, Object.assign({}, opts, {
+        expectResponse: false
+      })).then(function(postResult) {
+        if (!postResult || !postResult.ok) {
+          return postResult || {
+            ok: false,
+            error: 'listenback post failed',
+            code: 'listenback-post-failed'
+          };
+        }
+        return new Promise(function(resolve) {
+          setTimeout(function() {
+            listenForNativeSpeechResult({
+              warmupMs: warmupMs,
+              stopAfterMs: stopAfterMs,
+              timeoutMs: timeoutMs
+            }).then(function(listenResult) {
+              resolve(normalizeListenResult(listenResult));
+            });
+          }, listenbackStartDelayMs);
+        });
+      });
+    }
+
     var listenPromise = listenForNativeSpeechResult({
       warmupMs: warmupMs,
-      stopAfterMs: Number(opts.listenbackStopAfterMs || 5200),
-      timeoutMs: Number(opts.listenbackTimeoutMs || 7000)
+      stopAfterMs: stopAfterMs,
+      timeoutMs: timeoutMs
     });
     return new Promise(function(resolve) {
       setTimeout(function() {
@@ -772,22 +820,7 @@
             return;
           }
           listenPromise.then(function(listenResult) {
-            if (!listenResult || !listenResult.ok || !listenResult.clean) {
-              resolve(listenResult || {
-                ok: false,
-                error: 'listenback failed',
-                code: 'listenback-failed'
-              });
-              return;
-            }
-            resolve({
-              ok: true,
-              text: listenResult.text,
-              clean: listenResult.clean,
-              raw: listenResult.raw,
-              mode: 'listenback',
-              posted: true
-            });
+            resolve(normalizeListenResult(listenResult));
           });
         });
       }, warmupMs);
@@ -1321,16 +1354,11 @@
   }
 
   function buildBridgeImagePrompt(projectEnvelope, description, options) {
-    var projectName = compactText(projectEnvelope?.name || 'untitled project', 64);
-    var context = compactText(description || options?.imageRef || options?.imageId || 'camera frame', 96);
-    var intent = compactText(options?.voiceAnnotation || '', 96);
     var lines = [
-      'Analyze this image for the current project.',
+      'Analyze this image.',
       'Visible facts only.',
       'One short sentence.',
-      'project: ' + projectName,
-      'context: ' + context,
-      'intent: ' + (intent || 'none')
+      'Return text only.'
     ];
     return lines.join('\n');
   }
@@ -1615,14 +1643,26 @@
       return normalizeBridgeImageDataUrl(imageBase64).then(function(normalizedImage) {
         var bridgeAttempts = [
           {
-            label: 'magic-norm-r1-guarded',
+            label: 'magic-norm-silent',
             image: normalizedImage,
-            prompt: prompt + '\nReturn text only. Do not speak aloud.',
+            prompt: prompt,
             options: {
               timeout: Number(options.timeout || 9000),
               pluginId: 'com.r1.pixelart',
               omitUseLLM: true,
-              wantsR1Response: true,
+              wantsR1Response: false,
+              omitWantsJournalEntry: true
+            }
+          },
+          {
+            label: 'magic-norm-omit-r1',
+            image: normalizedImage,
+            prompt: prompt,
+            options: {
+              timeout: Number(options.timeout || 9000),
+              pluginId: 'com.r1.pixelart',
+              omitUseLLM: true,
+              omitWantsR1Response: true,
               omitWantsJournalEntry: true
             }
           }
@@ -1654,7 +1694,7 @@
         if (!result || !result.ok || !result.clean) {
           native?.recordProductEvent?.('description unavailable', {
             captureId: captureId || '',
-            detail: compactText(result?.code || result?.error || 'bridge timeout', 6)
+            detail: compactText(result?.bridgeStrategy || result?.code || result?.error || 'bridge timeout', 10)
           });
           native?.traceEvent?.('image.truth', 'missing', 'bridge', {
             captureId: captureId || '',
@@ -1746,6 +1786,8 @@
           omitUseLLM: options.omitUseLLM === true,
           omitWantsR1Response: options.omitWantsR1Response === true,
           omitWantsJournalEntry: options.omitWantsJournalEntry === true,
+          listenbackPostFirst: options.listenbackPostFirst === true,
+          listenbackStartDelayMs: options.listenbackStartDelayMs || 320,
           listenbackWarmupMs: options.listenbackWarmupMs || 120,
           listenbackStopAfterMs: options.listenbackStopAfterMs || 5200,
           listenbackTimeoutMs: options.listenbackTimeoutMs || 7000

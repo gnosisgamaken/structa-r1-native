@@ -1633,7 +1633,7 @@
     }, function() {
       native?.recordProductEvent?.('description requested', {
         captureId: captureId || '',
-        detail: 'timeout ' + Number(options.timeout || 22000) + 'ms'
+        detail: 'silent -> omit -> reclaim'
       });
       native?.traceEvent?.('image.truth', 'requested', 'bridge', {
         captureId: captureId || '',
@@ -1665,6 +1665,25 @@
               omitWantsR1Response: true,
               omitWantsJournalEntry: true
             }
+          },
+          {
+            label: 'magic-norm-r1-reclaim',
+            image: normalizedImage,
+            prompt: prompt,
+            options: {
+              timeout: Number(options.timeout || 9000),
+              pluginId: 'com.r1.pixelart',
+              omitUseLLM: true,
+              wantsR1Response: true,
+              omitWantsJournalEntry: true,
+              expectResponse: false,
+              listenback: true,
+              listenbackPostFirst: true,
+              listenbackStartDelayMs: 320,
+              listenbackWarmupMs: 0,
+              listenbackStopAfterMs: 6800,
+              listenbackTimeoutMs: 9400
+            }
           }
         ];
         function runAttempt(index) {
@@ -1675,7 +1694,10 @@
             index: index + 1,
             total: bridgeAttempts.length
           });
-          return sendBridgeImage(attempt.image, attempt.prompt, attempt.options).then(function(result) {
+          var runner = attempt.options.listenback === true
+            ? sendBridgeImageWithListenback
+            : sendBridgeImage;
+          return runner(attempt.image, attempt.prompt, attempt.options).then(function(result) {
             if ((!result || !result.ok || !result.clean) && index < bridgeAttempts.length - 1) {
               native?.traceEvent?.('image.truth', 'fallback', attempt.label, {
                 captureId: captureId || '',

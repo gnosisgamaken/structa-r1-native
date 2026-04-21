@@ -1329,18 +1329,6 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'magic-norm-r1',
-      keyword: 'probe-magic-norm-r1-an1',
-      label: 'img speak',
-      prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
-      imageInputMode: 'normalizedDataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      wantsR1Response: true,
-      omitWantsJournalEntry: true,
-      expectResponse: false
-    },
-    {
       id: 'magic-norm-silent',
       keyword: 'probe-magic-norm-silent-an1',
       label: 'img silent',
@@ -1459,13 +1447,11 @@
       return rows;
     }
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
-      const shortDetail = variant.id === 'magic-norm-r1'
-        ? 'baseline speak'
-        : variant.id === 'magic-norm-silent'
-          ? 'silent callback'
-          : variant.id === 'magic-norm-omit-r1'
-            ? 'omit r1 flag'
-            : 'delayed reclaim';
+      const shortDetail = variant.id === 'magic-norm-silent'
+        ? 'silent callback'
+        : variant.id === 'magic-norm-omit-r1'
+          ? 'omit r1 flag'
+          : 'delayed reclaim';
       rows.push({
         kind: 'action',
         actionId: 'image-probe-' + variant.id,

@@ -401,6 +401,42 @@
     });
   }
 
+  function applyProbeDescription(entryId, nodeId, text, meta) {
+    const clean = String(text || '').trim();
+    if (!clean) return false;
+    const project = native?.getProjectMemory?.() || {};
+    const refs = findCaptureRefs(project, entryId, nodeId);
+    const previewData = capturePreviewData(refs.capture) || refs.node?.meta?.preview_data || '';
+    if (!refs.capture && !refs.node) return false;
+    applyAnalysisReady({
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      previewData: previewData,
+      annotation: '',
+      operationId: refs.capture?.meta?.operation_id || refs.node?.meta?.operation_id || '',
+      facingMode: refs.capture?.meta?.facingMode || 'environment'
+    }, {
+      ok: true,
+      text: clean,
+      clean: clean,
+      raw: String(meta?.raw || ''),
+      claims: [],
+      claim_extraction_pending: false
+    }, {
+      claimIds: [],
+      commentId: '',
+      countIncrement: 0
+    });
+    native?.traceEvent?.('image.probe', 'apply', 'capture', {
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      source: meta?.source || 'probe',
+      text: clean.slice(0, 160)
+    });
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return true;
+  }
+
   function skipBlockedAnalysis(entryId, nodeId) {
     if (!entryId && !nodeId) return false;
     const payload = {
@@ -1203,6 +1239,7 @@
     pendingAnalysisCount,
     scheduleAnalysisDrain,
     skipBlockedAnalysis,
+    applyProbeDescription,
     getPendingAnnotation: function() { return null; },
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },

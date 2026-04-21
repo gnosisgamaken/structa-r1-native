@@ -1633,7 +1633,7 @@
     }, function() {
       native?.recordProductEvent?.('description requested', {
         captureId: captureId || '',
-        detail: 'silent -> omit -> reclaim'
+        detail: 'silent default'
       });
       native?.traceEvent?.('image.truth', 'requested', 'bridge', {
         captureId: captureId || '',
@@ -1641,77 +1641,28 @@
         itemId: options.itemId || ''
       });
       return normalizeBridgeImageDataUrl(imageBase64).then(function(normalizedImage) {
-        var bridgeAttempts = [
-          {
-            label: 'magic-norm-silent',
-            image: normalizedImage,
-            prompt: prompt,
-            options: {
-              timeout: Number(options.timeout || 9000),
-              pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              wantsR1Response: false,
-              omitWantsJournalEntry: true
-            }
-          },
-          {
-            label: 'magic-norm-omit-r1',
-            image: normalizedImage,
-            prompt: prompt,
-            options: {
-              timeout: Number(options.timeout || 9000),
-              pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              omitWantsR1Response: true,
-              omitWantsJournalEntry: true
-            }
-          },
-          {
-            label: 'magic-norm-r1-reclaim',
-            image: normalizedImage,
-            prompt: prompt,
-            options: {
-              timeout: Number(options.timeout || 9000),
-              pluginId: 'com.r1.pixelart',
-              omitUseLLM: true,
-              wantsR1Response: true,
-              omitWantsJournalEntry: true,
-              expectResponse: false,
-              listenback: true,
-              listenbackPostFirst: true,
-              listenbackStartDelayMs: 320,
-              listenbackWarmupMs: 0,
-              listenbackStopAfterMs: 6800,
-              listenbackTimeoutMs: 9400
-            }
+        var attempt = {
+          label: 'magic-norm-silent',
+          image: normalizedImage,
+          prompt: prompt,
+          options: {
+            timeout: Number(options.timeout || 16000),
+            pluginId: 'com.r1.pixelart',
+            omitUseLLM: true,
+            wantsR1Response: false,
+            omitWantsJournalEntry: true
           }
-        ];
-        function runAttempt(index) {
-          var attempt = bridgeAttempts[index];
-          native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
-            captureId: captureId || '',
-            itemId: options.itemId || '',
-            index: index + 1,
-            total: bridgeAttempts.length
-          });
-          var runner = attempt.options.listenback === true
-            ? sendBridgeImageWithListenback
-            : sendBridgeImage;
-          return runner(attempt.image, attempt.prompt, attempt.options).then(function(result) {
-            if ((!result || !result.ok || !result.clean) && index < bridgeAttempts.length - 1) {
-              native?.traceEvent?.('image.truth', 'fallback', attempt.label, {
-                captureId: captureId || '',
-                itemId: options.itemId || '',
-                code: result?.code || '',
-                error: result?.error || ''
-              });
-              return runAttempt(index + 1);
-            }
-            if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
-            return result;
-          });
-        }
-        return runAttempt(0);
+        };
+        native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
+          captureId: captureId || '',
+          itemId: options.itemId || '',
+          index: 1,
+          total: 1
+        });
+        return sendBridgeImage(attempt.image, attempt.prompt, attempt.options).then(function(result) {
+          if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
+          return result;
+        });
       }).then(function(result) {
         if (!result || !result.ok || !result.clean) {
           native?.recordProductEvent?.('description unavailable', {

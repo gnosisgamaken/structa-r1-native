@@ -1500,6 +1500,19 @@
         omitWantsJournalEntry: variant.omitWantsJournalEntry === true
       });
     }).then(function(result) {
+      if (result && result.ok && result.clean) {
+        try {
+          window.StructaCamera?.applyProbeDescription?.(
+            probeCapture.captureId,
+            probeCapture.capture?.node_id || '',
+            result.clean,
+            {
+              source: variant.id,
+              raw: result.raw || ''
+            }
+          );
+        } catch (_) {}
+      }
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
       return result;
     });

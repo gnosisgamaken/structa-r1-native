@@ -722,7 +722,7 @@
     }
     if (status === 'unavailable') {
       const fallback = String(capture?.summary || capture?.prompt_text || capture?.voice_annotation || 'frame saved');
-      return lower('unanalyzed · ' + fallback);
+      return lower('description unavailable · ' + fallback);
     }
     const raw = String(capture?.ai_analysis || capture?.ai_response || capture?.summary || capture?.prompt_text || 'untitled capture');
     const signalMatch = raw.match(/signal:\s*(.+)/i);
@@ -739,7 +739,7 @@
     if (stage === 'queued' || stage === 'analyzing') return 'describing image...';
     if (stage === 'extracting claims') return 'extracting claims';
     if (stage === 'saved') return 'hold ptt to describe';
-    if (stage === 'blocked' || lower(meta.analysis_status || '') === 'unavailable') return 'image description unavailable';
+    if (stage === 'blocked' || lower(meta.analysis_status || '') === 'unavailable') return 'description unavailable';
     if (lower(meta.analysis_status || '') === 'pending') return 'working in background';
     if (lower(meta.analysis_status || '') === 'saved') return 'hold ptt to describe';
     if (meta.claim_extraction_pending) return 'will finish soon';
@@ -747,17 +747,17 @@
   }
 
   function getShowFooter(model) {
-    if (model.annotationPending) return 'hold ptt · tag frame';
-    if (model.claimExtractionPending) return COPY.backgroundWorking;
-    if (model.processingLine === 'describing image...' || model.processingLine === 'image description unavailable') return model.processingLine;
-    if (model.pendingQueueCount > 0) return COPY.queuedWorking(model.pendingQueueCount);
+    if (model.annotationPending) return 'hold ptt · comment';
+    if (model.claimExtractionPending) return 'working quietly';
+    if (model.processingLine === 'describing image...' || model.processingLine === 'description unavailable') return model.processingLine;
+    if (model.pendingQueueCount > 0) return `${model.pendingQueueCount} queued`;
     if (model.captures.length) {
       if (model.processingLine === 'hold ptt to describe' && !model.claimCount) {
-        return 'hold ptt to describe';
+        return 'hold ptt on frame';
       }
-      return model.claimCount > 0 ? `${model.claimCount} claims · ${COPY.holdPttComment}` : COPY.holdPttComment;
+      return model.claimCount > 0 ? `${model.claimCount} claims · hold ptt` : 'hold ptt · comment';
     }
-    return COPY.readyForFrame;
+    return 'open lens';
   }
 
   function buildUISnapshot() {
@@ -798,7 +798,8 @@
     const asks = (project.open_questions || []).length;
     const locked = (project.decisions || []).length;
     const pending = (project.pending_decisions || []).length;
-    const signals = (project.insights || []).length;
+    const derivedSignals = Array.isArray(project?.derived_candidates?.themes) ? project.derived_candidates.themes.length : 0;
+    const signals = Math.max((project.insights || []).length, derivedSignals);
     return [
       `${notes} notes · ${captures} frames · ${signals} signals`,
       `${asks} asks · ${pending} waiting · ${locked} locked`
@@ -808,7 +809,8 @@
   function getOpsStatsLine() {
     const project = getProjectMemory() || {};
     const captures = getCaptureList().length;
-    const signals = (project.insights || []).length;
+    const derivedSignals = Array.isArray(project?.derived_candidates?.themes) ? project.derived_candidates.themes.length : 0;
+    const signals = Math.max((project.insights || []).length, derivedSignals);
     const decisions = (project.decisions || []).length;
     const open = (project.open_questions || []).filter(function(item) {
       return !item || typeof item === 'string' || item.status !== 'answered';
@@ -1256,12 +1258,13 @@
     const followLatest = !!options.jumpToLatest || (logOpen && (!!options.forceFollow || logPinnedToBottom || isLogNearBottom()));
     const traceMode = !!stateData.logTraceMode;
     const traceFilter = stateData.logTraceFilter || 'all';
-    const diagnosticRows = logOpen && diagnostics?.getDrawerRows ? diagnostics.getDrawerRows() : null;
+    const showDiagnostics = !!stateData.logDiagnosticMode;
+    const diagnosticRows = (logOpen && showDiagnostics && diagnostics?.getDrawerRows) ? diagnostics.getDrawerRows() : null;
     const entries = traceMode
       ? getTraceEntries(logOpen ? 20 : 5, traceFilter)
       : (diagnosticRows && diagnosticRows.length
         ? diagnosticRows
-        : (native?.getRecentLogEntries?.(limit, { visible_only: true }) || []).slice(-limit));
+        : (native?.getRecentLogEntries?.(limit, { visible_only: true, product_only: true }) || []).slice(-limit));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
@@ -1296,6 +1299,7 @@
 
   function setLogTraceMode(enabled, filter) {
     stateData.logTraceMode = !!enabled;
+    if (enabled) stateData.logDiagnosticMode = false;
     if (filter !== undefined) {
       stateData.logTraceFilter = filter || 'all';
     } else if (!stateData.logTraceFilter) {
@@ -2160,6 +2164,9 @@
     const decisions = project?.decisions || [];
     const pendingDecisions = project?.pending_decisions || [];
     const decIdx = stateData.decisionIndex || 0;
+    const guidedNowPrompt = onboardingStep === 2
+      ? 'what is this project about?'
+      : (onboardingStep === 3 ? 'open know to review the project map' : '');
 
     // Impact chain state
     const chain = window.StructaImpactChain || {};
@@ -2189,7 +2196,7 @@
       changed: ui.user_status || ui.last_event_summary || '',
       capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
       insight: ui.last_insight_summary || project?.brief || (insights[0]?.body || ''),
-      next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : ''),
+      next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : guidedNowPrompt),
       openQuestions: openQuestions.length,
       captures: captures.length,
       insights: insights.length,
@@ -2325,49 +2332,7 @@
       return true;
     }
 
-    if (step === 2) {
-      text(18, cardY + 18, 'lesson 2 · hold ptt', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      mk('rect', { x: 14, y: cardY + 30, width: 3, height: 108, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.76)' });
-      wrapTextBlock(undefined, 'what is this project about?', 20, cardY + 50, 190, 15, 'rgba(8,8,8,0.96)', '16', 4);
-      if (data.tutorialStep2FallbackVisible) {
-        const baseY = cardY + 96;
-        data.tutorialStep2FallbackOptions.forEach(function(option, index) {
-          const selected = index === data.tutorialStep2FallbackIndex;
-          mk('rect', {
-            x: 18, y: baseY + (index * 20), width: 176, height: 16, rx: 6, ry: 6,
-            fill: selected ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.10)'
-          });
-          text(24, baseY + 11 + (index * 20), lower(option), {
-            fill: selected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.84)',
-            'font-family': 'PowerGrotesk-Regular, sans-serif',
-            'font-size': '10'
-          });
-        });
-        text(20, cardY + 156, 'voice did not catch — scroll, then click', {
-          fill: 'rgba(8,8,8,0.46)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
-        });
-      } else {
-        mk('rect', { x: 18, y: cardY + 118, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-        text(30, cardY + 134, 'hold ptt → answer', {
-          fill: 'rgba(244,239,228,0.96)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '12'
-        });
-      }
-      text(226, 276, data.tutorialStep2FallbackVisible ? 'scroll → choose · click confirms' : 'answer in your own words', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
+    if (step === 2) return false;
 
     if (step === 3) {
       text(18, cardY + 18, 'lesson 3 · open know', {
@@ -2483,8 +2448,26 @@
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const openQuestions = project?.open_question_nodes || [];
+    const derived = project?.derived_candidates && typeof project.derived_candidates === 'object'
+      ? project.derived_candidates
+      : { decisions: [], asks: [], blockers: [], themes: [] };
+    const promoted = Array.isArray(project?.promoted_items) ? project.promoted_items : [];
 
     // Questions lane
+    (derived.asks || []).slice(0, 5).forEach((ask, index) => {
+      questions.push(makeItem({
+        lane: 'questions',
+        title: index === 0 ? 'queued ask' : `queued ask ${index + 1}`,
+        body: ask?.text || ask || 'follow-up queued',
+        next: '',
+        created_at: ask?.created_at || new Date().toISOString(),
+        source: 'derived-ask',
+        chips: ['asks', 'latest'],
+        node_id: ask?.id || '',
+        links: []
+      }));
+    });
+
     openQuestions.slice(0, 5).forEach((question, index) => {
       const guidedAsk = softenGuidedAsk(question?.body || question);
       const questionThread = cloneThread(question?.thread);
@@ -2505,6 +2488,34 @@
     }
 
     // Signals
+    (derived.themes || []).slice(0, 6).forEach((theme, index) => {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: index === 0 ? 'emerging signal' : `signal ${index + 1}`,
+        body: theme?.text || theme || 'signal',
+        next: backlog[0]?.title || '',
+        created_at: theme?.created_at || new Date().toISOString(),
+        source: 'derived-signal',
+        chips: index < 2 ? ['latest', 'branch'] : ['branch'],
+        node_id: theme?.id || '',
+        links: []
+      }));
+    });
+
+    (derived.blockers || []).slice(0, 3).forEach((blocker, index) => {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: index === 0 ? 'risk signal' : `risk signal ${index + 1}`,
+        body: blocker?.text || blocker || 'risk',
+        next: backlog[0]?.title || '',
+        created_at: blocker?.created_at || new Date().toISOString(),
+        source: 'derived-blocker',
+        chips: ['branch'],
+        node_id: blocker?.id || '',
+        links: []
+      }));
+    });
+
     if (ui.last_insight_summary || ui.last_capture_summary) {
       signals.push(makeItem({
         lane: 'signals', title: 'working signal',
@@ -2542,6 +2553,36 @@
     });
 
     // Decisions
+    promoted.filter(function(item) {
+      return lower(item?.kind || item?.type || '') === 'decision';
+    }).slice(0, 4).forEach(function(item, index) {
+      decisionsLane.push(makeItem({
+        lane: 'decisions',
+        title: item?.title || item?.text || `decision ${index + 1}`,
+        body: item?.body || item?.text || 'promoted decision',
+        next: backlog[0]?.title || '',
+        created_at: item?.created_at || new Date().toISOString(),
+        source: 'promoted-decision',
+        chips: ['latest'],
+        node_id: item?.id || item?.node_id || '',
+        links: item?.links || []
+      }));
+    });
+
+    (derived.decisions || []).slice(0, 4).forEach(function(item, index) {
+      decisionsLane.push(makeItem({
+        lane: 'decisions',
+        title: index === 0 ? 'decision candidate' : `decision candidate ${index + 1}`,
+        body: item?.text || item || 'decision candidate',
+        next: backlog[0]?.title || '',
+        created_at: item?.created_at || new Date().toISOString(),
+        source: 'derived-decision',
+        chips: ['latest'],
+        node_id: item?.id || '',
+        links: []
+      }));
+    });
+
     decisions.slice(0, 5).forEach((decision, index) => {
       const decisionTitle = typeof decision === 'string' ? decision : (decision.title || `decision ${index + 1}`);
       const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'locked');
@@ -3629,24 +3670,24 @@
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
     drawSurfaceHeader(showCard, { hideSubtitle: true });
-    const previewY = 108;
-    const previewH = 84;
-    const detailY = 196;
-    const detailH = 60;
-    const thumbY = 262;
+    const previewY = 84;
+    const previewH = 96;
+    const detailY = 184;
+    const detailH = 58;
+    const thumbY = 248;
     const thumbW = 56;
     const thumbH = 28;
     const cameraButton = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 74, width: 212, height: 28, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 92, 'open lens', {
+    mk('rect', { x: 14, y: 58, width: 212, height: 22, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
+    text(24, 73, 'open lens', {
       fill: 'rgba(244,239,228,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '12'
     }, cameraButton);
-    text(216, 92, inlineListening ? 'release reprompt' : (canReprompt ? 'hold ptt on frame' : 'hold ptt in lens'), {
+    text(216, 73, inlineListening ? 'release reprompt' : (canReprompt ? 'hold ptt on frame' : 'hold ptt in lens'), {
       fill: 'rgba(244,239,228,0.58)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
+      'font-size': '9',
       'text-anchor': 'end'
     }, cameraButton);
     cameraButton.addEventListener('pointerup', event => {
@@ -3662,7 +3703,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      text(20, previewY + 60, 'then click shoots · status tap exits · hold ptt narrates', {
+      text(20, previewY + 58, 'click shoots · status tap exits', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
@@ -3680,16 +3721,16 @@
       const detailText = String(
         model.descriptionText ||
         (model.analysisReady ? model.summary : '') ||
-        (model.analysisState === 'unavailable' ? 'image description unavailable' : model.processingLine)
-      ).slice(0, 170);
-      wrapTextBlock(undefined, detailText, 22, detailY + 24, 182, 11, 'rgba(8,8,8,0.92)', '10', 3);
+        (model.analysisState === 'unavailable' ? 'description unavailable' : model.processingLine)
+      ).slice(0, 210);
+      wrapTextBlock(undefined, detailText, 22, detailY + 22, 182, 12, 'rgba(8,8,8,0.92)', '11', 3);
       const metaShowLine = model.latestCommentText
         ? 'comment · ' + model.latestCommentText.slice(0, 34)
         : (model.captureCommentCount > 0
           ? model.captureCommentCount + ' comments'
           : (model.claimSummary ? 'claim · ' + model.claimSummary.slice(0, 26) : ''));
       if (metaShowLine) {
-        text(22, detailY + 52, metaShowLine, {
+        text(22, detailY + 50, metaShowLine, {
           fill: 'rgba(8,8,8,0.52)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '9',
@@ -3718,7 +3759,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '16'
       });
-      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, previewY + 56, 186, 13, 'rgba(8,8,8,0.76)', '12', 3);
+      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, previewY + 56, 186, 13, 'rgba(8,8,8,0.76)', '12', 4);
       text(20, detailY + 18, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
         fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -4562,30 +4603,42 @@
       });
       return;
     }
-    const LAYOUT = { top: 72, tabsH: 16, branchH: 14, footerY: 282, gap: 3 };
+    const LAYOUT = { top: 72, tabsH: 22, branchH: 16, footerY: 282, gap: 4 };
     const detailMode = currentState === STATES.KNOW_DETAIL;
     const laneTabs = [
-      { id: 'questions', label: 'asks', width: 34 },
-      { id: 'signals', label: 'signals', width: 40 },
-      { id: 'decisions', label: 'decided', width: 46 },
-      { id: 'open loops', label: 'loops', width: 34 }
+      { id: 'questions', label: 'asks', shortLabel: 'ask' },
+      { id: 'signals', label: 'signals', shortLabel: 'sig' },
+      { id: 'decisions', label: 'decided', shortLabel: 'dec' },
+      { id: 'open loops', label: 'loops', shortLabel: 'loop' }
     ];
-    let tabX = 14;
+    const switcherX = 84;
+    const switcherY = 68;
+    const switcherW = 142;
+    const segmentW = switcherW / laneTabs.length;
+    mk('rect', {
+      x: switcherX,
+      y: switcherY,
+      width: switcherW,
+      height: 22,
+      rx: 10,
+      ry: 10,
+      fill: 'rgba(8,8,8,0.14)'
+    });
     laneTabs.forEach((tab, i) => {
       const isActive = lane.id === tab.id;
       const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
       mk('rect', {
-        x: tabX, y: LAYOUT.top, width: tab.width, height: LAYOUT.tabsH, rx: 5, ry: 5,
+        x: switcherX + (i * segmentW), y: switcherY, width: segmentW, height: 22, rx: 10, ry: 10,
         fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
         stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
         'stroke-width': 1
       }, pillGroup);
       const tabText = mk('text', {
-        x: tabX + tab.width / 2, y: LAYOUT.top + 11.5,
+        x: switcherX + (i * segmentW) + segmentW / 2, y: switcherY + 14,
         fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
         'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9', 'text-anchor': 'middle'
       }, pillGroup);
-      tabText.textContent = lower(tab.label);
+      tabText.textContent = lower(tab.shortLabel || tab.label);
       pillGroup.addEventListener('pointerup', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -4599,26 +4652,40 @@
         if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
         render();
       });
-      tabX += tab.width + 3;
     });
 
     const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
     const showChipRow = lane.id === 'signals' && activeChips.length > 1;
-    let contentCursorY = LAYOUT.top + LAYOUT.tabsH + LAYOUT.gap;
+    let contentCursorY = switcherY + 20;
     if (showChipRow) {
-      let chipX = 14;
-      activeChips.forEach((c) => {
+      const signalChips = activeChips.filter(function(chip) {
+        return chip.id === 'latest' || chip.id === 'branch';
+      });
+      const chipX = 154;
+      const chipY = contentCursorY;
+      const chipW = 72;
+      const chipH = 16;
+      mk('rect', {
+        x: chipX,
+        y: chipY,
+        width: chipW,
+        height: chipH,
+        rx: 7,
+        ry: 7,
+        fill: 'rgba(8,8,8,0.10)'
+      });
+      signalChips.forEach((c, chipIndex) => {
         const realIndex = model.chips.indexOf(c);
         const isActive = realIndex === safeChipIdx;
-        const chipWidth = Math.max(28, c.label.length * 5 + 10);
+        const chipWidth = chipW / Math.max(signalChips.length, 1);
         const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
         mk('rect', {
-          x: chipX, y: contentCursorY, width: chipWidth, height: LAYOUT.branchH, rx: 6, ry: 6,
+          x: chipX + (chipIndex * chipWidth), y: chipY, width: chipWidth, height: chipH, rx: 7, ry: 7,
           fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.10)',
           stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
         }, chipGroup);
         const chipText = mk('text', {
-          x: chipX + chipWidth / 2, y: contentCursorY + 10,
+          x: chipX + (chipIndex * chipWidth) + chipWidth / 2, y: chipY + 11,
           fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '8', 'text-anchor': 'middle'
         }, chipGroup);
@@ -4632,14 +4699,13 @@
           stateData.knowBodyScrollTop = 0;
           render();
         });
-        chipX += chipWidth + 3;
       });
-      contentCursorY += LAYOUT.branchH + LAYOUT.gap;
+      contentCursorY += chipH + LAYOUT.gap;
     }
 
     const frame = {
       x: 10,
-      y: contentCursorY + 2,
+      y: contentCursorY + 4,
       width: 220,
       height: Math.max(110, LAYOUT.footerY - (contentCursorY + 2) - 12)
     };

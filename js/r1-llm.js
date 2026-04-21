@@ -1353,6 +1353,10 @@
   function requestCaptureDescription(captureId, imageBase64, context) {
     var options = context || {};
     if (!imageBase64) {
+      native?.recordProductEvent?.('description unavailable', {
+        captureId: captureId || '',
+        detail: 'image missing'
+      });
       return Promise.resolve({
         ok: false,
         error: 'image missing',
@@ -1375,11 +1379,32 @@
       source: 'image',
       reason: 'image description stays quiet'
     }, function() {
+      native?.recordProductEvent?.('description requested', {
+        captureId: captureId || '',
+        detail: 'timeout ' + Number(options.timeout || 22000) + 'ms'
+      });
+      native?.traceEvent?.('image.truth', 'requested', 'bridge', {
+        captureId: captureId || '',
+        timeoutMs: Number(options.timeout || 22000),
+        itemId: options.itemId || ''
+      });
       return sendBridgeImage(imageBase64, prompt, {
         journal: false,
         timeout: Number(options.timeout || 22000)
       }).then(function(result) {
-        if (!result || !result.ok || !result.clean) return result;
+        if (!result || !result.ok || !result.clean) {
+          native?.recordProductEvent?.('description unavailable', {
+            captureId: captureId || '',
+            detail: compactText(result?.code || result?.error || 'bridge timeout', 6)
+          });
+          native?.traceEvent?.('image.truth', 'missing', 'bridge', {
+            captureId: captureId || '',
+            itemId: options.itemId || '',
+            code: result?.code || '',
+            error: result?.error || ''
+          });
+          return result;
+        }
         return extractClaimsFromText({
           project: projectEnvelope,
           input: {
@@ -1397,6 +1422,16 @@
           }
         }).then(function(extracted) {
           var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
+          native?.recordProductEvent?.('description stored', {
+            captureId: captureId || '',
+            detail: compactText((result.clean || result.text || '').slice(0, 72), 10)
+          });
+          native?.traceEvent?.('image.truth', 'stored', 'capture', {
+            captureId: captureId || '',
+            itemId: options.itemId || '',
+            claimCount: claims.length,
+            text: compactText(result.clean || result.text || '', 120)
+          });
           return {
             ok: true,
             text: result.text || result.clean || '',

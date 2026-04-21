@@ -36,7 +36,7 @@
   let lastCaptureAt = 0;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const CAPTURE_COOLDOWN_MS = 600;
-  const TARGET_CAPTURE_WIDTH = 320;
+  const TARGET_CAPTURE_WIDTH = 256;
   const CAMERA_READY_STATUS = 'click shoots · tap status cancels';
 
   function getCaps() {
@@ -293,7 +293,7 @@
       }
       native?.updateUIState?.({
         last_capture_summary: job.annotation ? String(refs.capture?.summary || refs.capture?.description_text || 'show+tell saved') : result.clean,
-        user_status: job.annotation ? 'hold ptt to describe' : 'image described'
+        user_status: job.annotation ? 'capture comment stored' : 'description stored'
       });
     });
     native?.recordOperationWrite?.(operationId, job.annotation ? 'capture_comment' : 'capture_description', {
@@ -343,10 +343,10 @@
           annotation_window_until: 0
         };
       }
-      native?.updateUIState?.({
-        last_capture_summary: summary,
-        user_status: prompt
-      });
+    native?.updateUIState?.({
+      last_capture_summary: summary,
+      user_status: job.annotation ? 'capture comment stored' : 'frame saved'
+    });
     });
     native?.traceEvent?.('image', 'analyzing', 'saved', {
       entryId: job.entryId || '',
@@ -391,7 +391,7 @@
       }
       native?.updateUIState?.({
         last_capture_summary: fallbackText || 'image description unavailable',
-        user_status: job.annotation ? 'show+tell saved' : 'image description unavailable'
+        user_status: job.annotation ? 'capture comment stored' : 'description unavailable'
       });
     });
     native?.traceEvent?.('image', 'analyzing', 'blocked', {
@@ -569,8 +569,7 @@
             countIncrement: payload.annotation ? 1 : 0
           });
           window.StructaFeedback?.fire?.('resolve');
-          native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell result ready' : 'visual result ready' });
-          if (!hadAnalyzedCaptures && !payload.annotation) window.StructaLLM?.speakMilestone?.('first_capture');
+          native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'capture comment stored' : 'description stored' });
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
             detail: { source: 'visual-insight' }
           }));
@@ -582,7 +581,7 @@
           return result;
         }
         applyAnalysisUnavailable(payload, payload.annotation ? 'show+tell saved' : 'frame saved');
-        native?.appendLogEntry?.({ kind: 'camera', message: payload.annotation ? 'show+tell saved' : 'image description unavailable' });
+        native?.appendLogEntry?.({ kind: 'camera', message: payload.annotation ? 'capture comment stored' : 'description unavailable' });
         window.StructaFeedback?.fire?.('resolve');
         native?.traceEvent?.('image', 'analyzing', 'blocked', {
           jobId: job.id || '',
@@ -592,11 +591,11 @@
         return {
           ok: true,
           unavailable: true,
-          message: payload.annotation ? 'show+tell saved' : 'image description unavailable'
+          message: payload.annotation ? 'capture comment stored' : 'description unavailable'
         };
       }).catch(function() {
         applyAnalysisUnavailable(payload, payload.annotation ? 'show+tell saved' : 'frame saved');
-        native?.appendLogEntry?.({ kind: 'camera', message: payload.annotation ? 'show+tell saved' : 'image description unavailable' });
+        native?.appendLogEntry?.({ kind: 'camera', message: payload.annotation ? 'capture comment stored' : 'description unavailable' });
         window.StructaFeedback?.fire?.('resolve');
         native?.traceEvent?.('image', 'analyzing', 'blocked', {
           jobId: job.id || '',
@@ -606,7 +605,7 @@
         return {
           ok: true,
           unavailable: true,
-          message: payload.annotation ? 'show+tell saved' : 'image description unavailable'
+          message: payload.annotation ? 'capture comment stored' : 'description unavailable'
         };
       });
     });
@@ -1092,7 +1091,7 @@
       detail: { entryId: bundle?.entry_id || '', summary: bundle?.summary || '' }
     }));
 
-    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'show+tell saved' : 'frame saved' });
+    native?.appendLogEntry?.({ kind: 'camera', message: annotation ? 'capture comment stored' : 'frame saved' });
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: annotation ? 'show-tell' : 'capture' }
     }));

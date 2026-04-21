@@ -1235,6 +1235,7 @@
     var opts = options && typeof options === 'object' ? options : {};
     var normalized = normalizeCandidateBuckets(raw);
     var summary = { decisions: 0, asks: 0, blockers: 0, themes: 0 };
+    var added = { decisions: 0, asks: 0, blockers: 0, themes: 0 };
     touchProjectMemory(function(project) {
       ensureProjectKnowledge(project);
       var target = project.derived_candidates;
@@ -1262,6 +1263,7 @@
           if (!token || seen[token]) return;
           seen[token] = true;
           existing.unshift(next);
+          added[key] += 1;
         });
         target[key] = existing.slice(0, opts.limit || 12);
         summary[key] = target[key].length;
@@ -1274,6 +1276,10 @@
       themes: summary.themes,
       operationId: opts.operation_id || ''
     });
+    if (added.asks > 0) appendLogEntry({ kind: 'question', message: 'follow-up queued' });
+    if (added.themes > 0) appendLogEntry({ kind: 'llm', message: 'signal derived' });
+    if (added.decisions > 0) appendLogEntry({ kind: 'decision', message: 'decision candidate ready' });
+    if (added.blockers > 0) appendLogEntry({ kind: 'llm', message: 'background blocker flagged' });
     return cloneValue(normalized);
   }
 
@@ -2606,6 +2612,19 @@
       .trim();
   }
 
+  function recordProductEvent(kind = '', payload = {}) {
+    var eventKind = normalizeSpacing(kind || '');
+    if (!eventKind) return null;
+    return appendLogEntry({
+      kind: 'product',
+      message: eventKind,
+      created_at: payload.created_at || new Date().toISOString(),
+      linked_capture_id: payload.captureId || payload.linked_capture_id || null,
+      linked_response_id: payload.responseId || payload.linked_response_id || null,
+      meta: payload && typeof payload === 'object' ? cloneValue(payload) : {}
+    });
+  }
+
   function normalizeVisibleMessage(kind = '', message = '') {
     const k = lower(kind || 'event');
     const raw = normalizeSpacing(message || 'event');
@@ -2629,15 +2648,23 @@
     if (raw.includes('lesson 0 complete') || raw.includes('lesson 1 complete') || raw.includes('lesson 2 complete') || raw.includes('lesson 3 complete')) return null;
     if (raw === 'camera opened' || raw.endsWith('camera open')) return null;
     if (raw === 'capture capture') return null;
-    if (raw === 'camera image captured' || raw === 'image captured') return 'frame captured';
-    if (raw === 'show+tell captured' || raw === 'show+tell saved') return 'show+tell saved';
+    if (raw === 'camera image captured' || raw === 'image captured') return 'frame saved';
+    if (raw === 'show+tell captured' || raw === 'show+tell saved' || raw === 'capture comment stored') return 'capture comment stored';
     if (raw === 'image saved') return 'frame saved';
+    if (raw === 'description stored' || raw === 'visual result ready') return 'description stored';
+    if (raw === 'note saved' || raw === 'voice note saved') return 'note saved';
+    if (raw === 'project brief stored' || raw === 'project brief ready') return 'brief stored';
+    if (raw === 'follow-up queued') return 'follow-up queued';
+    if (raw === 'signal derived') return 'signal derived';
+    if (raw === 'decision candidate ready') return 'decision candidate ready';
+    if (raw === 'background blocker flagged') return 'background blocker flagged';
+    if (raw === 'description requested') return 'description requested';
     if (raw === 'voice saved') return null;
     if (raw === 'question answered') return null;
     if (raw === 'insight extracted') return 'signal ready';
     if (raw === 'insight unavailable' || raw === 'insight failed') return null;
     if (raw === 'visual insight ready' || raw === 'show+tell insight ready' || raw === 'visual result ready' || raw === 'show+tell result ready') return 'visual note ready';
-    if (raw === 'visual insight unavailable' || raw === 'visual insight failed') return 'visual note unavailable';
+    if (raw === 'visual insight unavailable' || raw === 'visual insight failed' || raw === 'description unavailable') return 'description unavailable';
     if (raw.startsWith('bridge-in onpluginmessage')) return null;
     if (raw.startsWith('bridge-in response')) return null;
     if (raw.startsWith('bridge-in response received')) return null;
@@ -2681,6 +2708,24 @@
       return compact(raw, 10);
     }
 
+    if (k === 'product') {
+      if (
+        raw === 'note saved' ||
+        raw === 'frame saved' ||
+        raw === 'description requested' ||
+        raw === 'description stored' ||
+        raw === 'description unavailable' ||
+        raw === 'capture comment stored' ||
+        raw === 'follow-up queued' ||
+        raw === 'signal derived' ||
+        raw === 'decision candidate ready' ||
+        raw === 'decision promoted' ||
+        raw === 'background work failed' ||
+        raw === 'brief stored'
+      ) return raw;
+      return compact(raw, 7);
+    }
+
     if (k === 'triangle') return null;
     if (k === 'voice') {
       if (raw.startsWith('project:')) return compact(raw, 6);
@@ -2694,17 +2739,34 @@
         raw === 'frame captured' ||
         raw === 'show+tell captured' ||
         raw === 'show+tell saved' ||
+        raw === 'capture comment stored' ||
+        raw === 'description stored' ||
         raw === 'visual note ready' ||
         raw === 'visual note unavailable' ||
+        raw === 'description unavailable' ||
         raw === 'frame capture failed — try again'
       ) return raw;
       return null;
     }
     if (k === 'llm') {
-      if (raw === 'signal ready' || raw === 'visual note ready' || raw === 'visual note unavailable') return raw;
+      if (
+        raw === 'signal ready' ||
+        raw === 'signal derived' ||
+        raw === 'description stored' ||
+        raw === 'note saved' ||
+        raw === 'brief stored' ||
+        raw === 'visual note ready' ||
+        raw === 'visual note unavailable' ||
+        raw === 'description unavailable' ||
+        raw === 'background blocker flagged'
+      ) return raw;
       return null;
     }
-    if (k === 'decision') return compact(raw, 6);
+    if (k === 'decision') {
+      if (raw === 'decision candidate ready') return raw;
+      return compact(raw, 6);
+    }
+    if (k === 'question' && raw === 'follow-up queued') return raw;
     if (k === 'export') return compact(raw, 6);
 
     if (k === 'insight') return compact('insight ' + raw.replace(/^new\s+/i, ''));
@@ -2740,6 +2802,7 @@
       visible: visibleMessage ? !isDuplicateVisibleMessage(visibleMessage, createdAt) : false,
       linked_capture_id: raw.linked_capture_id || null,
       linked_response_id: raw.linked_response_id || null,
+      meta: raw.meta && typeof raw.meta === 'object' ? cloneValue(raw.meta) : {},
       created_at: createdAt
     };
     pushLimited(memory.logs, entry, MAX_LOG_ITEMS);
@@ -2788,12 +2851,24 @@
     return true;
   }
 
+  function isProductVisibleLogEntry(entry = {}) {
+    if (!isVisibleLogEntry(entry)) return false;
+    const kind = lower(entry.kind || '');
+    return kind === 'product' ||
+      kind === 'camera' ||
+      kind === 'llm' ||
+      kind === 'question' ||
+      kind === 'decision' ||
+      kind === 'export';
+  }
+
   function getVisibleLogs(limit = 5, options = {}) {
     const includeDiagnostic = options.include_diagnostic === true;
+    const productOnly = options.product_only !== false;
     return memory.logs
       .filter(function(entry) {
         if (includeDiagnostic && lower(entry?.kind || '') === 'diagnostic') return true;
-        return isVisibleLogEntry(entry);
+        return productOnly ? isProductVisibleLogEntry(entry) : isVisibleLogEntry(entry);
       })
       .map(entry => ({ ...entry, message: entry.visible_message || entry.message }))
       .slice(-limit);
@@ -3531,6 +3606,7 @@
     setUserRole,
     setProjectBrief,
     saveDerivedCandidates,
+    recordProductEvent,
     getActiveProject,
     beginOperation,
     recordOperationWrite,

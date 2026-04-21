@@ -487,7 +487,7 @@
         operation_id: payload.operationId || ''
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'note clarified' });
+    native?.appendLogEntry?.({ kind: 'llm', message: 'note saved' });
     native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
     return candidates;
   }
@@ -535,7 +535,7 @@
         };
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'project brief ready' });
+    native?.appendLogEntry?.({ kind: 'llm', message: 'project brief stored' });
     native?.updateUIState?.({
       last_insight_summary: (brief || title || '').slice(0, 60),
       user_status: title ? ('project: ' + title) : 'project brief ready'
@@ -679,7 +679,6 @@
                 }
               }, 200);
             }
-            window.StructaLLM?.speakMilestone?.('signal_captured');
             window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
               detail: { source: 'question-answer' }
             }));

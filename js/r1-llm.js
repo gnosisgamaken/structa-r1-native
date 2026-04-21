@@ -499,11 +499,12 @@
     var expectResponse = opts.expectResponse !== false;
     var payload = {
       message: String(prompt || '').trim() || 'Describe what you see in this image',
-      imageBase64: imageBase64,
-      useLLM: true,
-      wantsR1Response: false,
-      wantsJournalEntry: opts.journal === true
+      imageBase64: imageBase64
     };
+    if (!opts.omitUseLLM) payload.useLLM = opts.useLLM !== false;
+    if (!opts.omitWantsR1Response) payload.wantsR1Response = opts.wantsR1Response === true;
+    if (!opts.omitWantsJournalEntry) payload.wantsJournalEntry = opts.journal === true;
+    if (opts.pluginId) payload.pluginId = String(opts.pluginId);
     if (native && native.probeMode && native.appendProbeEvent) {
       native.appendProbeEvent({
         source: 'bridge-out',
@@ -513,7 +514,9 @@
           message: compactText(payload.message, 140),
           wantsR1Response: payload.wantsR1Response === true,
           journal: payload.wantsJournalEntry === true,
-          timeoutMs: timeoutMs
+          timeoutMs: timeoutMs,
+          pluginId: payload.pluginId || '',
+          imageKind: /^data:image\//i.test(String(imageBase64 || '')) ? 'data-url' : 'raw-base64'
         }
       });
     }
@@ -521,7 +524,9 @@
       imageRunId: imageRunId,
       timeoutMs: timeoutMs,
       wantsR1Response: payload.wantsR1Response === true,
-      journal: payload.wantsJournalEntry === true
+      journal: payload.wantsJournalEntry === true,
+      pluginId: payload.pluginId || '',
+      imageKind: /^data:image\//i.test(String(imageBase64 || '')) ? 'data-url' : 'raw-base64'
     });
     if (!expectResponse) {
       try {
@@ -549,7 +554,8 @@
         startedAt: Date.now(),
         resolve: resolve,
         timeout: null,
-        imageRunId: imageRunId
+        imageRunId: imageRunId,
+        statusHistory: []
       };
       pendingImageBridgeRequest = request;
       request.timeout = setTimeout(function() {
@@ -669,6 +675,8 @@
     if (pendingImageBridgeRequest) {
       var imageRequest = pendingImageBridgeRequest;
       var rawDump = '';
+      var payloadObject = data && typeof data === 'object' ? data : null;
+      var bridgeStatus = String(payloadObject?.status || '').trim().toLowerCase();
       try {
         rawDump = typeof data === 'string' ? data : JSON.stringify(data || {});
       } catch (_) {
@@ -691,6 +699,31 @@
         dump: compactText(rawDump, 800),
         hasText: !!imageText
       });
+      if (bridgeStatus) {
+        imageRequest.statusHistory = imageRequest.statusHistory || [];
+        imageRequest.statusHistory.push(bridgeStatus);
+        if (native && native.probeMode && native.appendProbeEvent) {
+          native.appendProbeEvent({
+            source: 'bridge-in-status',
+            name: 'image status ' + compactText(bridgeStatus, 24),
+            payload: {
+              imageRunId: imageRequest.imageRunId,
+              status: bridgeStatus
+            }
+          });
+        }
+        native?.traceEvent?.('plugin.message.status', 'in', 'image', {
+          imageRunId: imageRequest.imageRunId,
+          status: bridgeStatus
+        });
+      }
+      var textBearingKeys = ['response', 'text', 'output', 'answer', 'body', 'summary', 'caption', 'content', 'parts', 'blocks', 'segments', 'candidates', 'data', 'results', 'result', 'candidate'];
+      var hasStructuredText = payloadObject && textBearingKeys.some(function(key) {
+        return typeof payloadObject[key] !== 'undefined' && payloadObject[key] !== null && payloadObject[key] !== '';
+      });
+      if (bridgeStatus && !payloadObject?.error && !hasStructuredText && !imageText) {
+        return;
+      }
       clearImageBridgeRequest(imageRequest);
       if (!imageText) {
         if (rawDump && rawDump !== '{}' && rawDump !== 'null') {
@@ -1373,6 +1406,41 @@
       facingMode: options.facingMode || '',
       promptContext: options.promptContext || ''
     });
+    var dataUrlImage = /^data:image\//i.test(String(imageBase64 || ''))
+      ? String(imageBase64 || '')
+      : ('data:image/png;base64,' + String(imageBase64 || ''));
+    var bridgeAttempts = [
+      {
+        label: 'structa-default',
+        image: imageBase64,
+        options: {
+          journal: false,
+          timeout: Number(options.timeout || 22000)
+        }
+      },
+      {
+        label: 'magic-plugin-dataurl',
+        image: dataUrlImage,
+        options: {
+          timeout: Number(options.timeout || 22000),
+          pluginId: 'com.r1.pixelart',
+          omitUseLLM: true,
+          omitWantsR1Response: true,
+          omitWantsJournalEntry: true
+        }
+      },
+      {
+        label: 'magic-plugin-dataurl-r1',
+        image: dataUrlImage,
+        options: {
+          timeout: Number(options.timeout || 22000),
+          pluginId: 'com.r1.pixelart',
+          omitUseLLM: true,
+          wantsR1Response: true,
+          omitWantsJournalEntry: true
+        }
+      }
+    ];
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
@@ -1388,10 +1456,29 @@
         timeoutMs: Number(options.timeout || 22000),
         itemId: options.itemId || ''
       });
-      return sendBridgeImage(imageBase64, prompt, {
-        journal: false,
-        timeout: Number(options.timeout || 22000)
-      }).then(function(result) {
+      function runAttempt(index) {
+        var attempt = bridgeAttempts[index];
+        native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
+          captureId: captureId || '',
+          itemId: options.itemId || '',
+          index: index + 1,
+          total: bridgeAttempts.length
+        });
+        return sendBridgeImage(attempt.image, prompt, attempt.options).then(function(result) {
+          if ((!result || !result.ok || !result.clean) && index < bridgeAttempts.length - 1) {
+            native?.traceEvent?.('image.truth', 'fallback', attempt.label, {
+              captureId: captureId || '',
+              itemId: options.itemId || '',
+              code: result?.code || '',
+              error: result?.error || ''
+            });
+            return runAttempt(index + 1);
+          }
+          if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
+          return result;
+        });
+      }
+      return runAttempt(0).then(function(result) {
         if (!result || !result.ok || !result.clean) {
           native?.recordProductEvent?.('description unavailable', {
             captureId: captureId || '',
@@ -1464,15 +1551,26 @@
       keyword: options.keyword || '',
       timeoutMs: timeoutMs
     });
+    var baseInput = String(rawBase64 || '');
+    var imageInput = baseInput;
+    if (options.imageInputMode === 'dataUrl' && !/^data:image\//i.test(baseInput)) {
+      imageInput = 'data:image/png;base64,' + baseInput;
+    }
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
       source: 'image-probe',
       reason: 'image prompt probes stay quiet'
     }, function() {
-      return sendBridgeImage(rawBase64, String(prompt || '').trim(), {
+      return sendBridgeImage(imageInput, String(prompt || '').trim(), {
         journal: false,
-        timeout: timeoutMs
+        timeout: timeoutMs,
+        pluginId: options.pluginId || '',
+        useLLM: options.useLLM,
+        wantsR1Response: options.wantsR1Response === true,
+        omitUseLLM: options.omitUseLLM === true,
+        omitWantsR1Response: options.omitWantsR1Response === true,
+        omitWantsJournalEntry: options.omitWantsJournalEntry === true
       }).then(function(result) {
         if (!result || !result.ok || !result.clean) {
           native?.appendLogEntry?.({

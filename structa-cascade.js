@@ -1329,30 +1329,104 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'alpha',
-      keyword: 'probe-alpha-raven',
-      label: 'probe alpha',
-      prompt: 'debug keyword: probe-alpha-raven\nAnalyze this image.\nDescribe only visible objects.\nWrite one short sentence.'
+      id: 'structa-raw',
+      keyword: 'probe-structa-raw-an1',
+      label: 'probe structa raw',
+      prompt: 'debug keyword: probe-structa-raw-an1\nAnalyze this image.\nDescribe only visible objects.\nWrite one short sentence.'
     },
     {
-      id: 'beta',
-      keyword: 'probe-beta-cedar',
-      label: 'probe beta',
-      prompt: 'debug keyword: probe-beta-cedar\nWhat is visible in this image?\nUse two short factual sentences.\nNo speculation.'
+      id: 'magic-data',
+      keyword: 'probe-magic-data-an1',
+      label: 'probe magic data',
+      prompt: 'debug keyword: probe-magic-data-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'dataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      omitWantsR1Response: true,
+      omitWantsJournalEntry: true
     },
     {
-      id: 'gamma',
-      keyword: 'probe-gamma-ember',
-      label: 'probe gamma',
-      prompt: 'debug keyword: probe-gamma-ember\nDescribe this photo plainly.\nVisible facts only.\nKeep it brief.'
+      id: 'magic-data-r1',
+      keyword: 'probe-magic-data-r1-an1',
+      label: 'probe magic data+r1',
+      prompt: 'debug keyword: probe-magic-data-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'dataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      wantsR1Response: true,
+      omitWantsJournalEntry: true
     },
     {
-      id: 'delta',
-      keyword: 'probe-delta-glass',
-      label: 'probe delta',
-      prompt: 'debug keyword: probe-delta-glass\nImage description only.\nTwo concise sentences.\nNo extra formatting.'
+      id: 'magic-norm',
+      keyword: 'probe-magic-norm-an1',
+      label: 'probe magic norm',
+      prompt: 'debug keyword: probe-magic-norm-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'normalizedDataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      omitWantsR1Response: true,
+      omitWantsJournalEntry: true
+    },
+    {
+      id: 'magic-norm-r1',
+      keyword: 'probe-magic-norm-r1-an1',
+      label: 'probe magic norm+r1',
+      prompt: 'debug keyword: probe-magic-norm-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      imageInputMode: 'normalizedDataUrl',
+      pluginId: 'com.r1.pixelart',
+      omitUseLLM: true,
+      wantsR1Response: true,
+      omitWantsJournalEntry: true
     }
   ];
+
+  function normalizeProbeImageHref(dataUrl) {
+    return new Promise(function(resolve) {
+      if (!dataUrl) {
+        resolve('');
+        return;
+      }
+      const image = new Image();
+      image.onload = function() {
+        let targetWidth = image.width;
+        let targetHeight = Math.round(targetWidth * 4 / 3);
+        if (image.height > targetHeight) {
+          targetHeight = image.height;
+          targetWidth = Math.round(targetHeight * 3 / 4);
+        }
+        if (targetWidth > 2048) {
+          const scale = 2048 / targetWidth;
+          targetWidth = 2048;
+          targetHeight = Math.round(targetHeight * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+        const scale = Math.min(targetWidth / Math.max(1, image.width), targetHeight / Math.max(1, image.height));
+        const drawWidth = Math.round(image.width * scale);
+        const drawHeight = Math.round(image.height * scale);
+        const offsetX = Math.floor((targetWidth - drawWidth) / 2);
+        const offsetY = Math.floor((targetHeight - drawHeight) / 2);
+        ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
+        try {
+          resolve(canvas.toDataURL('image/jpeg', 0.92));
+        } catch (_) {
+          resolve(dataUrl);
+        }
+      };
+      image.onerror = function() {
+        resolve(dataUrl);
+      };
+      image.src = dataUrl;
+    });
+  }
 
   function getCurrentProbeCapture() {
     const summary = buildShowSummary();
@@ -1384,7 +1458,7 @@
       kind: 'action',
       actionId: 'image-probe-run-all',
       message: 'run image probes',
-      detail: 'alpha · beta · gamma · delta'
+      detail: 'structa · magic data · magic norm'
     });
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
       rows.push({
@@ -1412,10 +1486,21 @@
       captureId: probeCapture.captureId,
       detail: variant.keyword
     });
-    return window.StructaLLM?.probeImagePrompt?.(probeCapture.imageBase64, variant.prompt, {
-      captureId: probeCapture.captureId,
-      keyword: variant.keyword,
-      label: variant.label
+    const imagePromise = variant.imageInputMode === 'normalizedDataUrl'
+      ? normalizeProbeImageHref(probeCapture.imageHref)
+      : Promise.resolve(probeCapture.imageBase64);
+    return imagePromise.then(function(imageInput) {
+      return window.StructaLLM?.probeImagePrompt?.(imageInput, variant.prompt, {
+        captureId: probeCapture.captureId,
+        keyword: variant.keyword,
+        label: variant.label,
+        imageInputMode: variant.imageInputMode || 'raw',
+        pluginId: variant.pluginId || '',
+        wantsR1Response: variant.wantsR1Response === true,
+        omitUseLLM: variant.omitUseLLM === true,
+        omitWantsR1Response: variant.omitWantsR1Response === true,
+        omitWantsJournalEntry: variant.omitWantsJournalEntry === true
+      });
     }).then(function(result) {
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
       return result;
@@ -1427,7 +1512,7 @@
       return chain.then(function() {
         return runImageProbeVariant(variant.id);
       }).then(function() {
-        return new Promise(function(resolve) { setTimeout(resolve, 160); });
+        return new Promise(function(resolve) { setTimeout(resolve, 320); });
       });
     }, Promise.resolve());
   }

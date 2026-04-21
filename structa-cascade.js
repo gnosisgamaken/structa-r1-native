@@ -1353,22 +1353,19 @@
       expectResponse: true
     },
     {
-      id: 'magic-norm-r1-reclaim',
-      keyword: 'probe-magic-norm-r1-reclaim-an1',
-      label: 'img reclaim',
-      prompt: 'debug keyword: probe-magic-norm-r1-reclaim-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-r1-fetch',
+      keyword: 'probe-magic-norm-r1-fetch-an1',
+      label: 'img fetch',
+      prompt: 'debug keyword: probe-magic-norm-r1-fetch-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       wantsR1Response: true,
       omitWantsJournalEntry: true,
       expectResponse: false,
-      listenback: true,
-      listenbackPostFirst: true,
-      listenbackStartDelayMs: 320,
-      listenbackWarmupMs: 0,
-      listenbackStopAfterMs: 6800,
-      listenbackTimeoutMs: 9400
+      followupFetch: true,
+      followupDelayMs: 1200,
+      fetchTimeout: 15000
     }
   ];
 
@@ -1451,7 +1448,7 @@
         ? 'silent callback'
         : variant.id === 'magic-norm-omit-r1'
           ? 'omit r1 flag'
-          : 'delayed reclaim';
+          : 'label then fetch';
       rows.push({
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
@@ -1476,6 +1473,65 @@
     const imagePromise = variant.imageInputMode === 'normalizedDataUrl'
       ? normalizeProbeImageHref(probeCapture.imageHref)
       : Promise.resolve(probeCapture.imageBase64);
+    function writeProbeResultToCurrentCapture(cleanText, variant, probeMeta) {
+      const text = String(cleanText || '').trim();
+      if (!text) return false;
+      native?.touchProjectMemory?.(function(project) {
+        const captures = project.captures || [];
+        const nodes = project.nodes || [];
+        const capture = captures.find(function(item) {
+          return (item?.entry_id || item?.id || item?.node_id || '') === probeCapture.captureId ||
+            (probeCapture.capture?.node_id && item?.node_id === probeCapture.capture.node_id);
+        }) || null;
+        const node = nodes.find(function(item) {
+          return item?.node_id === (probeCapture.capture?.node_id || '') ||
+            item?.capture_image === probeCapture.captureId ||
+            item?.meta?.bundle_id === probeCapture.captureId;
+        }) || null;
+        if (capture) {
+          capture.description_text = text;
+          capture.summary = text;
+          capture.ai_analysis = text;
+          capture.meta = {
+            ...(capture.meta || {}),
+            analysis_status: 'ready',
+            analysis_stage: 'done',
+            analysis_completed_at: new Date().toISOString(),
+            description_text: text
+          };
+        }
+        if (node) {
+          node.body = text;
+          node.meta = {
+            ...(node.meta || {}),
+            analysis_status: 'ready',
+            analysis_stage: 'done',
+            analysis_completed_at: new Date().toISOString(),
+            description_text: text
+          };
+        }
+      });
+      stateData.showCaptureEntryId = probeCapture.captureId || stateData.showCaptureEntryId || '';
+      stateData.showStatus = 'reviewing';
+      native?.updateUIState?.({
+        last_capture_entry_id: probeCapture.captureId || '',
+        last_capture_summary: text,
+        user_status: 'description stored'
+      });
+      native?.appendLogEntry?.({
+        kind: 'product',
+        message: 'description stored',
+        linked_capture_id: probeCapture.captureId || null,
+        meta: {
+          keyword: variant.keyword || '',
+          source: probeMeta?.source || variant.id || '',
+          text: text.slice(0, 120)
+        }
+      });
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      return true;
+    }
+
     return imagePromise.then(function(imageInput) {
       return window.StructaLLM?.probeImagePrompt?.(imageInput, variant.prompt, {
         captureId: probeCapture.captureId,
@@ -1497,21 +1553,17 @@
         omitMessage: variant.omitMessage === true,
         omitUseLLM: variant.omitUseLLM === true,
         omitWantsR1Response: variant.omitWantsR1Response === true,
-        omitWantsJournalEntry: variant.omitWantsJournalEntry === true
+        omitWantsJournalEntry: variant.omitWantsJournalEntry === true,
+        followupFetch: variant.followupFetch === true,
+        followupDelayMs: variant.followupDelayMs || 1200,
+        fetchTimeout: variant.fetchTimeout || 15000
       });
     }).then(function(result) {
       if (result && result.ok && result.clean) {
-        try {
-          window.StructaCamera?.applyProbeDescription?.(
-            probeCapture.captureId,
-            probeCapture.capture?.node_id || '',
-            result.clean,
-            {
-              source: variant.id,
-              raw: result.raw || ''
-            }
-          );
-        } catch (_) {}
+        writeProbeResultToCurrentCapture(result.clean, variant, {
+          source: variant.id,
+          raw: result.raw || ''
+        });
       }
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
       return result;

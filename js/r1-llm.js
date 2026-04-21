@@ -1363,6 +1363,15 @@
     return lines.join('\n');
   }
 
+  function buildFollowupImageFetchPrompt(keyword) {
+    var label = String(keyword || 'latest image analysis').trim();
+    return [
+      'Return only the exact text of the most recent image analysis labeled "' + label + '".',
+      'Plain text only.',
+      'Do not add commentary.'
+    ].join('\n');
+  }
+
   function buildShowCaptureContext(description, options) {
     var opts = options || {};
     return {
@@ -1748,7 +1757,39 @@
       reason: 'image prompt probes stay quiet'
     }, function() {
       var bridgeCall;
-      if (options.listenback === true) {
+      if (options.followupFetch === true) {
+        bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
+          journal: options.journal === true,
+          timeout: timeoutMs,
+          expectResponse: false,
+          pluginId: options.pluginId || '',
+          useLLM: options.useLLM,
+          wantsR1Response: options.wantsR1Response === true,
+          omitMessage: options.omitMessage === true,
+          omitUseLLM: options.omitUseLLM === true,
+          omitWantsR1Response: options.omitWantsR1Response === true,
+          omitWantsJournalEntry: options.omitWantsJournalEntry === true
+        }).then(function(postResult) {
+          if (!postResult || !postResult.ok) return postResult || {
+            ok: false,
+            error: 'followup post failed',
+            code: 'followup-post-failed'
+          };
+          return new Promise(function(resolve) {
+            setTimeout(function() {
+              sendToLLM(buildFollowupImageFetchPrompt(options.keyword || options.label || 'latest image analysis'), {
+                timeout: Number(options.fetchTimeout || 14000),
+                priority: 'high'
+              }).then(function(fetchResult) {
+                if (fetchResult && typeof fetchResult === 'object') {
+                  fetchResult.mode = 'followup-fetch';
+                }
+                resolve(fetchResult);
+              });
+            }, Number(options.followupDelayMs || 1200));
+          });
+        });
+      } else if (options.listenback === true) {
         bridgeCall = sendBridgeImageWithListenback(imageInput, String(prompt || '').trim(), {
           journal: options.journal === true,
           timeout: timeoutMs,

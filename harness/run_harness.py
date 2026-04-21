@@ -328,11 +328,7 @@ def normalize_onboarding_step(ui: dict) -> str | int:
 
 
 def onboarding_allowed_card_ids(step: str | int) -> list[str]:
-    if step == "complete":
-        return list(CARD_IDS)
-    if step in {3, 4}:
-        return ["now", "show", "know"]
-    return ["now", "show"]
+    return list(CARD_IDS)
 
 
 def preferred_home_card_id(step: str | int, allowed: list[str]) -> str:
@@ -346,11 +342,9 @@ def preferred_home_card_id(step: str | int, allowed: list[str]) -> str:
 def effective_selected_card_id(selected_card_id: str, step: str | int, allowed: list[str]) -> str:
     selected = selected_card_id or "now"
     preferred = preferred_home_card_id(step, allowed)
-    if not allowed:
+    if selected in CARD_IDS:
         return selected
-    if step == "complete":
-        return selected if selected in CARD_IDS else "now"
-    if selected not in allowed or (preferred and selected != preferred):
+    if preferred in CARD_IDS:
         return preferred
     return selected
 
@@ -538,6 +532,7 @@ def build_ui_state_summary(snapshot: dict) -> dict:
     annotation_pending = int((((current or {}).get("meta") or {}).get("annotation_window_until") or 0)) > 0
     claim_extraction_pending = bool((((current or {}).get("meta") or {}).get("claim_extraction_pending")))
     pending_queue = pending_capture_queue_count(captures)
+    processing_line = get_capture_processing_line(current)
     if annotation_pending:
         show_footer = "hold ptt · tag frame"
     elif claim_extraction_pending:
@@ -545,7 +540,10 @@ def build_ui_state_summary(snapshot: dict) -> dict:
     elif pending_queue > 0:
         show_footer = f"{pending_queue} queued · working in background"
     elif captures:
-        show_footer = f"{len(current_claims)} claims · hold ptt · comment" if current_claims else "hold ptt · comment"
+        if processing_line == "hold ptt to describe" and not current_claims:
+            show_footer = "hold ptt to describe"
+        else:
+            show_footer = f"{len(current_claims)} claims · hold ptt · comment" if current_claims else "hold ptt · comment"
     else:
         show_footer = "ready for a frame"
     ui.update({
@@ -558,7 +556,7 @@ def build_ui_state_summary(snapshot: dict) -> dict:
         "show_capture_count": len(captures),
         "show_status": "reviewing" if captures else "empty",
         "show_current_summary": get_capture_summary(current),
-        "show_current_processing_line": get_capture_processing_line(current),
+        "show_current_processing_line": processing_line,
         "show_current_analysis_state": str((((current or {}).get("meta") or {}).get("analysis_status") or "")).lower(),
         "show_claim_count": len(current_claims),
         "show_footer": show_footer,

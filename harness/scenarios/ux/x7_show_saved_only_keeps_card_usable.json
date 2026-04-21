@@ -8,7 +8,7 @@
     "show_available": true,
     "show_capture_count": 1,
     "show_current_processing_line": "hold ptt to describe",
-    "show_footer": "hold ptt · comment"
+    "show_footer": "hold ptt to describe"
   },
   "expect_no_orphan_evidence": true
 }

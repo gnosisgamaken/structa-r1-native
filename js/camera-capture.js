@@ -207,6 +207,35 @@
     });
   }
 
+  function hasShowTellSemanticResult(entryId, nodeId) {
+    const project = native?.getProjectMemory?.() || {};
+    const refs = findCaptureRefs(project, entryId, nodeId);
+    const captureDone = !!refs.capture?.meta?.show_tell_semantic_done;
+    const nodeDone = !!refs.node?.meta?.show_tell_semantic_done;
+    return captureDone || nodeDone;
+  }
+
+  function markShowTellSemanticResult(entryId, nodeId, patch) {
+    const update = patch && typeof patch === 'object' ? patch : {};
+    native?.touchProjectMemory?.(function(project) {
+      const refs = findCaptureRefs(project, entryId, nodeId);
+      if (refs.capture) {
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          ...update,
+          show_tell_semantic_done: true
+        };
+      }
+      if (refs.node) {
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          ...update,
+          show_tell_semantic_done: true
+        };
+      }
+    });
+  }
+
   function clearAnnotationWindow() {
     if (annotationWindowTimer) {
       clearTimeout(annotationWindowTimer);
@@ -242,9 +271,10 @@
     }, ANNOTATION_WINDOW_MS);
   }
 
-  function applyAnalysisReady(job, result, insightNode) {
+  function applyAnalysisReady(job, result, analysisMeta) {
+    const meta = analysisMeta && typeof analysisMeta === 'object' ? analysisMeta : {};
     const claimIds = Array.isArray(result?.claims) ? result.claims.map(function(claim) { return claim?.id; }).filter(Boolean) : [];
-    const linkedClaimIds = Array.isArray(insightNode?.meta?.claim_ids) ? insightNode.meta.claim_ids.filter(Boolean) : claimIds;
+    const linkedClaimIds = Array.isArray(meta?.claimIds) ? meta.claimIds.filter(Boolean) : claimIds;
     native?.touchProjectMemory?.(function(project) {
       const refs = findCaptureRefs(project, job.entryId, job.nodeId);
       if (refs.capture) {
@@ -261,7 +291,8 @@
           claim_ids: linkedClaimIds,
           claim_extraction_pending: !!result?.claim_extraction_pending,
           analysis_stage: result?.claim_extraction_pending ? 'extracting claims' : 'done',
-          annotation_window_until: 0
+          annotation_window_until: 0,
+          capture_semantic_result_count: Number(refs.capture?.meta?.capture_semantic_result_count || 0) + (meta.countIncrement ? 1 : 0)
         };
       }
       if (refs.node) {
@@ -276,27 +307,19 @@
           claim_ids: linkedClaimIds,
           claim_extraction_pending: !!result?.claim_extraction_pending,
           analysis_stage: result?.claim_extraction_pending ? 'extracting claims' : 'done',
-          annotation_window_until: 0
+          annotation_window_until: 0,
+          capture_semantic_result_count: Number(refs.node?.meta?.capture_semantic_result_count || 0) + (meta.countIncrement ? 1 : 0)
         };
-        if (insightNode && insightNode.node_id) {
-          refs.node.links = Array.isArray(refs.node.links) ? refs.node.links : [];
-          if (refs.node.links.indexOf(insightNode.node_id) === -1) refs.node.links.push(insightNode.node_id);
-          const linkedInsight = refs.nodes.find(function(node) { return node.node_id === insightNode.node_id; });
-          if (linkedInsight) {
-            linkedInsight.links = Array.isArray(linkedInsight.links) ? linkedInsight.links : [];
-            if (linkedInsight.links.indexOf(refs.node.node_id) === -1) linkedInsight.links.push(refs.node.node_id);
-          }
-        }
       }
       native?.updateUIState?.({
         last_capture_summary: result.clean,
-        last_insight_summary: result.clean
+        user_status: 'hold ptt to describe'
       });
     });
     native?.traceEvent?.('image', 'analyzing', 'analyzed', {
       entryId: job.entryId || '',
       nodeId: job.nodeId || '',
-      insightId: insightNode?.node_id || ''
+      semanticResultId: meta?.commentId || ''
     });
   }
 
@@ -495,20 +518,63 @@
         })
       ]).then(function(result) {
         if (result && result.ok && result.clean) {
+          if (payload.annotation && hasShowTellSemanticResult(payload.entryId, payload.nodeId)) {
+            native?.traceEvent?.('show.tell', 'analyzing', 'deduped', {
+              entryId: payload.entryId || '',
+              nodeId: payload.nodeId || ''
+            });
+            return {
+              ...result,
+              deduped: true
+            };
+          }
           if (result.claim_extraction_pending) {
             updateCaptureAnalysisStage(payload.entryId, payload.nodeId, {
               analysis_stage: 'extracting claims',
               claim_extraction_pending: true
             });
           }
-          const insightNode = window.StructaLLM.storeAsInsight(result, payload.annotation ? 'show-tell' : 'capture', {
-            imageId: payload.entryId || '',
-            itemId: payload.nodeId || ''
+          var storedClaimIds = [];
+          if (Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
+            const storedClaims = native.ingestClaims(result.claims, {
+              source: payload.annotation ? 'show-tell' : 'image',
+              sourceRef: {
+                imageId: payload.entryId || '',
+                itemId: payload.nodeId || ''
+              }
+            }) || [];
+            storedClaimIds = storedClaims.map(function(claim) { return claim?.id; }).filter(Boolean);
+          }
+          var appendedComment = null;
+          if (payload.annotation && payload.nodeId && native?.appendThreadComment) {
+            appendedComment = native.appendThreadComment(
+              payload.nodeId,
+              result.clean,
+              'capture_result',
+              'show-tell'
+            );
+            if (appendedComment?.comment?.id) {
+              window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
+                detail: {
+                  nodeId: payload.nodeId,
+                  commentId: appendedComment.comment.id,
+                  comment: appendedComment.comment,
+                  surface: 'show'
+                }
+              }));
+              markShowTellSemanticResult(payload.entryId, payload.nodeId, {
+                show_tell_comment_id: appendedComment.comment.id
+              });
+            }
+          }
+          applyAnalysisReady(payload, result, {
+            claimIds: storedClaimIds,
+            commentId: appendedComment?.comment?.id || '',
+            countIncrement: payload.annotation ? 1 : 0
           });
-          applyAnalysisReady(payload, result, insightNode);
           window.StructaFeedback?.fire?.('resolve');
-          native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell insight ready' : 'visual insight ready' });
-          if (!hadAnalyzedCaptures) window.StructaLLM?.speakMilestone?.('first_capture');
+          native?.appendLogEntry?.({ kind: 'llm', message: payload.annotation ? 'show+tell result ready' : 'visual result ready' });
+          if (!hadAnalyzedCaptures && !payload.annotation) window.StructaLLM?.speakMilestone?.('first_capture');
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
             detail: { source: 'visual-insight' }
           }));
@@ -1065,6 +1131,19 @@
           preview_data: dataUrl,
           claim_extraction_pending: false,
           annotation_window_until: annotationWindowUntil
+        }
+      });
+    }
+    if (captureNode?.node_id) {
+      native?.touchProjectMemory?.(function(project) {
+        const refs = findCaptureRefs(project, bundle?.entry_id || '', captureNode.node_id);
+        if (refs.capture) refs.capture.node_id = captureNode.node_id;
+        if (refs.node) {
+          refs.node.capture_image = refs.node.capture_image || bundle?.entry_id || '';
+          refs.node.meta = {
+            ...(refs.node.meta || {}),
+            bundle_id: refs.node.meta?.bundle_id || bundle?.entry_id || ''
+          };
         }
       });
     }

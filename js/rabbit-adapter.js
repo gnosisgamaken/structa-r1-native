@@ -2453,7 +2453,7 @@
     if (raw === 'question answered') return null;
     if (raw === 'insight extracted') return 'signal ready';
     if (raw === 'insight unavailable' || raw === 'insight failed') return null;
-    if (raw === 'visual insight ready' || raw === 'show+tell insight ready') return 'visual note ready';
+    if (raw === 'visual insight ready' || raw === 'show+tell insight ready' || raw === 'visual result ready' || raw === 'show+tell result ready') return 'visual note ready';
     if (raw === 'visual insight unavailable' || raw === 'visual insight failed') return 'visual note unavailable';
     if (raw.startsWith('bridge-in onpluginmessage')) return null;
     if (raw.startsWith('bridge-in response')) return null;

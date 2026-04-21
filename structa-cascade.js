@@ -378,12 +378,12 @@
     });
     const merged = new Map();
     memoryCaptures.forEach(function(capture) {
-      const key = capture?.entry_id || capture?.id || capture?.node_id || '';
+      const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
       if (!key) return;
       merged.set(key, capture);
     });
     projectCaptures.forEach(function(capture) {
-      const key = capture?.entry_id || capture?.id || capture?.node_id || '';
+      const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
       if (!key) return;
       const existing = merged.get(key) || {};
       merged.set(key, {
@@ -607,9 +607,7 @@
   }
 
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
-    if (step === 'complete') return cards.map(card => card.id);
-    if (step === 3 || step === 4) return ['now', 'show', 'know'];
-    return ['now', 'show'];
+    return cards.map(card => card.id);
   }
 
   function preferredHomeCardId(step = getOnboardingStep(), allowed = onboardingAllowedCardIds(step)) {
@@ -623,8 +621,9 @@
     const preferred = preferredHomeCardId(step, allowed);
     const selected = selectedCardId || 'now';
     if (!allowed.length) return selected;
-    if (step === 'complete') return cards.some(card => card.id === selected) ? selected : 'now';
-    if (!allowed.includes(selected) || (preferred && selected !== preferred)) return preferred;
+    if (cards.some(card => card.id === selected)) return selected;
+    if (preferred && cards.some(card => card.id === preferred)) return preferred;
+    if (step === 'complete') return 'now';
     return selected;
   }
 
@@ -632,8 +631,14 @@
     return true;
   }
 
+  function canOpenProjectSwitcherFromState(state = currentState) {
+    if (state === STATES.CAMERA_OPEN || state === STATES.CAMERA_CAPTURE) return false;
+    if (recordingActive()) return false;
+    return true;
+  }
+
   function onboardingAllowsProjectSwitcher() {
-    return getOnboardingStep() === 1;
+    return canOpenProjectSwitcherFromState();
   }
 
   function setOnboardingStep(step, options = {}) {
@@ -681,7 +686,7 @@
   }
 
   function homeOnboardingSelectionAllowed(cardId) {
-    return onboardingAllowedCardIds().includes(cardId);
+    return cards.some(card => card.id === cardId);
   }
 
   function selectNextAllowedCard(direction) {
@@ -744,6 +749,9 @@
     if (model.claimExtractionPending) return COPY.backgroundWorking;
     if (model.pendingQueueCount > 0) return COPY.queuedWorking(model.pendingQueueCount);
     if (model.captures.length) {
+      if (model.processingLine === 'hold ptt to describe' && !model.claimCount) {
+        return 'hold ptt to describe';
+      }
       return model.claimCount > 0 ? `${model.claimCount} claims · ${COPY.holdPttComment}` : COPY.holdPttComment;
     }
     return COPY.readyForFrame;
@@ -1384,11 +1392,11 @@
     if (onboardingActive()) {
       const step = getOnboardingStep();
       markTutorialStepEntered(step);
-      const allowed = onboardingAllowedCardIds(step);
-      const preferredCardId = preferredHomeCardId(step, allowed);
-      if (!allowed.includes(currentCard()?.id) || (preferredCardId && currentCard()?.id !== preferredCardId)) {
-        const nextIndex = cards.findIndex(function(card) { return card.id === preferredCardId; });
-        if (nextIndex >= 0) selectedIndex = nextIndex;
+      const currentId = currentCard()?.id || '';
+      const hinted = getEffectiveHomeSelectedCardId(currentId || getUIState()?.selected_card_id || '', step);
+      if (hinted && hinted !== currentId) {
+        const hintedIndex = cards.findIndex(function(card) { return card.id === hinted; });
+        if (hintedIndex >= 0) selectedIndex = hintedIndex;
       }
     }
     maybeStartHeartbeat();
@@ -1673,10 +1681,6 @@
 
   // === Open a card's primary surface ===
   function openCard(card) {
-    if (onboardingActive() && !onboardingAllowedCardIds().includes(card.id)) {
-      fireFeedback('blocked');
-      return;
-    }
     fireFeedback('touch-commit');
     if (card.surface === 'camera') {
       transition(STATES.SHOW_BROWSE);
@@ -1842,7 +1846,10 @@
   }
 
   function openProjectSwitcher() {
-    if (onboardingActive() && !onboardingAllowsProjectSwitcher()) return;
+    if (!canOpenProjectSwitcherFromState()) {
+      fireFeedback('blocked');
+      return;
+    }
     const projects = getProjects();
     if (!projects.length) return;
     const activeId = getActiveProjectId();
@@ -1880,13 +1887,6 @@
       fireFeedback('blocked');
       return false;
     }
-    if (onboardingActive() && getOnboardingStep() === 1) {
-      fireFeedback('touch-commit');
-      setOnboardingStep(2, { via: 'primary' });
-      pushLog('lesson 1 complete', 'system');
-      transition(STATES.NOW_BROWSE);
-      return true;
-    }
     const selectedIndexValue = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
     const index = Math.max(0, Math.min(selectedIndexValue, rows.length - 1));
     const row = rows[index];
@@ -1901,6 +1901,10 @@
     }
     const project = row.project;
     fireFeedback('touch-commit');
+    if (onboardingActive() && getOnboardingStep() === 1) {
+      setOnboardingStep(2, { via: 'primary' });
+      pushLog('lesson 1 complete', 'system');
+    }
     native?.switchProject?.(project.project_id);
     pushLog(`project: ${project.name}`, 'voice');
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -3142,7 +3146,7 @@
     const selected = Math.max(0, Math.min(selectedIndexValue, Math.max(rows.length - 1, 0)));
     const selectedRow = rows[selected] || rows[0];
     const selectedProject = selectedRow?.project || projects[0];
-    const isFreshWorkspace = freshWorkspaceState() && !onboardingAllowsProjectSwitcher();
+    const isFreshWorkspace = freshWorkspaceState();
     const onboardingProjectLesson = onboardingActive() && getOnboardingStep() === 1;
     const activeCount = projects.filter(function(project) { return project.status !== 'archived'; }).length;
 
@@ -3347,7 +3351,7 @@
     const selected = index === selectedIndex;
     const layout = cardLayout(index);
     const stackLead = !selected && layout.depth === 0;
-    const onboardingDim = onboardingActive() && currentState === STATES.HOME && !homeOnboardingSelectionAllowed(card.id);
+    const onboardingDim = false;
     const group = mk('g', {
       transform: `translate(${layout.x},${layout.y}) scale(${layout.scale})`,
       opacity: String(onboardingDim ? Math.min(layout.opacity, 0.3) : layout.opacity), tabindex: '0', role: 'button',
@@ -3438,10 +3442,6 @@
 
     const activate = event => {
       event.preventDefault();
-      if (onboardingActive() && !homeOnboardingSelectionAllowed(card.id)) {
-        fireFeedback('blocked');
-        return;
-      }
       if (selected && isHome()) {
         if (card.id === 'show' && event.type === 'pointerup') {
           openCameraFromShow('touch');
@@ -4698,7 +4698,6 @@
     }
     switch (currentState) {
       case STATES.PROJECT_SWITCHER: {
-        if (onboardingActive() && !onboardingAllowsProjectSwitcher()) break;
         const rows = getProjectSwitcherRows();
         if (!rows.length) break;
         const currentIndex = typeof stateData.projectListIndex === 'number' ? stateData.projectListIndex : 0;
@@ -4805,12 +4804,6 @@
       }
 
       case STATES.HOME:
-        if (onboardingActive()) {
-          const step = getOnboardingStep();
-          if (step < 3) break;
-          selectNextAllowedCard(direction);
-          break;
-        }
         selectIndex(selectedIndex + (direction > 0 ? 1 : -1));
         break;
 
@@ -5024,10 +5017,6 @@
         break;
 
       case STATES.HOME:
-        if (onboardingActive() && !homeOnboardingSelectionAllowed(currentCard().id)) {
-          fireFeedback('blocked');
-          return;
-        }
         openCard(currentCard());
         break;
 
@@ -5419,10 +5408,6 @@
     switch (currentState) {
       case STATES.PROJECT_SWITCHER:
         if (event) event.preventDefault?.();
-        if (onboardingActive() && getOnboardingStep() === 1) {
-          transition(STATES.NOW_BROWSE);
-          return;
-        }
         transition(STATES.HOME);
         return;
 
@@ -5862,11 +5847,7 @@
       return;
     }
     if (onboardingActive()) {
-      const step = getOnboardingStep();
-      if (step === 1) {
-        openProjectSwitcher();
-      }
-      return;
+      if (!canOpenProjectSwitcherFromState()) return;
     }
     if (currentState === STATES.PROJECT_SWITCHER) {
       transition(STATES.HOME);
@@ -5884,7 +5865,7 @@
   selectedIndex = Math.max(0, cards.findIndex(card => card.id === (initialState.selected_card_id || 'now')));
   if (selectedIndex < 0) selectedIndex = 3;
   if (onboardingActive()) {
-    const nextCardId = getEffectiveHomeSelectedCardId(currentCard()?.id || initialState.selected_card_id || 'now');
+    const nextCardId = getEffectiveHomeSelectedCardId(initialState.selected_card_id || currentCard()?.id || 'now');
     const nextIndex = cards.findIndex(card => card.id === nextCardId);
     if (nextIndex >= 0) selectedIndex = nextIndex;
   }

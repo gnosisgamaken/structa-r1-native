@@ -4,8 +4,8 @@
   "runtime_dump": "runtime/synthetic/w8_onboarding_show_available.json",
   "expect_ui_state": {
     "onboarding_step": 2,
-    "allowed_card_ids": ["now", "show"],
-    "preferred_home_card_id": "now",
+    "allowed_card_ids": ["show", "tell", "know", "now"],
+    "preferred_home_card_id": "show",
     "effective_selected_card_id": "now",
     "show_available": true,
     "show_capture_count": 0,

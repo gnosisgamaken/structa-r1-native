@@ -1329,21 +1329,16 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'magic-norm-r1-fetch',
-      keyword: 'probe-magic-norm-r1-fetch-an1',
-      label: 'img fetch',
-      prompt: 'analysis tag: probe-magic-norm-r1-fetch-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-norm-r1-direct',
+      keyword: 'probe-magic-norm-r1-direct-an1',
+      label: 'img direct',
+      prompt: 'analysis tag: probe-magic-norm-r1-direct-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       wantsR1Response: true,
       omitWantsJournalEntry: true,
-      expectResponse: false,
-      followupFetch: true,
-      followupDelayMs: 10000,
-      followupIntervalMs: 3500,
-      followupFetchAttempts: 4,
-      fetchTimeout: 18000
+      expectResponse: true
     }
   ];
 
@@ -1426,7 +1421,7 @@
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
         message: variant.label,
-        detail: 'tag -> wait 10s -> fetch'
+        detail: 'direct callback capture'
       });
     });
     return rows;

@@ -45,7 +45,10 @@
   async function r1Save(data) {
     if (!status.r1Storage) return false;
     try {
-      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify({
+        value: data,
+        timestamp: Date.now()
+      }))));
       await window.creationStorage.plain.setItem(STORAGE_KEY, encoded);
       return true;
     } catch (e) { return false; }
@@ -57,7 +60,17 @@
       const encoded = await window.creationStorage.plain.getItem(STORAGE_KEY);
       if (!encoded) return null;
       const json = decodeURIComponent(escape(atob(encoded)));
-      return JSON.parse(json);
+      const parsed = JSON.parse(json);
+      if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'value')) {
+        return {
+          data: parsed.value,
+          timestamp: Number(parsed.timestamp || 0)
+        };
+      }
+      return {
+        data: parsed,
+        timestamp: 0
+      };
     } catch (e) { return null; }
   }
 
@@ -180,7 +193,7 @@
 
     if (status.r1Storage) {
       const r1Data = await r1Load();
-      if (r1Data) sources.push({ data: r1Data, source: 'r1', timestamp: Date.now() });
+      if (r1Data) sources.push({ data: r1Data.data, source: 'r1', timestamp: Number(r1Data.timestamp || 0) });
     }
 
     if (status.indexedDB) {

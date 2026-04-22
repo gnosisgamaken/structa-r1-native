@@ -531,6 +531,25 @@
     });
   }
 
+  function isInterimFetchResponse(text, keyword) {
+    var clean = sanitizeResponse(text || '');
+    var lowerClean = lower(clean);
+    var lowerKeyword = lower(String(keyword || '').trim());
+    if (!clean) return true;
+    if (lowerClean === 'pending') return true;
+    if (lowerClean === 'let me see what we’ve got here') return true;
+    if (lowerClean === "let me see what we've got here") return true;
+    if (lowerClean.indexOf('let me see what we') === 0) return true;
+    if (lowerClean === 'taking a look') return true;
+    if (lowerClean.indexOf('taking a look') === 0) return true;
+    if (lowerClean.indexOf('let me check') === 0) return true;
+    if (lowerClean.indexOf('one moment') === 0) return true;
+    if (lowerClean.indexOf('hold on') === 0) return true;
+    if (lowerClean.indexOf('give me a second') === 0) return true;
+    if (lowerKeyword && lowerClean === lowerKeyword) return true;
+    return false;
+  }
+
   function sendBridgeImage(imageBase64, prompt, options) {
     var opts = options || {};
     if (typeof PluginMessageHandler === 'undefined') {
@@ -1007,6 +1026,20 @@
         ? pendingBridgeRequests.get(correlationId)
         : activeRequest;
       if (cb) {
+        var clean = sanitizeResponse(responseText);
+        if (cb.opts?.waitForSettledText && isInterimFetchResponse(clean, cb.opts?.pendingKeyword || '')) {
+          if (native && native.probeMode && native.appendProbeEvent) {
+            native.appendProbeEvent({
+              source: 'bridge-in',
+              name: 'response pending'
+            });
+          }
+          native?.traceEvent?.('plugin.message.interim', 'in', 'llm', {
+            correlationId: cb.correlationId || correlationId || '',
+            text: compactText(clean, 120)
+          });
+          return;
+        }
         clearBridgeRequest(cb);
         if (native && native.probeMode && native.appendProbeEvent) {
           native.appendProbeEvent({
@@ -1014,7 +1047,6 @@
             name: 'response received'
           });
         }
-        var clean = sanitizeResponse(responseText);
         cb.resolve({
           ok: true,
           text: responseText,
@@ -1385,8 +1417,9 @@
     var attempt = Number(attemptIndex || 0);
     if (attempt <= 0) {
       return [
-        'Can you pull the details of the image analysis note with this exact analysis tag: ' + label + '?',
-        'Return only the note details in plain text.',
+        'Can you pull the details of the latest image analysis note you created?',
+        'Use this exact analysis tag to identify the note: ' + label,
+        'Return only the saved note text in plain text.',
         'Do not analyze any image again.',
         'Do not create a new note.',
         'If it is not ready yet, reply exactly: PENDING'
@@ -1394,7 +1427,7 @@
     }
     if (attempt === 1) {
       return [
-        'Can you pull the details of the note tagged ' + label + '?',
+        'Can you pull the saved image analysis note with exact analysis tag ' + label + '?',
         'Return only the note text in plain text.',
         'Do not analyze a new image.',
         'Do not create a new note.',
@@ -1445,7 +1478,9 @@
           timeout: timeoutMs,
           priority: 'high',
           allowMemoryLookup: true,
-          expectBridgeResponse: true
+          expectBridgeResponse: true,
+          waitForSettledText: true,
+          pendingKeyword: keyword
         }).then(function(fetchResult) {
           if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
             if (index + 1 >= attempts) {

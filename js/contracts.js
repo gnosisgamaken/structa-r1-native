@@ -19,9 +19,10 @@
   function makeEntryId(kind = 'event') {
     const now = new Date();
     const base = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('') + '-' + [pad(now.getHours()), pad(now.getMinutes()), pad(now.getSeconds())].join('') + `-${kind}`;
-    if (kind !== 'claim') return base;
     uniqueCounters[base] = Number(uniqueCounters[base] || 0) + 1;
-    return base + '-' + String(uniqueCounters[base]).padStart(2, '0');
+    const suffix = String(uniqueCounters[base]).padStart(2, '0');
+    if (kind !== 'claim' && uniqueCounters[base] === 1) return base;
+    return base + '-' + suffix;
   }
 
   function createEnvelope(input = {}) {

@@ -1353,11 +1353,11 @@
   const IMAGE_PROBE_VARIANTS = [
     {
       id: 'magic-journal-fetch',
-      keyword: 'probe-magic-journal-fetch-an1',
+      keyword: 'probe-magic-journal-fetch',
       label: 'img fetch',
       prompt: [
         'Analyze this image and record a note in my journal about it.',
-        'Use this exact analysis tag in the note: probe-magic-journal-fetch-an1',
+        'Use this exact analysis tag in the note: {{analysis_tag}}',
         'Describe only visible facts.',
         'Keep it concise.',
         'Do not speculate.'
@@ -1474,6 +1474,16 @@
     const imagePromise = variant.imageInputMode === 'normalizedDataUrl'
       ? normalizeProbeImageHref(probeCapture.imageHref)
       : Promise.resolve(probeCapture.imageBase64);
+    const keywordSeed = [
+      variant.keyword || variant.id || 'probe-image',
+      String(probeCapture.captureId || '').slice(-12) || 'capture',
+      Date.now().toString(36)
+    ].filter(Boolean).join('-');
+    const resolvedVariant = {
+      ...variant,
+      keyword: keywordSeed,
+      prompt: String(variant.prompt || '').replace(/\{\{analysis_tag\}\}/g, keywordSeed)
+    };
     function writeProbeResultToCurrentCapture(cleanText, variant, probeMeta) {
       const text = String(cleanText || '').trim();
       if (!text) return false;
@@ -1543,37 +1553,37 @@
     }
 
     return imagePromise.then(function(imageInput) {
-      return window.StructaLLM?.probeImagePrompt?.(imageInput, variant.prompt, {
+      return window.StructaLLM?.probeImagePrompt?.(imageInput, resolvedVariant.prompt, {
         captureId: probeCapture.captureId,
-        keyword: variant.keyword,
-        label: variant.label,
-        imageInputMode: variant.imageInputMode || 'raw',
-        pluginId: variant.pluginId || '',
-        journal: variant.journal === true,
-        wantsR1Response: variant.wantsR1Response === true,
-        expectResponse: variant.expectResponse !== false,
-        listenback: variant.listenback === true,
-        listenbackPostFirst: variant.listenbackPostFirst === true,
-        listenbackStartDelayMs: variant.listenbackStartDelayMs || 320,
-        listenbackWarmupMs: variant.listenbackWarmupMs || 120,
-        listenbackStopAfterMs: variant.listenbackStopAfterMs || 5200,
-        listenbackTimeoutMs: variant.listenbackTimeoutMs || 7000,
-        coverText: variant.coverText || '',
-        coverDelayMs: variant.coverDelayMs || 260,
-        omitMessage: variant.omitMessage === true,
-        omitUseLLM: variant.omitUseLLM === true,
-        omitWantsR1Response: variant.omitWantsR1Response === true,
-        omitWantsJournalEntry: variant.omitWantsJournalEntry === true,
-        followupFetch: variant.followupFetch === true,
-        followupDelayMs: variant.followupDelayMs || 4200,
-        followupIntervalMs: variant.followupIntervalMs || 2600,
-        followupFetchAttempts: variant.followupFetchAttempts || 3,
-        fetchTimeout: variant.fetchTimeout || 15000
+        keyword: resolvedVariant.keyword,
+        label: resolvedVariant.label,
+        imageInputMode: resolvedVariant.imageInputMode || 'raw',
+        pluginId: resolvedVariant.pluginId || '',
+        journal: resolvedVariant.journal === true,
+        wantsR1Response: resolvedVariant.wantsR1Response === true,
+        expectResponse: resolvedVariant.expectResponse !== false,
+        listenback: resolvedVariant.listenback === true,
+        listenbackPostFirst: resolvedVariant.listenbackPostFirst === true,
+        listenbackStartDelayMs: resolvedVariant.listenbackStartDelayMs || 320,
+        listenbackWarmupMs: resolvedVariant.listenbackWarmupMs || 120,
+        listenbackStopAfterMs: resolvedVariant.listenbackStopAfterMs || 5200,
+        listenbackTimeoutMs: resolvedVariant.listenbackTimeoutMs || 7000,
+        coverText: resolvedVariant.coverText || '',
+        coverDelayMs: resolvedVariant.coverDelayMs || 260,
+        omitMessage: resolvedVariant.omitMessage === true,
+        omitUseLLM: resolvedVariant.omitUseLLM === true,
+        omitWantsR1Response: resolvedVariant.omitWantsR1Response === true,
+        omitWantsJournalEntry: resolvedVariant.omitWantsJournalEntry === true,
+        followupFetch: resolvedVariant.followupFetch === true,
+        followupDelayMs: resolvedVariant.followupDelayMs || 4200,
+        followupIntervalMs: resolvedVariant.followupIntervalMs || 2600,
+        followupFetchAttempts: resolvedVariant.followupFetchAttempts || 3,
+        fetchTimeout: resolvedVariant.fetchTimeout || 15000
       });
     }).then(function(result) {
       if (result && result.ok && result.clean) {
-        writeProbeResultToCurrentCapture(result.clean, variant, {
-          source: variant.id,
+        writeProbeResultToCurrentCapture(result.clean, resolvedVariant, {
+          source: resolvedVariant.id,
           raw: result.raw || ''
         });
       }

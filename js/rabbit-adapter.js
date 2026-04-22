@@ -2822,6 +2822,74 @@
     return entry;
   }
 
+  function captureRefMatches(item, entryId, nodeId) {
+    if (!item) return false;
+    var key = item.entry_id || item.id || item.node_id || item.capture_image || item.meta?.bundle_id || '';
+    return (!!entryId && (key === entryId || item.capture_image === entryId || item.meta?.bundle_id === entryId))
+      || (!!nodeId && item.node_id === nodeId);
+  }
+
+  function applyCaptureDescription(entryId, nodeId, text, options) {
+    var clean = String(text || '').trim();
+    var opts = options && typeof options === 'object' ? options : {};
+    if (!clean) {
+      return { ok: false, error: 'description missing', entryId: entryId || '', nodeId: nodeId || '' };
+    }
+    var stamp = new Date().toISOString();
+    var rawFound = false;
+    memory.captures = (memory.captures || []).map(function(capture) {
+      if (!captureRefMatches(capture, entryId, nodeId)) return capture;
+      rawFound = true;
+      return {
+        ...capture,
+        summary: clean,
+        description_text: clean,
+        ai_analysis: clean,
+        data: capture.data || capture.preview_data || capture.meta?.preview_data || '',
+        meta: {
+          ...(capture.meta || {}),
+          analysis_status: 'ready',
+          analysis_stage: 'done',
+          analysis_completed_at: stamp,
+          description_text: clean
+        }
+      };
+    });
+    var nodeFound = false;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(item) {
+        return captureRefMatches(item, entryId, nodeId);
+      }) || null;
+      if (!node) return;
+      nodeFound = true;
+      node.body = clean;
+      node.meta = {
+        ...(node.meta || {}),
+        analysis_status: 'ready',
+        analysis_stage: 'done',
+        analysis_completed_at: stamp,
+        description_text: clean
+      };
+    });
+    updateUIState({
+      last_capture_entry_id: entryId || '',
+      last_capture_summary: clean,
+      user_status: 'description stored'
+    });
+    traceEvent('image.writeback', rawFound ? 'raw' : 'raw-miss', nodeFound ? 'node' : 'node-miss', {
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      source: opts.source || ''
+    });
+    return {
+      ok: rawFound || nodeFound,
+      rawFound: rawFound,
+      nodeFound: nodeFound,
+      entryId: entryId || '',
+      nodeId: nodeId || ''
+    };
+  }
+
   /**
    * isVisibleLogEntry -- aggressive noise suppression.
    * Only shows content-creation actions: voice, camera, llm insights, journal, export, heartbeat.
@@ -3607,6 +3675,7 @@
     setProjectBrief,
     saveDerivedCandidates,
     recordProductEvent,
+    applyCaptureDescription,
     getActiveProject,
     beginOperation,
     recordOperationWrite,

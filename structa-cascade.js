@@ -367,6 +367,12 @@
     return native?.getUIState?.() || getMemory().uiState || {};
   }
 
+  function preferFilled(primary, fallback) {
+    if (primary === undefined || primary === null) return fallback;
+    if (typeof primary === 'string') return primary.trim() ? primary : fallback;
+    return primary;
+  }
+
   function getCaptureList() {
     const activeProjectId = getActiveProjectId();
     if (cachedCaptureList.version === dataCacheVersion && cachedCaptureList.projectId === activeProjectId) {
@@ -386,10 +392,27 @@
       const key = capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_image || capture?.meta?.bundle_id || '';
       if (!key) return;
       const existing = merged.get(key) || {};
+      const mergedMeta = {
+        ...(existing.meta || {}),
+        ...(capture.meta || {})
+      };
+      mergedMeta.preview_data = preferFilled(mergedMeta.preview_data, existing.preview_data || existing.data || capture.preview_data || capture.data || '');
+      mergedMeta.description_text = preferFilled(mergedMeta.description_text, existing.description_text || capture.description_text || '');
+      mergedMeta.latest_comment_text = preferFilled(mergedMeta.latest_comment_text, existing.latest_comment_text || capture.latest_comment_text || '');
+      mergedMeta.analysis_status = preferFilled(mergedMeta.analysis_status, existing.meta?.analysis_status || '');
       merged.set(key, {
         ...existing,
         ...capture,
-        meta: { ...(existing.meta || {}), ...(capture.meta || {}) },
+        node_id: capture?.node_id || existing?.node_id || '',
+        summary: preferFilled(capture?.summary, existing?.summary || ''),
+        description_text: preferFilled(capture?.description_text, existing?.description_text || mergedMeta.description_text || ''),
+        latest_comment_text: preferFilled(capture?.latest_comment_text, existing?.latest_comment_text || mergedMeta.latest_comment_text || ''),
+        ai_analysis: preferFilled(capture?.ai_analysis, existing?.ai_analysis || ''),
+        prompt_text: preferFilled(capture?.prompt_text, existing?.prompt_text || ''),
+        voice_annotation: preferFilled(capture?.voice_annotation, existing?.voice_annotation || ''),
+        preview_data: preferFilled(capture?.preview_data, existing?.preview_data || mergedMeta.preview_data || ''),
+        data: preferFilled(capture?.data, existing?.data || capture?.preview_data || existing?.preview_data || mergedMeta.preview_data || ''),
+        meta: mergedMeta,
         image_asset: capture.image_asset || existing.image_asset || null
       });
     });
@@ -1453,6 +1476,14 @@
           raw: probeMeta?.raw || ''
         }
       ) === true;
+      const mirrored = native?.applyCaptureDescription?.(
+        probeCapture.captureId || '',
+        probeCapture.capture?.node_id || '',
+        text,
+        {
+          source: probeMeta?.source || variant.id || 'probe'
+        }
+      ) || { ok: false, rawFound: false, nodeFound: false };
       if (!applied) {
         native?.touchProjectMemory?.(function(project) {
           const nodes = project.nodes || [];
@@ -1473,6 +1504,13 @@
           }
         });
       }
+      native?.traceEvent?.('image.probe', applied ? 'apply' : 'apply-miss', mirrored.ok ? 'mirror' : 'mirror-miss', {
+        captureId: probeCapture.captureId || '',
+        nodeId: probeCapture.capture?.node_id || '',
+        source: probeMeta?.source || variant.id || '',
+        rawFound: mirrored.rawFound === true,
+        nodeFound: mirrored.nodeFound === true
+      });
       stateData.showCaptureEntryId = probeCapture.captureId || stateData.showCaptureEntryId || '';
       stateData.showStatus = 'capture ready';
       native?.updateUIState?.({

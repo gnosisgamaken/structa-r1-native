@@ -1358,8 +1358,8 @@
       prompt: [
         'Analyze this image and record a note in my journal about it.',
         'Use this exact analysis tag in the note: probe-magic-journal-fetch-an1',
-        'Visible facts only.',
-        'Write 2 to 4 short bullet points.',
+        'Describe only visible facts.',
+        'Keep it concise.',
         'Do not speculate.'
       ].join('\n'),
       imageInputMode: 'normalizedDataUrl',
@@ -1369,8 +1369,8 @@
       journal: true,
       followupFetch: true,
       followupDelayMs: 10000,
-      followupIntervalMs: 3500,
-      followupFetchAttempts: 4,
+      followupIntervalMs: 4000,
+      followupFetchAttempts: 5,
       fetchTimeout: 18000
     }
   ];

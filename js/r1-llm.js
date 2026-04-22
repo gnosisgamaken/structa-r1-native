@@ -1390,16 +1390,18 @@
     }
     if (attempt === 1) {
       return [
-        'Return the saved journal note for image analysis tag "' + label + '".',
-        'Return only the note text.',
+        'Can you pull the details of the latest image analysis note you created?',
+        'Use only the note tagged: ' + label,
+        'Return only the note details as plain text.',
         'Do not analyze a new image.',
         'Do not create a new note.',
         'Reply exactly: PENDING if unavailable.'
       ].join('\n');
     }
     return [
-      'What are the details of the latest journal note for image analysis tag "' + label + '"?',
-      'Return only the note contents.',
+      'Can you pull the details of the latest image analysis note you created?',
+      'Use only the note tagged: ' + label,
+      'Return only the note contents in plain text.',
       'Do not inspect a new image.',
       'Do not create a new note.',
       'If unavailable, reply exactly: PENDING'
@@ -1863,7 +1865,7 @@
         bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
           journal: options.journal === true,
           timeout: timeoutMs,
-          expectResponse: options.expectResponse !== false,
+          expectResponse: false,
           pluginId: options.pluginId || '',
           useLLM: options.useLLM,
           wantsR1Response: options.wantsR1Response === true,
@@ -1874,14 +1876,9 @@
         }).then(function(postResult) {
           if (!postResult || !postResult.ok) return postResult || {
             ok: false,
-            error: 'direct image request failed',
+            error: 'journal image request failed',
             code: 'followup-post-failed'
           };
-          if (postResult.clean) {
-            logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'direct hit', 'callback returned text', options.captureId || '');
-            return postResult;
-          }
-          logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'direct miss', postResult.error || postResult.code || 'callback missing', options.captureId || '');
           logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'wait', Math.round(Number(options.followupDelayMs || 10000) / 1000) + 's before text fetch', options.captureId || '');
           return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
             attempts: Number(options.followupFetchAttempts || 3),

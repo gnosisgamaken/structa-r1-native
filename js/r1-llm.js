@@ -1435,6 +1435,8 @@
     var intervalMs = Math.max(0, Number(opts.intervalMs || 3500));
     var timeoutMs = Math.max(4000, Number(opts.timeout || 14000));
     var captureId = String(opts.captureId || '').trim();
+    var prefetchCoverText = String(opts.prefetchCoverText || '').trim();
+    var prefetchCoverDelayMs = Math.max(0, Number(opts.prefetchCoverDelayMs || 240));
     return new Promise(function(resolve) {
       function runAttempt(index) {
         var humanAttempt = index + 1;
@@ -1477,7 +1479,16 @@
       logImageFetchStage(keyword, 'requested', 'tagged analysis posted', captureId);
       logImageFetchStage(keyword, 'wait', Math.round(initialDelayMs / 1000) + 's settle window', captureId);
       setTimeout(function() {
-        runAttempt(0);
+        if (!prefetchCoverText) {
+          runAttempt(0);
+          return;
+        }
+        logImageFetchStage(keyword, 'cover', compactText(prefetchCoverText, 16), captureId);
+        sendR1CoverSpeech(prefetchCoverText, { delay: prefetchCoverDelayMs }).finally(function() {
+          setTimeout(function() {
+            runAttempt(0);
+          }, prefetchCoverDelayMs);
+        });
       }, initialDelayMs);
     });
   }
@@ -1892,7 +1903,9 @@
             initialDelayMs: Number(options.followupDelayMs || 10000),
             intervalMs: Number(options.followupIntervalMs || 3500),
             timeout: Number(options.fetchTimeout || 18000),
-            captureId: options.captureId || ''
+            captureId: options.captureId || '',
+            prefetchCoverText: options.prefetchCoverText || '',
+            prefetchCoverDelayMs: Number(options.prefetchCoverDelayMs || 240)
           });
         });
       } else if (options.listenback === true) {

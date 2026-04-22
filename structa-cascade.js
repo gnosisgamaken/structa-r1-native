@@ -1368,10 +1368,12 @@
       wantsR1Response: true,
       journal: true,
       followupFetch: true,
-      followupDelayMs: 10000,
-      followupIntervalMs: 6000,
+      followupDelayMs: 16000,
+      followupIntervalMs: 7000,
       followupFetchAttempts: 2,
-      fetchTimeout: 22000
+      fetchTimeout: 22000,
+      prefetchCoverText: 'hm',
+      prefetchCoverDelayMs: 280
     }
   ];
 
@@ -1578,7 +1580,9 @@
         followupDelayMs: resolvedVariant.followupDelayMs || 4200,
         followupIntervalMs: resolvedVariant.followupIntervalMs || 2600,
         followupFetchAttempts: resolvedVariant.followupFetchAttempts || 3,
-        fetchTimeout: resolvedVariant.fetchTimeout || 15000
+        fetchTimeout: resolvedVariant.fetchTimeout || 15000,
+        prefetchCoverText: resolvedVariant.prefetchCoverText || '',
+        prefetchCoverDelayMs: resolvedVariant.prefetchCoverDelayMs || 240
       });
     }).then(function(result) {
       if (result && result.ok && result.clean) {

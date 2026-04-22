@@ -1444,43 +1444,37 @@
     function writeProbeResultToCurrentCapture(cleanText, variant, probeMeta) {
       const text = String(cleanText || '').trim();
       if (!text) return false;
-      native?.touchProjectMemory?.(function(project) {
-        const captures = project.captures || [];
-        const nodes = project.nodes || [];
-        const capture = captures.find(function(item) {
-          return (item?.entry_id || item?.id || item?.node_id || '') === probeCapture.captureId ||
-            (probeCapture.capture?.node_id && item?.node_id === probeCapture.capture.node_id);
-        }) || null;
-        const node = nodes.find(function(item) {
-          return item?.node_id === (probeCapture.capture?.node_id || '') ||
-            item?.capture_image === probeCapture.captureId ||
-            item?.meta?.bundle_id === probeCapture.captureId;
-        }) || null;
-        if (capture) {
-          capture.description_text = text;
-          capture.summary = text;
-          capture.ai_analysis = text;
-          capture.meta = {
-            ...(capture.meta || {}),
-            analysis_status: 'ready',
-            analysis_stage: 'done',
-            analysis_completed_at: new Date().toISOString(),
-            description_text: text
-          };
+      const applied = window.StructaCamera?.applyProbeDescription?.(
+        probeCapture.captureId || '',
+        probeCapture.capture?.node_id || '',
+        text,
+        {
+          source: probeMeta?.source || variant.id || 'probe',
+          raw: probeMeta?.raw || ''
         }
-        if (node) {
-          node.body = text;
-          node.meta = {
-            ...(node.meta || {}),
-            analysis_status: 'ready',
-            analysis_stage: 'done',
-            analysis_completed_at: new Date().toISOString(),
-            description_text: text
-          };
-        }
-      });
+      ) === true;
+      if (!applied) {
+        native?.touchProjectMemory?.(function(project) {
+          const nodes = project.nodes || [];
+          const node = nodes.find(function(item) {
+            return item?.node_id === (probeCapture.capture?.node_id || '') ||
+              item?.capture_image === probeCapture.captureId ||
+              item?.meta?.bundle_id === probeCapture.captureId;
+          }) || null;
+          if (node) {
+            node.body = text;
+            node.meta = {
+              ...(node.meta || {}),
+              analysis_status: 'ready',
+              analysis_stage: 'done',
+              analysis_completed_at: new Date().toISOString(),
+              description_text: text
+            };
+          }
+        });
+      }
       stateData.showCaptureEntryId = probeCapture.captureId || stateData.showCaptureEntryId || '';
-      stateData.showStatus = 'reviewing';
+      stateData.showStatus = 'capture ready';
       native?.updateUIState?.({
         last_capture_entry_id: probeCapture.captureId || '',
         last_capture_summary: text,

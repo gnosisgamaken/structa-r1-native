@@ -1369,9 +1369,9 @@
       journal: true,
       followupFetch: true,
       followupDelayMs: 10000,
-      followupIntervalMs: 4000,
-      followupFetchAttempts: 5,
-      fetchTimeout: 18000
+      followupIntervalMs: 6000,
+      followupFetchAttempts: 2,
+      fetchTimeout: 22000
     }
   ];
 

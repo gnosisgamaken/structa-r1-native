@@ -1385,9 +1385,8 @@
     var attempt = Number(attemptIndex || 0);
     if (attempt <= 0) {
       return [
-        'Can you pull the details of the latest image analysis note you created?',
-        'Use the note with this exact analysis tag: ' + label,
-        'Return only the details from that note in plain text.',
+        'Can you pull the details of the image analysis note with this exact analysis tag: ' + label + '?',
+        'Return only the note details in plain text.',
         'Do not analyze any image again.',
         'Do not create a new note.',
         'If it is not ready yet, reply exactly: PENDING'
@@ -1395,18 +1394,16 @@
     }
     if (attempt === 1) {
       return [
-        'Can you pull the details of the latest image analysis note you created?',
-        'Use the note with this exact analysis tag: ' + label,
-        'Return only the note details as plain text.',
+        'Can you pull the details of the note tagged ' + label + '?',
+        'Return only the note text in plain text.',
         'Do not analyze a new image.',
         'Do not create a new note.',
         'Reply exactly: PENDING if unavailable.'
       ].join('\n');
     }
     return [
-      'Can you pull the details of the latest image analysis note you created?',
-      'Use the note with this exact analysis tag: ' + label,
-      'Return only the contents of that note in plain text.',
+      'Can you pull the note tagged ' + label + '?',
+      'Return only that note in plain text.',
       'Do not analyze a new image.',
       'Do not create a new note.',
       'If unavailable, reply exactly: PENDING'
@@ -1419,6 +1416,9 @@
     var lowerKeyword = lower(String(keyword || '').trim());
     if (!clean) return true;
     if (lowerClean === 'pending') return true;
+    if (lowerClean === 'let me see what we’ve got here') return true;
+    if (lowerClean === "let me see what we've got here") return true;
+    if (lowerClean.indexOf('let me see what we') === 0) return true;
     if (lowerClean === 'taking a look') return true;
     if (lowerClean.indexOf('taking a look') === 0) return true;
     if (lowerClean.indexOf('let me check') === 0) return true;
@@ -1442,7 +1442,8 @@
         sendToLLM(buildFollowupImageFetchPrompt(keyword, index), {
           timeout: timeoutMs,
           priority: 'high',
-          allowMemoryLookup: true
+          allowMemoryLookup: true,
+          expectBridgeResponse: true
         }).then(function(fetchResult) {
           if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
             if (index + 1 >= attempts) {

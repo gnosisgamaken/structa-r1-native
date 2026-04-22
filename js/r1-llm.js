@@ -1367,9 +1367,69 @@
     var label = String(keyword || 'latest image analysis').trim();
     return [
       'Return only the exact text of the most recent image analysis labeled "' + label + '".',
+      'If that labeled result is not available yet, reply exactly: PENDING',
       'Plain text only.',
       'Do not add commentary.'
     ].join('\n');
+  }
+
+  function isPendingFollowupFetchResult(result, keyword) {
+    var clean = sanitizeResponse(result?.clean || result?.text || '');
+    var lowerClean = lower(clean);
+    var lowerKeyword = lower(String(keyword || '').trim());
+    if (!clean) return true;
+    if (lowerClean === 'pending') return true;
+    if (lowerClean === 'taking a look') return true;
+    if (lowerClean.indexOf('taking a look') === 0) return true;
+    if (lowerClean.indexOf('let me check') === 0) return true;
+    if (lowerClean.indexOf('one moment') === 0) return true;
+    if (lowerClean.indexOf('hold on') === 0) return true;
+    if (lowerKeyword && lowerClean === lowerKeyword) return true;
+    return false;
+  }
+
+  function fetchLabeledImageAnalysisText(keyword, options) {
+    var opts = options || {};
+    var attempts = Math.max(1, Number(opts.attempts || 3));
+    var initialDelayMs = Math.max(0, Number(opts.initialDelayMs || 4200));
+    var intervalMs = Math.max(0, Number(opts.intervalMs || 2600));
+    var timeoutMs = Math.max(4000, Number(opts.timeout || 14000));
+    return new Promise(function(resolve) {
+      function runAttempt(index) {
+        sendToLLM(buildFollowupImageFetchPrompt(keyword), {
+          timeout: timeoutMs,
+          priority: 'high'
+        }).then(function(fetchResult) {
+          if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
+            if (index + 1 >= attempts) {
+              resolve(fetchResult && typeof fetchResult === 'object'
+                ? Object.assign({}, fetchResult, {
+                    ok: false,
+                    code: fetchResult.code || 'followup-pending',
+                    error: fetchResult.error || 'followup pending'
+                  })
+                : {
+                    ok: false,
+                    code: 'followup-pending',
+                    error: 'followup pending'
+                  });
+              return;
+            }
+            setTimeout(function() {
+              runAttempt(index + 1);
+            }, intervalMs);
+            return;
+          }
+          if (fetchResult && typeof fetchResult === 'object') {
+            fetchResult.mode = 'followup-fetch';
+          }
+          resolve(fetchResult);
+        });
+      }
+      setTimeout(function() {
+        runAttempt(0);
+      }, initialDelayMs);
+    });
   }
 
   function buildShowCaptureContext(description, options) {
@@ -1775,18 +1835,11 @@
             error: 'followup post failed',
             code: 'followup-post-failed'
           };
-          return new Promise(function(resolve) {
-            setTimeout(function() {
-              sendToLLM(buildFollowupImageFetchPrompt(options.keyword || options.label || 'latest image analysis'), {
-                timeout: Number(options.fetchTimeout || 14000),
-                priority: 'high'
-              }).then(function(fetchResult) {
-                if (fetchResult && typeof fetchResult === 'object') {
-                  fetchResult.mode = 'followup-fetch';
-                }
-                resolve(fetchResult);
-              });
-            }, Number(options.followupDelayMs || 1200));
+          return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
+            attempts: Number(options.followupFetchAttempts || 3),
+            initialDelayMs: Number(options.followupDelayMs || 4200),
+            intervalMs: Number(options.followupIntervalMs || 2600),
+            timeout: Number(options.fetchTimeout || 14000)
           });
         });
       } else if (options.listenback === true) {

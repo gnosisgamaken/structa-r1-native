@@ -1105,9 +1105,9 @@
         image_asset_id: resolvedAsset.entry_id || '',
         image_asset_name: resolvedAsset.name || '',
         preview_data: dataUrl,
-        analysis_status: 'pending',
-        analysis_stage: annotation ? 'queued' : 'queued',
-        analysis_enqueued_at: analysisQueuedAt,
+        analysis_status: annotation ? 'pending' : 'saved',
+        analysis_stage: annotation ? 'queued' : 'saved',
+        analysis_enqueued_at: annotation ? analysisQueuedAt : '',
         claim_extraction_pending: false,
         annotation_window_until: annotationWindowUntil,
         operation_id: operationId
@@ -1146,9 +1146,9 @@
         meta: {
           bundle_id: bundle?.entry_id || null,
           facingMode: facingMode,
-          analysis_status: 'pending',
-          analysis_stage: 'queued',
-          analysis_enqueued_at: analysisQueuedAt,
+          analysis_status: annotation ? 'pending' : 'saved',
+          analysis_stage: annotation ? 'queued' : 'saved',
+          analysis_enqueued_at: annotation ? analysisQueuedAt : '',
           preview_data: dataUrl,
           claim_extraction_pending: false,
           annotation_window_until: annotationWindowUntil
@@ -1175,8 +1175,10 @@
     });
 
     hideOverlay();
-    markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);
-    scheduleAnalysisDrain(annotation ? 120 : 60);
+    if (annotation) {
+      markCaptureAnalysisQueued(bundle?.entry_id || '', captureNode?.node_id || '', dataUrl);
+      scheduleAnalysisDrain(120);
+    }
 
     return bundle;
   }

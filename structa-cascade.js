@@ -1329,30 +1329,6 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'magic-norm-silent',
-      keyword: 'probe-magic-norm-silent-an1',
-      label: 'img silent',
-      prompt: 'debug keyword: probe-magic-norm-silent-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only.',
-      imageInputMode: 'normalizedDataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      wantsR1Response: false,
-      omitWantsJournalEntry: true,
-      expectResponse: true
-    },
-    {
-      id: 'magic-norm-omit-r1',
-      keyword: 'probe-magic-norm-omit-r1-an1',
-      label: 'img omit',
-      prompt: 'debug keyword: probe-magic-norm-omit-r1-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.\nReturn text only.',
-      imageInputMode: 'normalizedDataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      omitWantsR1Response: true,
-      omitWantsJournalEntry: true,
-      expectResponse: true
-    },
-    {
       id: 'magic-norm-r1-fetch',
       keyword: 'probe-magic-norm-r1-fetch-an1',
       label: 'img fetch',
@@ -1364,7 +1340,9 @@
       omitWantsJournalEntry: true,
       expectResponse: false,
       followupFetch: true,
-      followupDelayMs: 1200,
+      followupDelayMs: 4200,
+      followupIntervalMs: 2600,
+      followupFetchAttempts: 3,
       fetchTimeout: 15000
     }
   ];
@@ -1444,16 +1422,11 @@
       return rows;
     }
     IMAGE_PROBE_VARIANTS.forEach(function(variant) {
-      const shortDetail = variant.id === 'magic-norm-silent'
-        ? 'silent callback'
-        : variant.id === 'magic-norm-omit-r1'
-          ? 'omit r1 flag'
-          : 'label then fetch';
       rows.push({
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
         message: variant.label,
-        detail: shortDetail
+        detail: 'label then fetch'
       });
     });
     return rows;
@@ -1555,7 +1528,9 @@
         omitWantsR1Response: variant.omitWantsR1Response === true,
         omitWantsJournalEntry: variant.omitWantsJournalEntry === true,
         followupFetch: variant.followupFetch === true,
-        followupDelayMs: variant.followupDelayMs || 1200,
+        followupDelayMs: variant.followupDelayMs || 4200,
+        followupIntervalMs: variant.followupIntervalMs || 2600,
+        followupFetchAttempts: variant.followupFetchAttempts || 3,
         fetchTimeout: variant.fetchTimeout || 15000
       });
     }).then(function(result) {

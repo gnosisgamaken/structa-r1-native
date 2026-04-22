@@ -1863,7 +1863,7 @@
         bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
           journal: options.journal === true,
           timeout: timeoutMs,
-          expectResponse: false,
+          expectResponse: options.expectResponse !== false,
           pluginId: options.pluginId || '',
           useLLM: options.useLLM,
           wantsR1Response: options.wantsR1Response === true,
@@ -1874,9 +1874,14 @@
         }).then(function(postResult) {
           if (!postResult || !postResult.ok) return postResult || {
             ok: false,
-            error: 'followup post failed',
+            error: 'direct image request failed',
             code: 'followup-post-failed'
           };
+          if (postResult.clean) {
+            logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'direct hit', 'callback returned text', options.captureId || '');
+            return postResult;
+          }
+          logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'direct miss', postResult.error || postResult.code || 'callback missing', options.captureId || '');
           logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'wait', Math.round(Number(options.followupDelayMs || 10000) / 1000) + 's before text fetch', options.captureId || '');
           return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
             attempts: Number(options.followupFetchAttempts || 3),

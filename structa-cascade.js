@@ -1357,7 +1357,7 @@
       label: 'img fetch',
       prompt: [
         'Analyze this image and record a note in my journal about it.',
-        'Use this exact analysis tag in the note: {{analysis_tag}}',
+        'Include this exact line in the note: Image Analysis Tag:{{analysis_tag}}',
         'Describe only visible facts.',
         'Keep it concise.',
         'Do not speculate.'
@@ -1368,12 +1368,14 @@
       wantsR1Response: true,
       journal: true,
       followupFetch: true,
-      followupDelayMs: 22000,
-      followupIntervalMs: 9000,
+      followupDelayMs: 28000,
+      followupIntervalMs: 7000,
       followupFetchAttempts: 2,
       fetchTimeout: 22000,
+      followupReadyResponses: 3,
       prefetchCoverText: 'hm',
-      prefetchCoverDelayMs: 280
+      prefetchCoverDelayMs: 320,
+      prefetchPostWaitMs: 1400
     }
   ];
 
@@ -1581,8 +1583,10 @@
         followupIntervalMs: resolvedVariant.followupIntervalMs || 2600,
         followupFetchAttempts: resolvedVariant.followupFetchAttempts || 3,
         fetchTimeout: resolvedVariant.fetchTimeout || 15000,
+        minReadyResponses: resolvedVariant.followupReadyResponses || 3,
         prefetchCoverText: resolvedVariant.prefetchCoverText || '',
-        prefetchCoverDelayMs: resolvedVariant.prefetchCoverDelayMs || 240
+        prefetchCoverDelayMs: resolvedVariant.prefetchCoverDelayMs || 240,
+        prefetchPostWaitMs: resolvedVariant.prefetchPostWaitMs || 1400
       });
     }).then(function(result) {
       if (result && result.ok && result.clean) {

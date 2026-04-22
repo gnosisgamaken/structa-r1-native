@@ -1380,25 +1380,29 @@
     var attempt = Number(attemptIndex || 0);
     if (attempt <= 0) {
       return [
-        'Return only the exact text of the already completed image analysis tagged "' + label + '".',
+        'Can you pull the details of the latest image analysis note you created?',
+        'Only use the note that contains this exact analysis tag: ' + label,
+        'Return only the saved note text in plain text.',
         'Do not analyze any image again.',
-        'If the tagged result is not ready yet, reply exactly: PENDING',
-        'Plain text only.'
+        'Do not create a new note.',
+        'If it is not ready yet, reply exactly: PENDING'
       ].join('\n');
     }
     if (attempt === 1) {
       return [
-        'What was the exact text result for the completed image analysis tag "' + label + '"?',
-        'Do not re-run image analysis.',
-        'Reply exactly: PENDING if unavailable.',
-        'Text only.'
+        'Return the saved journal note for image analysis tag "' + label + '".',
+        'Return only the note text.',
+        'Do not analyze a new image.',
+        'Do not create a new note.',
+        'Reply exactly: PENDING if unavailable.'
       ].join('\n');
     }
     return [
-      'Retrieve the stored result text for image analysis tag "' + label + '".',
+      'What are the details of the latest journal note for image analysis tag "' + label + '"?',
+      'Return only the note contents.',
       'Do not inspect a new image.',
-      'If unavailable, reply exactly: PENDING',
-      'No commentary.'
+      'Do not create a new note.',
+      'If unavailable, reply exactly: PENDING'
     ].join('\n');
   }
 
@@ -1855,6 +1859,7 @@
     }, function() {
       var bridgeCall;
       if (options.followupFetch === true) {
+        logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'requested', 'journal-backed image analysis', options.captureId || '');
         bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
           journal: options.journal === true,
           timeout: timeoutMs,
@@ -1872,6 +1877,7 @@
             error: 'followup post failed',
             code: 'followup-post-failed'
           };
+          logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'wait', Math.round(Number(options.followupDelayMs || 10000) / 1000) + 's before text fetch', options.captureId || '');
           return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
             attempts: Number(options.followupFetchAttempts || 3),
             initialDelayMs: Number(options.followupDelayMs || 10000),

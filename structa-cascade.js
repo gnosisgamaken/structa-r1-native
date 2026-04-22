@@ -1352,16 +1352,26 @@
 
   const IMAGE_PROBE_VARIANTS = [
     {
-      id: 'magic-norm-r1-direct',
-      keyword: 'probe-magic-norm-r1-direct-an1',
-      label: 'img direct',
-      prompt: 'analysis tag: probe-magic-norm-r1-direct-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      id: 'magic-journal-fetch',
+      keyword: 'probe-magic-journal-fetch-an1',
+      label: 'img fetch',
+      prompt: [
+        'Analyze this image and record a note in my journal about it.',
+        'Use this exact analysis tag in the note: probe-magic-journal-fetch-an1',
+        'Visible facts only.',
+        'Write 2 to 4 short bullet points.',
+        'Do not speculate.'
+      ].join('\n'),
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
       wantsR1Response: true,
-      omitWantsJournalEntry: true,
-      expectResponse: true
+      journal: true,
+      followupFetch: true,
+      followupDelayMs: 10000,
+      followupIntervalMs: 3500,
+      followupFetchAttempts: 4,
+      fetchTimeout: 18000
     }
   ];
 
@@ -1444,7 +1454,7 @@
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
         message: variant.label,
-        detail: 'direct callback capture'
+        detail: variant.followupFetch ? 'journal -> wait -> fetch' : 'direct callback capture'
       });
     });
     return rows;

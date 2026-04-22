@@ -34,6 +34,7 @@
   var MILESTONE_COOLDOWN_MS = 6000;
   var pendingBridgeRequests = new Map();
   var pendingImageBridgeRequest = null;
+  var ambientBridgeListeners = [];
   var imageRunSequence = 0;
   var operationPolicyStack = [{ allowSpeech: true, silent: false, source: 'default' }];
   var runtimeCaps = window.__structaCaps || {
@@ -890,6 +891,31 @@
     return '';
   }
 
+  function addAmbientBridgeListener(listener) {
+    if (typeof listener !== 'function') return function() {};
+    ambientBridgeListeners.push(listener);
+    return function removeAmbientBridgeListener() {
+      ambientBridgeListeners = ambientBridgeListeners.filter(function(entry) {
+        return entry !== listener;
+      });
+    };
+  }
+
+  function notifyAmbientBridgeListeners(data) {
+    if (!ambientBridgeListeners.length) return;
+    var text = '';
+    try {
+      text = sanitizeResponse(extractResponseText(data));
+    } catch (_) {
+      text = '';
+    }
+    ambientBridgeListeners.slice().forEach(function(listener) {
+      try {
+        listener(data, text);
+      } catch (_) {}
+    });
+  }
+
   window.onPluginMessage = function(data) {
     if (native && native.probeMode && native.appendProbeEvent) {
       var probeName = 'message';
@@ -919,6 +945,8 @@
       }));
       return;
     }
+
+    notifyAmbientBridgeListeners(data);
 
     if (pendingImageBridgeRequest) {
       var imageRequest = pendingImageBridgeRequest;
@@ -1077,7 +1105,23 @@
     }
     if (typeof payload !== 'object') return String(payload || '');
 
-    var directKeys = ['message', 'content', 'response', 'transcript', 'text', 'output', 'answer', 'body', 'summary', 'caption', 'value'];
+    if (payload.data) {
+      if (typeof payload.data === 'string') {
+        try {
+          var parsed = JSON.parse(payload.data);
+          var parsedText = extractResponseText(parsed);
+          if (parsedText) return parsedText;
+          return payload.data;
+        } catch (e) {
+          return payload.data;
+        }
+      } else {
+        var dataText = extractResponseText(payload.data);
+        if (dataText) return dataText;
+      }
+    }
+
+    var directKeys = ['response', 'text', 'output', 'answer', 'body', 'summary', 'caption', 'value', 'note_text', 'details', 'note', 'message', 'content', 'transcript'];
     for (var k = 0; k < directKeys.length; k += 1) {
       var value = payload[directKeys[k]];
       if (typeof value === 'string' && value.trim()) return value;
@@ -1110,21 +1154,6 @@
     if (payload.delta) {
       var deltaText = extractResponseText(payload.delta);
       if (deltaText) return deltaText;
-    }
-
-    if (payload.data) {
-      if (typeof payload.data === 'string') {
-        try {
-          var parsed = JSON.parse(payload.data);
-          var parsedText = extractResponseText(parsed);
-          if (parsedText) return parsedText;
-        } catch (e) {
-          return payload.data;
-        }
-      } else {
-        var dataText = extractResponseText(payload.data);
-        if (dataText) return dataText;
-      }
     }
 
     if (payload.results) {
@@ -1415,35 +1444,134 @@
   function buildFollowupImageFetchPrompt(keyword, attemptIndex) {
     var label = String(keyword || 'latest image analysis').trim();
     var attempt = Number(attemptIndex || 0);
+    var exactTagLine = 'Image Analysis Tag:' + label;
     if (attempt <= 0) {
       return [
-        'Can you pull the details of the latest image analysis note you created?',
-        'Use this exact analysis tag to identify the note: ' + label,
-        'Return only the saved note text in plain text.',
-        'Do not analyze any image again.',
+        'Look up the image analysis note in your journal with this exact tag line:',
+        exactTagLine,
+        'Return only a JSON message in this exact shape:',
+        '{"analysis_tag":"' + label + '","note_text":"..."}',
+        'Do not analyze any new image.',
         'Do not create a new note.',
-        'If it is not ready yet, reply exactly: PENDING'
+        'If the note is not ready yet, return only a JSON message:',
+        '{"analysis_tag":"' + label + '","status":"PENDING"}'
       ].join('\n');
     }
     if (attempt === 1) {
       return [
-        'Can you pull the saved image analysis note with exact analysis tag ' + label + '?',
-        'Return only the note text in plain text.',
+        'Find the saved journal note with exact tag line ' + exactTagLine,
+        'Return only a JSON message:',
+        '{"analysis_tag":"' + label + '","note_text":"..."}',
         'Do not analyze a new image.',
         'Do not create a new note.',
-        'Reply exactly: PENDING if unavailable.'
+        'If unavailable, return only a JSON message:',
+        '{"analysis_tag":"' + label + '","status":"PENDING"}'
       ].join('\n');
     }
     return [
-      'Can you pull the note tagged ' + label + '?',
-      'Return only that note in plain text.',
+      'Find the journal note with exact tag ' + label + '.',
+      'Return only a JSON message:',
+      '{"analysis_tag":"' + label + '","note_text":"..."}',
       'Do not analyze a new image.',
       'Do not create a new note.',
-      'If unavailable, reply exactly: PENDING'
+      'If unavailable, return only a JSON message:',
+      '{"analysis_tag":"' + label + '","status":"PENDING"}'
     ].join('\n');
   }
 
+  function parseJsonCandidate(text) {
+    var raw = String(text || '').trim();
+    if (!raw) return null;
+    var candidates = [raw];
+    var fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced && fenced[1]) candidates.push(fenced[1].trim());
+    var start = raw.indexOf('{');
+    var end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) candidates.push(raw.slice(start, end + 1));
+    for (var i = 0; i < candidates.length; i += 1) {
+      try {
+        return JSON.parse(candidates[i]);
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function extractFollowupFetchNoteText(result, keyword) {
+    var label = String(keyword || '').trim();
+    var sources = [
+      result?.text || '',
+      result?.clean || ''
+    ].filter(Boolean);
+    for (var i = 0; i < sources.length; i += 1) {
+      var parsed = parseJsonCandidate(sources[i]);
+      if (!parsed || typeof parsed !== 'object') continue;
+      var parsedTag = String(parsed.analysis_tag || '').trim();
+      if (label && parsedTag && parsedTag !== label) continue;
+      var status = String(parsed.status || '').trim().toUpperCase();
+      if (status === 'PENDING') {
+        return { ok: false, pending: true, tag: parsedTag || label };
+      }
+      var noteText = String(parsed.note_text || parsed.note || parsed.details || '').trim();
+      if (noteText) {
+        return {
+          ok: true,
+          text: noteText,
+          clean: sanitizeResponse(noteText) || noteText,
+          raw: sources[i],
+          tag: parsedTag || label
+        };
+      }
+    }
+    return null;
+  }
+
+  function textLooksLikeJournalSaveCue(text, keyword) {
+    var clean = sanitizeResponse(text || '');
+    var lowerClean = lower(clean);
+    var lowerKeyword = lower(String(keyword || '').trim());
+    if (!lowerClean || !lowerKeyword) return false;
+    if (lowerClean.indexOf('let me see what we') === 0) return false;
+    if (lowerClean.indexOf('taking a look') === 0) return false;
+    if (lowerClean.indexOf('let me check') === 0) return false;
+    if (lowerClean.indexOf('one moment') === 0) return false;
+    if (lowerClean.indexOf(lowerKeyword) === -1) return false;
+    return (
+      lowerClean.indexOf('saved a note in my journal') !== -1 ||
+      lowerClean.indexOf('saved a note in your journal') !== -1 ||
+      lowerClean.indexOf('recorded a note in my journal') !== -1 ||
+      lowerClean.indexOf('recorded a note in your journal') !== -1 ||
+      lowerClean.indexOf('saved in your journal') !== -1 ||
+      lowerClean.indexOf('saved successfully') !== -1 ||
+      lowerClean.indexOf('analysis tag') !== -1
+    );
+  }
+
+  function waitForTaggedJournalSaveCue(keyword, options) {
+    var opts = options || {};
+    var timeoutMs = Math.max(4000, Number(opts.timeoutMs || 22000));
+    return new Promise(function(resolve) {
+      var done = false;
+      var timer = null;
+      var remove = addAmbientBridgeListener(function(_data, text) {
+        if (done || !textLooksLikeJournalSaveCue(text, keyword)) return;
+        done = true;
+        if (timer) clearTimeout(timer);
+        remove();
+        resolve({ ok: true, cue: 'journal-save', text: text });
+      });
+      timer = setTimeout(function() {
+        if (done) return;
+        done = true;
+        remove();
+        resolve({ ok: false, cue: 'timeout' });
+      }, timeoutMs);
+    });
+  }
+
   function isPendingFollowupFetchResult(result, keyword) {
+    var parsed = extractFollowupFetchNoteText(result, keyword);
+    if (parsed && parsed.ok) return false;
+    if (parsed && parsed.pending) return true;
     var clean = sanitizeResponse(result?.clean || result?.text || '');
     var lowerClean = lower(clean);
     var lowerKeyword = lower(String(keyword || '').trim());
@@ -1482,6 +1610,15 @@
           waitForSettledText: true,
           pendingKeyword: keyword
         }).then(function(fetchResult) {
+          var parsed = extractFollowupFetchNoteText(fetchResult, keyword);
+          if (parsed && parsed.ok) {
+            fetchResult = Object.assign({}, fetchResult || {}, {
+              ok: true,
+              text: parsed.text,
+              clean: parsed.clean,
+              raw: parsed.raw || fetchResult?.raw || ''
+            });
+          }
           if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
             if (index + 1 >= attempts) {
               logImageFetchStage(keyword, 'fetch miss', fetchResult?.error || fetchResult?.code || 'pending', captureId);
@@ -1512,19 +1649,24 @@
         });
       }
       logImageFetchStage(keyword, 'requested', 'tagged analysis posted', captureId);
-      logImageFetchStage(keyword, 'wait', Math.round(initialDelayMs / 1000) + 's settle window', captureId);
-      setTimeout(function() {
+      logImageFetchStage(keyword, 'wait', Math.round(initialDelayMs / 1000) + 's save cue window', captureId);
+      waitForTaggedJournalSaveCue(keyword, { timeoutMs: initialDelayMs }).then(function(cueResult) {
+        if (cueResult?.ok) {
+          logImageFetchStage(keyword, 'cue', 'journal saved', captureId);
+        } else {
+          logImageFetchStage(keyword, 'cue miss', 'timed fallback', captureId);
+        }
         if (!prefetchCoverText) {
           runAttempt(0);
           return;
         }
         logImageFetchStage(keyword, 'cover', compactText(prefetchCoverText, 16), captureId);
-        sendR1CoverSpeech(prefetchCoverText, { delay: prefetchCoverDelayMs }).finally(function() {
-          setTimeout(function() {
+        setTimeout(function() {
+          sendR1CoverSpeech(prefetchCoverText, { delay: prefetchCoverDelayMs }).finally(function() {
             runAttempt(0);
-          }, prefetchCoverDelayMs);
-        });
-      }, initialDelayMs);
+          });
+        }, prefetchCoverDelayMs);
+      });
     });
   }
 

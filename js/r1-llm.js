@@ -498,7 +498,12 @@
     var opts = options || {};
     var id = getNextId();
     var protectedMessage = message;
-    if (!opts.useSerpAPI && typeof protectedMessage === 'string' && !/DO NOT SEARCH/i.test(protectedMessage)) {
+    if (
+      !opts.useSerpAPI &&
+      opts.allowMemoryLookup !== true &&
+      typeof protectedMessage === 'string' &&
+      !/DO NOT SEARCH/i.test(protectedMessage)
+    ) {
       protectedMessage =
         'Use only the provided context.\n\n' +
         protectedMessage;
@@ -1381,8 +1386,8 @@
     if (attempt <= 0) {
       return [
         'Can you pull the details of the latest image analysis note you created?',
-        'Only use the note that contains this exact analysis tag: ' + label,
-        'Return only the saved note text in plain text.',
+        'Use the note with this exact analysis tag: ' + label,
+        'Return only the details from that note in plain text.',
         'Do not analyze any image again.',
         'Do not create a new note.',
         'If it is not ready yet, reply exactly: PENDING'
@@ -1391,7 +1396,7 @@
     if (attempt === 1) {
       return [
         'Can you pull the details of the latest image analysis note you created?',
-        'Use only the note tagged: ' + label,
+        'Use the note with this exact analysis tag: ' + label,
         'Return only the note details as plain text.',
         'Do not analyze a new image.',
         'Do not create a new note.',
@@ -1400,9 +1405,9 @@
     }
     return [
       'Can you pull the details of the latest image analysis note you created?',
-      'Use only the note tagged: ' + label,
-      'Return only the note contents in plain text.',
-      'Do not inspect a new image.',
+      'Use the note with this exact analysis tag: ' + label,
+      'Return only the contents of that note in plain text.',
+      'Do not analyze a new image.',
       'Do not create a new note.',
       'If unavailable, reply exactly: PENDING'
     ].join('\n');
@@ -1436,7 +1441,8 @@
         logImageFetchStage(keyword, 'fetch ' + humanAttempt, 'retrieve by tag', captureId);
         sendToLLM(buildFollowupImageFetchPrompt(keyword, index), {
           timeout: timeoutMs,
-          priority: 'high'
+          priority: 'high',
+          allowMemoryLookup: true
         }).then(function(fetchResult) {
           if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
             if (index + 1 >= attempts) {

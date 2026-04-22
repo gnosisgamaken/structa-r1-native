@@ -1363,13 +1363,42 @@
     return lines.join('\n');
   }
 
-  function buildFollowupImageFetchPrompt(keyword) {
+  function logImageFetchStage(keyword, stage, detail, captureId) {
+    native?.appendLogEntry?.({
+      kind: 'product',
+      message: 'img fetch · ' + stage,
+      linked_capture_id: captureId || null,
+      meta: {
+        keyword: keyword || '',
+        detail: detail || ''
+      }
+    });
+  }
+
+  function buildFollowupImageFetchPrompt(keyword, attemptIndex) {
     var label = String(keyword || 'latest image analysis').trim();
+    var attempt = Number(attemptIndex || 0);
+    if (attempt <= 0) {
+      return [
+        'Return only the exact text of the already completed image analysis tagged "' + label + '".',
+        'Do not analyze any image again.',
+        'If the tagged result is not ready yet, reply exactly: PENDING',
+        'Plain text only.'
+      ].join('\n');
+    }
+    if (attempt === 1) {
+      return [
+        'What was the exact text result for the completed image analysis tag "' + label + '"?',
+        'Do not re-run image analysis.',
+        'Reply exactly: PENDING if unavailable.',
+        'Text only.'
+      ].join('\n');
+    }
     return [
-      'Return only the exact text of the most recent image analysis labeled "' + label + '".',
-      'If that labeled result is not available yet, reply exactly: PENDING',
-      'Plain text only.',
-      'Do not add commentary.'
+      'Retrieve the stored result text for image analysis tag "' + label + '".',
+      'Do not inspect a new image.',
+      'If unavailable, reply exactly: PENDING',
+      'No commentary.'
     ].join('\n');
   }
 
@@ -1391,17 +1420,21 @@
   function fetchLabeledImageAnalysisText(keyword, options) {
     var opts = options || {};
     var attempts = Math.max(1, Number(opts.attempts || 3));
-    var initialDelayMs = Math.max(0, Number(opts.initialDelayMs || 4200));
-    var intervalMs = Math.max(0, Number(opts.intervalMs || 2600));
+    var initialDelayMs = Math.max(0, Number(opts.initialDelayMs || 10000));
+    var intervalMs = Math.max(0, Number(opts.intervalMs || 3500));
     var timeoutMs = Math.max(4000, Number(opts.timeout || 14000));
+    var captureId = String(opts.captureId || '').trim();
     return new Promise(function(resolve) {
       function runAttempt(index) {
-        sendToLLM(buildFollowupImageFetchPrompt(keyword), {
+        var humanAttempt = index + 1;
+        logImageFetchStage(keyword, 'fetch ' + humanAttempt, 'retrieve by tag', captureId);
+        sendToLLM(buildFollowupImageFetchPrompt(keyword, index), {
           timeout: timeoutMs,
           priority: 'high'
         }).then(function(fetchResult) {
           if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
             if (index + 1 >= attempts) {
+              logImageFetchStage(keyword, 'fetch miss', fetchResult?.error || fetchResult?.code || 'pending', captureId);
               resolve(fetchResult && typeof fetchResult === 'object'
                 ? Object.assign({}, fetchResult, {
                     ok: false,
@@ -1415,6 +1448,7 @@
                   });
               return;
             }
+            logImageFetchStage(keyword, 'wait', Math.round(intervalMs / 1000) + 's then retry', captureId);
             setTimeout(function() {
               runAttempt(index + 1);
             }, intervalMs);
@@ -1423,9 +1457,12 @@
           if (fetchResult && typeof fetchResult === 'object') {
             fetchResult.mode = 'followup-fetch';
           }
+          logImageFetchStage(keyword, 'fetch hit', compactText(fetchResult?.clean || fetchResult?.text || '', 64), captureId);
           resolve(fetchResult);
         });
       }
+      logImageFetchStage(keyword, 'requested', 'tagged analysis posted', captureId);
+      logImageFetchStage(keyword, 'wait', Math.round(initialDelayMs / 1000) + 's settle window', captureId);
       setTimeout(function() {
         runAttempt(0);
       }, initialDelayMs);
@@ -1837,9 +1874,10 @@
           };
           return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
             attempts: Number(options.followupFetchAttempts || 3),
-            initialDelayMs: Number(options.followupDelayMs || 4200),
-            intervalMs: Number(options.followupIntervalMs || 2600),
-            timeout: Number(options.fetchTimeout || 14000)
+            initialDelayMs: Number(options.followupDelayMs || 10000),
+            intervalMs: Number(options.followupIntervalMs || 3500),
+            timeout: Number(options.fetchTimeout || 18000),
+            captureId: options.captureId || ''
           });
         });
       } else if (options.listenback === true) {

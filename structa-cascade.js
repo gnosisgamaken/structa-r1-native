@@ -1332,7 +1332,7 @@
       id: 'magic-norm-r1-fetch',
       keyword: 'probe-magic-norm-r1-fetch-an1',
       label: 'img fetch',
-      prompt: 'debug keyword: probe-magic-norm-r1-fetch-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
+      prompt: 'analysis tag: probe-magic-norm-r1-fetch-an1\nAnalyze this image.\nVisible facts only.\nOne short sentence.',
       imageInputMode: 'normalizedDataUrl',
       pluginId: 'com.r1.pixelart',
       omitUseLLM: true,
@@ -1340,10 +1340,10 @@
       omitWantsJournalEntry: true,
       expectResponse: false,
       followupFetch: true,
-      followupDelayMs: 4200,
-      followupIntervalMs: 2600,
-      followupFetchAttempts: 3,
-      fetchTimeout: 15000
+      followupDelayMs: 10000,
+      followupIntervalMs: 3500,
+      followupFetchAttempts: 4,
+      fetchTimeout: 18000
     }
   ];
 
@@ -1426,7 +1426,7 @@
         kind: 'action',
         actionId: 'image-probe-' + variant.id,
         message: variant.label,
-        detail: 'label then fetch'
+        detail: 'tag -> wait 10s -> fetch'
       });
     });
     return rows;

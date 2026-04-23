@@ -67,7 +67,7 @@
   }
   const triangleEngine = window.StructaTriangle;
   const cards = [
-    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'visual note', roleShort: 'see it', color: 'var(--show)', surface: 'camera' },
+    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'voice-first mode', roleShort: 'coming later', color: 'var(--show)', surface: 'camera' },
     { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'voice note', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
     { id: 'know', title: 'know', iconPath: iconAsset('card-know', 'assets/icons/png/7.png'), iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
     { id: 'now', title: 'now', iconPath: iconAsset('card-now', 'assets/icons/png/6.png'), iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
@@ -263,6 +263,11 @@
     if (!value) return 'Project';
     if (lower(value) === 'untitled project') return 'Project';
     return value;
+  }
+
+  function projectMark(project = getProjectMemory()) {
+    const value = String(project?.project_mark || '').trim().toUpperCase();
+    return /^[A-Z]{2}$/.test(value) ? value : '';
   }
 
   function compactProjectName(name = '') {
@@ -501,39 +506,15 @@
   }
 
   function freshWorkspaceState() {
-    const ui = getUIState();
-    const projects = getProjects();
-    const project = getProjectMemory();
-    if (ui?.onboarded) return false;
-    if (projects.length !== 1) return false;
-    if (lower(project?.name || '') !== 'untitled project') return false;
-    const captures = (project?.captures || []).length;
-    const insights = (project?.insights || []).length;
-    const backlog = (project?.backlog || []).length;
-    const asks = (project?.open_questions || []).length;
-    const pending = (project?.pending_decisions || []).length;
-    const nodes = (project?.nodes || []).length;
-    return captures + insights + backlog + asks + pending + nodes === 0;
+    return false;
   }
 
   function getOnboardingStep() {
-    const ui = getUIState();
-    const projects = getProjects();
-    if (projects.length > 1) {
-      native?.updateUIState?.({
-        onboarded: true,
-        onboarding_step: 'complete'
-      });
-      return 'complete';
-    }
-    if (ui?.onboarded) return 'complete';
-    if (ui?.onboarding_step === 'complete') return 'complete';
-    if (typeof ui?.onboarding_step === 'number') return ui.onboarding_step;
-    return freshWorkspaceState() ? 0 : 'complete';
+    return 'complete';
   }
 
   function onboardingActive() {
-    return getOnboardingStep() !== 'complete';
+    return false;
   }
 
   function onboardingPaused() {
@@ -545,18 +526,11 @@
   }
 
   function traceTutorial(flow, from, to, ctx) {
-    native?.traceEvent?.(flow, from, to, ctx || {});
+    return;
   }
 
   function markTutorialStepEntered(step) {
-    if (step === 'complete') return;
-    const ui = getUIState();
-    if (ui.tutorial_last_entered_step === step && ui.tutorial_step_entered_at) return;
-    native?.updateUIState?.({
-      tutorial_last_entered_step: step,
-      tutorial_step_entered_at: Date.now()
-    });
-    traceTutorial('tutorial.step', 'enter', String(step), { step: step });
+    return;
   }
 
   function clearTutorialStep2HintTimer() {
@@ -576,57 +550,26 @@
   }
 
   function showTutorialStep2Fallback(reason) {
-    if (!onboardingActive() || getOnboardingStep() !== 2) return;
-    native?.updateUIState?.({
-      tutorial_step2_fallback_visible: true,
-      tutorial_step2_fallback_reason: reason || 'retry',
-      tutorial_step2_fallback_index: Math.max(0, Math.min(Number(getUIState().tutorial_step2_fallback_index || 0), TUTORIAL_FALLBACK_OPTIONS.length - 1))
-    });
-    scheduleRender();
+    return;
   }
 
   function armTutorialStep2HintTimer() {
     clearTutorialStep2HintTimer();
-    if (!onboardingActive() || getOnboardingStep() !== 2) return;
-    const enteredAt = Number(getUIState().tutorial_step_entered_at || Date.now());
-    const remaining = Math.max(0, TUTORIAL_STEP2_TIMEOUT_MS - (Date.now() - enteredAt));
-    tutorialStep2HintTimer = setTimeout(function() {
-      tutorialStep2HintTimer = null;
-      if (!onboardingActive() || getOnboardingStep() !== 2) return;
-      traceTutorial('tutorial.step', 'timeout', '2', { step: 2 });
-      showTutorialStep2Fallback('timeout');
-    }, remaining || 1);
   }
 
   function completeOnboardingStep(step, options = {}) {
-    const via = options.via || 'primary';
-    const previous = getOnboardingStep();
-    if (previous === 'complete') return;
     native?.updateUIState?.({
-      onboarding_step: step,
-      onboarded: step === 'complete',
-      tutorial_last_entered_step: step === 'complete' ? previous : step,
-      tutorial_step_entered_at: step === 'complete' ? null : Date.now(),
-      tutorial_step2_fallback_visible: step === 2 ? !!getUIState().tutorial_step2_fallback_visible : false,
-      tutorial_step2_fallback_reason: step === 2 ? String(getUIState().tutorial_step2_fallback_reason || '') : '',
-      tutorial_step2_ptt_attempted: step === 2 ? !!getUIState().tutorial_step2_ptt_attempted : false,
-      tutorial_step4_camera_denied: step === 4 ? !!getUIState().tutorial_step4_camera_denied : false,
+      onboarding_step: 'complete',
+      onboarded: true,
+      tutorial_last_entered_step: 'complete',
+      tutorial_step_entered_at: null,
+      tutorial_step2_fallback_visible: false,
+      tutorial_step2_fallback_reason: '',
+      tutorial_step2_ptt_attempted: false,
+      tutorial_step4_camera_denied: false,
       onboarding_paused: false
     });
-    traceTutorial('tutorial.step', 'advance', String(step), {
-      step: previous,
-      via: via
-    });
-    if (step === 'complete') {
-      traceTutorial('tutorial', 'completed', 'done', {
-        stepsSkipped: skippedOnboardingSteps()
-      });
-      clearTutorialStep2HintTimer();
-      return;
-    }
-    traceTutorial('tutorial.step', 'enter', String(step), { step: step });
-    if (step === 2) armTutorialStep2HintTimer();
-    else clearTutorialStep2HintTimer();
+    clearTutorialStep2HintTimer();
   }
 
   function onboardingAllowedCardIds(step = getOnboardingStep()) {
@@ -770,17 +713,7 @@
   }
 
   function getShowFooter(model) {
-    if (model.annotationPending) return 'hold ptt · comment';
-    if (model.claimExtractionPending) return 'working quietly';
-    if (model.processingLine === 'describing image...' || model.processingLine === 'description unavailable') return model.processingLine;
-    if (model.pendingQueueCount > 0) return `${model.pendingQueueCount} queued`;
-    if (model.captures.length) {
-      if (model.processingLine === 'hold ptt to describe' && !model.claimCount) {
-        return 'hold ptt on frame';
-      }
-      return model.claimCount > 0 ? `${model.claimCount} claims · hold ptt` : 'hold ptt · comment';
-    }
-    return 'open lens';
+    return 'coming later';
   }
 
   function buildUISnapshot() {
@@ -798,13 +731,13 @@
       effective_selected_card_id: effectiveSelected,
       show_available: allowed.includes('show'),
       queue_blocker_count: Array.isArray(ui?.queue_blockers) ? ui.queue_blockers.length : 0,
-      show_capture_count: model.captures.length,
-      show_status: model.status,
-      show_current_summary: model.summary,
-      show_current_processing_line: model.processingLine || 'ready',
+      show_capture_count: 0,
+      show_status: 'off',
+      show_current_summary: 'show is coming later',
+      show_current_processing_line: 'voice-first mode is active',
       show_current_analysis_state: model.analysisState || '',
-      show_claim_count: Number(model.claimCount || 0),
-      show_footer: getShowFooter(model)
+      show_claim_count: 0,
+      show_footer: 'coming later'
     };
   }
 
@@ -816,7 +749,6 @@
 
   function getStatsLines() {
     const project = getProjectMemory() || {};
-    const captures = getCaptureList().length;
     const notes = getVoiceEntries().length;
     const asks = (project.open_questions || []).length;
     const locked = (project.decisions || []).length;
@@ -824,21 +756,20 @@
     const derivedSignals = Array.isArray(project?.derived_candidates?.themes) ? project.derived_candidates.themes.length : 0;
     const signals = Math.max((project.insights || []).length, derivedSignals);
     return [
-      `${notes} notes · ${captures} frames · ${signals} signals`,
+      `${notes} notes · ${signals} signals · ${locked} decided`,
       `${asks} asks · ${pending} waiting · ${locked} locked`
     ];
   }
 
   function getOpsStatsLine() {
     const project = getProjectMemory() || {};
-    const captures = getCaptureList().length;
     const derivedSignals = Array.isArray(project?.derived_candidates?.themes) ? project.derived_candidates.themes.length : 0;
     const signals = Math.max((project.insights || []).length, derivedSignals);
     const decisions = (project.decisions || []).length;
     const open = (project.open_questions || []).filter(function(item) {
       return !item || typeof item === 'string' || item.status !== 'answered';
     }).length;
-    return `captures ${captures} · signals ${signals} · decisions ${decisions} · open ${open}`;
+    return `notes ${getVoiceEntries().length} · signals ${signals} · decisions ${decisions} · asks ${open}`;
   }
 
   function getPendingCaptureQueueCount() {
@@ -1442,26 +1373,7 @@
   }
 
   function buildProductLogActions() {
-    const rows = [];
-    const probeCapture = getCurrentProbeCapture();
-    if (!probeCapture || !probeCapture.imageBase64) {
-      rows.push({
-        kind: 'action',
-        actionId: 'image-probe-missing',
-        message: 'capture a frame in show first',
-        detail: 'image probes need the current frame'
-      });
-      return rows;
-    }
-    IMAGE_PROBE_VARIANTS.forEach(function(variant) {
-      rows.push({
-        kind: 'action',
-        actionId: 'image-probe-' + variant.id,
-        message: variant.label,
-        detail: variant.followupFetch ? 'journal -> wait -> fetch' : 'direct callback capture'
-      });
-    });
-    return rows;
+    return [];
   }
 
   function runImageProbeVariant(variantId) {
@@ -2003,29 +1915,16 @@
   }
 
   function openCameraFromShow(source = 'touch', options = {}) {
-    cameraReturnState = STATES.SHOW_BROWSE;
-    const wantsNarration = !!options.narrate;
-    const entryState = wantsNarration ? STATES.SHOW_PRIMED : STATES.SHOW_BROWSE;
-    if (currentState !== entryState && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
-      transition(entryState, {
-        showStatus: wantsNarration ? 'opening show + tell' : 'opening lens',
-        pendingShowNarration: wantsNarration
+    stateData.showStatus = 'show is coming later';
+    stateData.pendingShowNarration = false;
+    if (currentState !== STATES.SHOW_BROWSE) {
+      transition(STATES.SHOW_BROWSE, {
+        showStatus: 'show is coming later'
       });
     } else {
-      stateData.showStatus = wantsNarration ? 'opening show + tell' : 'opening lens';
-      stateData.pendingShowNarration = wantsNarration;
       render();
     }
-    if (source !== 'touch') {
-      stateData.showStatus = 'click to start camera';
-      stateData.pendingShowNarration = false;
-      fireFeedback('blocked');
-      render();
-      return false;
-    }
-    fireFeedback('touch-commit');
-    window.StructaCamera?.openFromGesture?.('environment');
-    return true;
+    return false;
   }
 
   function openTellSurface(extra = {}) {
@@ -2034,23 +1933,28 @@
   }
 
   function openNowNextMove() {
-    const project = getProjectMemory();
-    const openQuestionNodes = project?.open_question_nodes || [];
-    if (openQuestionNodes.length) {
-      const activeQuestion = openQuestionNodes[0] || {};
+    const data = buildNowSummary();
+    if (data.activeQuestionNodeId) {
       voiceReturnState = STATES.NOW_BROWSE;
       transition(STATES.VOICE_OPEN, {
         answeringQuestion: {
           index: 0,
-          nodeId: activeQuestion.node_id || '',
-          text: softenGuidedAsk(activeQuestion?.body || activeQuestion?.title || ''),
-          source: activeQuestion.source || 'question'
+          nodeId: data.activeQuestionNodeId || '',
+          text: data.nextPromptText || '',
+          source: data.activeQuestionNode?.source || 'question'
         },
-        fromPTT: false
+        fromPTT: false,
+        inlinePTTSurface: 'project'
       });
       return;
     }
-    openTellSurface({ returnState: STATES.NOW_BROWSE });
+    voiceReturnState = STATES.NOW_BROWSE;
+    transition(STATES.VOICE_OPEN, {
+      fromPTT: false,
+      tellStatus: 'listening',
+      inlinePTTSurface: 'project',
+      buildContext: buildNowVoiceContext()
+    });
   }
 
   function approveCurrentNowDecision() {
@@ -2400,181 +2304,125 @@
 
   function projectHasMeaningfulContent() {
     const project = getProjectMemory();
-    const captures = (project?.captures?.length || 0) + getCaptureList().length;
+    const brief = String(project?.brief || '').trim();
     const voiceEntries = getVoiceEntries().length;
     const count =
       (project?.backlog?.length || 0) +
-      (project?.insights?.length || 0) +
       (project?.open_questions?.length || 0) +
       (project?.pending_decisions?.length || 0) +
       (project?.decisions?.length || 0) +
       (project?.nodes?.length || 0) +
-      captures +
-      voiceEntries;
+      (project?.derived_candidates?.asks?.length || 0) +
+      (project?.derived_candidates?.themes?.length || 0) +
+      (project?.derived_candidates?.decisions?.length || 0) +
+      (project?.derived_candidates?.blockers?.length || 0) +
+      voiceEntries +
+      (brief ? 1 : 0);
     return count > 0;
   }
 
   // === NOW card builder ===
   function buildNowSummary() {
-    const memory = getMemory();
     const project = getProjectMemory();
-    const ui = getUIState();
-    const onboardingStep = getOnboardingStep();
-    const captures = getCaptureList();
-    const insights = project?.insights || [];
-    const allQuestionNodes = project?.open_question_nodes || [];
-    const suppressBlockers = (stateData.nowHideQuestionsUntil || 0) > Date.now();
-    const openQuestionNodes = suppressBlockers
-      ? []
-      : allQuestionNodes.filter(function(question) {
-          return native?.isBlockerLive?.({
-            nodeId: question?.node_id || '',
-            text: question?.body || question?.title || '',
-            createdAt: question?.created_at || ''
-          }) !== false;
-        });
-    const openQuestions = suppressBlockers
-      ? []
-      : openQuestionNodes.length
-      ? openQuestionNodes.map(function(question) {
-          return softenGuidedAsk(question?.body || question);
-        })
-      : (project?.open_questions || []).map(function(question) {
-          return softenGuidedAsk(question);
-        });
-    const queueBlockers = suppressBlockers ? [] : (Array.isArray(ui.queue_blockers) ? ui.queue_blockers : []);
+    const derived = project?.derived_candidates && typeof project.derived_candidates === 'object'
+      ? project.derived_candidates
+      : { decisions: [], asks: [], blockers: [], themes: [] };
+    const backlog = Array.isArray(project?.backlog) ? project.backlog : [];
+    const openQuestionNodes = Array.isArray(project?.open_question_nodes) ? project.open_question_nodes : [];
+    const pendingDecisions = Array.isArray(project?.pending_decisions) ? project.pending_decisions : [];
+    const promoted = Array.isArray(project?.promoted_items) ? project.promoted_items : [];
+    const brief = String(project?.brief || '').trim();
+    const queueBlockers = Array.isArray(getUIState().queue_blockers) ? getUIState().queue_blockers : [];
     const queueBlocker = queueBlockers[0] || null;
-    const projectCapNotice = suppressBlockers ? '' : lower(ui.project_cap_notice || '');
-    const backlog = project?.backlog || [];
-    const decisions = project?.decisions || [];
-    const pendingDecisions = project?.pending_decisions || [];
-    const decIdx = stateData.decisionIndex || 0;
-    const guidedNowPrompt = onboardingActive()
-      ? 'what is this project about?'
-      : '';
-
-    // Impact chain state
-    const chain = window.StructaImpactChain || {};
-    const chainPhase = chain.phase || 'idle';
-    const chainActive = chain.active || false;
-    const chainImpacts = chain.impacts || [];
-    const chainBpm = chain.bpm || 4;
-    const chainBeatCount = chain.beatCount || 0;
-    const lastImpact = chain.lastImpact || null;
-    const totalImpacts = chain.totalImpacts || 0;
-    const totalDecisions = chain.totalDecisions || 0;
-    const cooldownRemaining = chain.cooldownRemaining || 0;
-
-    // Latest impact chain from storage
-    const storedImpacts = project?.impact_chain || [];
-    const blockerQuestion = queueBlocker?.body || projectCapNotice || openQuestions[0] || '';
-    const blockerCount = pendingDecisions.length + openQuestions.length + (queueBlocker ? 1 : 0) + (projectCapNotice ? 1 : 0);
-    const visibleQueueCount = suppressBlockers ? 0 : getQueuePendingJobs().length;
-    const activePendingDecision = pendingDecisions.length ? (pendingDecisions[decIdx] || pendingDecisions[0]) : null;
+    const queueCount = getQueuePendingJobs().length;
+    const queueLine = getQueueLine();
     const activeQuestionNode = openQuestionNodes[0] || null;
-    const activeThread = activePendingDecision?.thread || activeQuestionNode?.thread || [];
-    const activeThreadSummary = activePendingDecision?.thread_summary || activeQuestionNode?.thread_summary || '';
-    const tutorialFallbackIndex = tutorialStep2FallbackIndex();
+    const activePendingDecision = pendingDecisions[0] || null;
+    const promotedDecisions = promoted.filter(function(item) {
+      return lower(item?.kind || item?.type || '') === 'decision';
+    });
+    const asksCount = (derived.asks || []).length + openQuestionNodes.length;
+    const signalsCount = (derived.themes || []).length + (derived.blockers || []).length;
+    const decisionCount = (project?.decisions || []).length + (derived.decisions || []).length + promotedDecisions.length + pendingDecisions.length;
+    const decidedCount = (project?.decisions || []).length + promotedDecisions.length;
+    const loopsCount = backlog.length;
+
+    const hasDecisionInfo = decisionCount > 0;
+    const hasBlockerInfo = (derived.blockers || []).length > 0;
+    const hasNextActionInfo = backlog.length > 0;
+    const hasSignalInfo = (derived.themes || []).length > 0;
+
+    let nextPromptType = 'project update';
+    let nextPromptText = 'what changed, what needs attention, or what should happen next?';
+    let questionNode = activeQuestionNode;
+    let decisionNode = activePendingDecision;
+
+    if (queueBlocker) {
+      nextPromptType = 'background blocker';
+      nextPromptText = String(queueBlocker?.body || queueBlocker?.message || 'background work needs attention').trim();
+      questionNode = null;
+      decisionNode = null;
+    } else if (!brief) {
+      nextPromptType = 'brief missing';
+      nextPromptText = 'what is this project about?';
+      questionNode = null;
+      decisionNode = null;
+    } else if (!hasDecisionInfo) {
+      nextPromptType = 'decision missing';
+      nextPromptText = 'what needs to be decided next?';
+      questionNode = null;
+      decisionNode = null;
+    } else if (!hasBlockerInfo) {
+      nextPromptType = 'blocker missing';
+      nextPromptText = 'what is blocked or unclear right now?';
+      questionNode = null;
+      decisionNode = null;
+    } else if (!hasNextActionInfo) {
+      nextPromptType = 'next action missing';
+      nextPromptText = 'what should happen next?';
+      questionNode = null;
+      decisionNode = null;
+    } else if (!hasSignalInfo) {
+      nextPromptType = 'signal/context weak';
+      nextPromptText = 'what should i keep in mind about the situation, constraints, or context?';
+      questionNode = null;
+      decisionNode = null;
+    } else if (questionNode) {
+      nextPromptType = 'open ask';
+      nextPromptText = softenGuidedAsk(questionNode?.body || questionNode?.title || '');
+      decisionNode = null;
+    } else if (decisionNode) {
+      nextPromptType = 'decision review';
+      nextPromptText = typeof decisionNode === 'string'
+        ? decisionNode
+        : String(decisionNode?.text || decisionNode?.title || 'what needs to be decided next?').trim();
+      questionNode = null;
+    }
 
     return {
-      title: project?.name || 'new project',
-      changed: ui.user_status || ui.last_event_summary || '',
-      capture: ui.last_capture_summary || (captures[captures.length - 1]?.summary || ''),
-      insight: ui.last_insight_summary || project?.brief || (insights[0]?.body || ''),
-      next: backlog[0]?.title || (blockerQuestion ? `answer: ${blockerQuestion.slice(0, 30)}` : guidedNowPrompt),
-      openQuestions: openQuestions.length,
-      captures: captures.length,
-      insights: insights.length,
-      decisions: decisions.length,
-      pendingDecisions: pendingDecisions,
-      pendingDecisionText: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? pendingDecisions[0] : pendingDecisions[0].text) : null,
-      pendingDecisionIndex: decIdx,
-      pendingDecisionOptions: pendingDecisions.length ? (typeof pendingDecisions[0] === 'string' ? [] : (pendingDecisions[0].options || [])) : [],
-      activePendingDecision: activePendingDecision,
-      activeQuestionNode: activeQuestionNode,
-      activeQuestionNodeId: activeQuestionNode?.node_id || '',
-      activeThreadSummary: activeThreadSummary,
-      activeThreadDepth: threadDepth(activeThread),
-      blockerCount,
-      blockerQuestion,
-      visibleQueueCount,
-      queueBlocker,
-      projectCapNotice,
-      chainPhase,
-      chainActive,
-      chainImpacts,
-      chainBpm,
-      chainBeatCount,
-      lastImpact,
-      totalImpacts,
-      totalDecisions,
-      cooldownRemaining,
-      storedImpacts: storedImpacts.slice(0, 5),
-      onboardingStep,
-      onboardingPaused: false,
+      title: projectDisplayName(project),
+      projectMark: projectMark(project),
+      brief: brief,
+      asksCount: asksCount,
+      signalsCount: signalsCount,
+      decisionCount: decisionCount,
+      decidedCount: decidedCount,
+      loopsCount: loopsCount,
+      nextPromptType: nextPromptType,
+      nextPromptText: nextPromptText,
+      activeQuestionNode: questionNode,
+      activeQuestionNodeId: questionNode?.node_id || '',
+      activePendingDecision: decisionNode,
+      queueCount: queueCount,
+      queueLine: queueLine,
+      queueBlocker: queueBlocker,
       flushRequested: !!stateData.flushRequestSource,
-      flushRequestSource: stateData.flushRequestSource || '',
-      tutorialStep2FallbackVisible: !!ui.tutorial_step2_fallback_visible && !suppressBlockers,
-      tutorialStep2FallbackReason: ui.tutorial_step2_fallback_reason || '',
-      tutorialStep2FallbackIndex: tutorialFallbackIndex,
-      tutorialStep2FallbackOptions: TUTORIAL_FALLBACK_OPTIONS.slice(),
-      tutorialStep4CameraDenied: !!ui.tutorial_step4_camera_denied,
-      flushUndoAvailableUntil: Number(ui.flush_undo_available_until || 0),
-      flushUndoAvailable: Number(ui.flush_undo_available_until || 0) > Date.now()
+      flushUndoAvailableUntil: Number(getUIState().flush_undo_available_until || 0),
+      flushUndoAvailable: Number(getUIState().flush_undo_available_until || 0) > Date.now()
     };
   }
 
   function drawOnboardingNowPanel(nowCard, data) {
-    if (activeSurface() === 'project' && surfaceMode() !== 'stable') return false;
-    const step = getOnboardingStep();
-    const cardY = 84;
-
-    if (data.flushUndoAvailable) {
-      mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
-      text(18, cardY + 18, 'flush complete', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      wrapTextBlock(undefined, 'hold ptt to undo and restore the last snapshot.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 4);
-      mk('rect', { x: 18, y: cardY + 110, width: 138, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, cardY + 126, 'hold ptt to undo', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'undo stays for 120s', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
-    if (data.flushRequested) {
-      mk('rect', { x: 10, y: cardY, width: 220, height: 158, rx: 12, fill: 'rgba(8,8,8,0.13)' });
-      text(18, cardY + 18, 'flush tutorial state?', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      wrapTextBlock(undefined, 'flush clears this project and restarts tutorial.', 18, cardY + 48, 194, 14, 'rgba(8,8,8,0.80)', '13', 4);
-      mk('rect', { x: 18, y: cardY + 110, width: 154, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-      text(30, cardY + 126, 'hold ptt to confirm', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
-      });
-      text(226, 276, 'side click cancels', {
-        fill: 'rgba(8,8,8,0.36)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return true;
-    }
-
     return false;
   }
 
@@ -2602,27 +2450,9 @@
     ) {
       return cachedKnowModel.value;
     }
-    const memory = getMemory();
     const project = getProjectMemory();
-    const ui = getUIState();
-    const chips = [
-      { id: 'latest', label: 'latest' },
-      { id: 'branch', label: 'branch' },
-      { id: 'asks', label: 'asks' },
-      { id: 'frames', label: 'frames' }
-    ];
 
-    const classify = item => {
-      const text = lower(`${item.title} ${item.body} ${item.next}`);
-      const bucket = new Set(item.chips || []);
-      if (item.source === 'question') bucket.add('asks');
-      if (item.source === 'asset' || item.source === 'capture-image') bucket.add('frames');
-      if (item.next && textHasAny(item.next, ['next', 'capture', 'answer', 'send', 'review', 'fix', 'act', 'move', 'plan'])) bucket.add('branch');
-      item.chips = Array.from(bucket);
-      return item;
-    };
-
-    const makeItem = ({ lane, title, body, next, created_at, source, chips: chipHints = [], questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '', meta = {} }) => {
+    const makeItem = ({ lane, title, body, next, created_at, source, questionIndex, node_id, links = [], triangulated = false, thread = [], threadDepth: providedThreadDepth = null, threadSummary = '', meta = {} }) => {
       const claimsForItem = node_id ? (native?.getClaimsForItem?.(node_id) || []).filter(function(claim) {
         const statusValue = lower(claim?.status || 'active');
         return statusValue === 'active' || statusValue === 'disputed';
@@ -2637,34 +2467,32 @@
       const triangleBody = triangulated && normalizedMeta?.triangle_format === 'claims-v1' && triangleClaims.length
         ? triangleClaims.slice(0, 3).map(function(claim) { return lower(normalizeTinyText(claim?.text || '')); }).join('\n')
         : '';
-      return classify({
-      lane,
-      title: lower(normalizeTinyText(title || lane)),
-      body: lower(normalizeTinyText(triangleBody || body || '')),
-      next: lower(normalizeTinyText(next || '')),
-      created_at: created_at || new Date().toISOString(),
-      source: source || lane,
-      chips: chipHints.slice(),
-      questionIndex,
-      node_id: node_id || '',
-      links: Array.isArray(links) ? links.slice() : [],
-      triangulated: !!triangulated,
-      meta: normalizedMeta,
-      claimsForItem: claimsForItem,
-      thread: cloneThread(thread),
-      threadDepth: Math.max(0, Number(providedThreadDepth !== null ? providedThreadDepth : threadDepth(thread))),
-      threadSummary: lower(normalizeTinyText(threadSummary || '')),
-      evidenceStrength: evidenceStrength
-    });
+      return {
+        lane,
+        title: lower(normalizeTinyText(title || lane)),
+        body: lower(normalizeTinyText(triangleBody || body || '')),
+        next: lower(normalizeTinyText(next || '')),
+        created_at: created_at || new Date().toISOString(),
+        source: source || lane,
+        chips: [],
+        questionIndex,
+        node_id: node_id || '',
+        links: Array.isArray(links) ? links.slice() : [],
+        triangulated: !!triangulated,
+        meta: normalizedMeta,
+        claimsForItem: claimsForItem,
+        thread: cloneThread(thread),
+        threadDepth: Math.max(0, Number(providedThreadDepth !== null ? providedThreadDepth : threadDepth(thread))),
+        threadSummary: lower(normalizeTinyText(threadSummary || '')),
+        evidenceStrength: evidenceStrength
+      };
     };
 
-    const questions = [];
+    const asks = [];
     const signals = [];
-    const decisionsLane = [];
+    const decided = [];
     const loops = [];
 
-    const insights = project?.insights || [];
-    const captures = project?.captures || [];
     const backlog = project?.backlog || [];
     const decisions = project?.decisions || [];
     const openQuestions = project?.open_question_nodes || [];
@@ -2672,17 +2500,16 @@
       ? project.derived_candidates
       : { decisions: [], asks: [], blockers: [], themes: [] };
     const promoted = Array.isArray(project?.promoted_items) ? project.promoted_items : [];
+    const brief = String(project?.brief || '').trim();
 
-    // Questions lane
     (derived.asks || []).slice(0, 5).forEach((ask, index) => {
-      questions.push(makeItem({
-        lane: 'questions',
+      asks.push(makeItem({
+        lane: 'asks',
         title: index === 0 ? 'queued ask' : `queued ask ${index + 1}`,
         body: ask?.text || ask || 'follow-up queued',
         next: '',
         created_at: ask?.created_at || new Date().toISOString(),
         source: 'derived-ask',
-        chips: ['asks', 'latest'],
         node_id: ask?.id || '',
         links: []
       }));
@@ -2691,23 +2518,34 @@
     openQuestions.slice(0, 5).forEach((question, index) => {
       const guidedAsk = softenGuidedAsk(question?.body || question);
       const questionThread = cloneThread(question?.thread);
-      questions.push(makeItem({
-        lane: 'questions', title: index === 0 ? 'guided ask' : `guided ask ${index + 1}`, body: guidedAsk,
+      asks.push(makeItem({
+        lane: 'asks', title: index === 0 ? 'guided ask' : `guided ask ${index + 1}`, body: guidedAsk,
         next: '', created_at: question?.created_at || new Date().toISOString(),
-        source: 'question', chips: ['asks'], questionIndex: index, node_id: question?.node_id || '', links: question?.links || [],
+        source: 'question', questionIndex: index, node_id: question?.node_id || '', links: question?.links || [],
         thread: questionThread, threadDepth: threadDepth(questionThread), threadSummary: question?.thread_summary || (questionThread[questionThread.length - 1]?.summary || '')
       }));
     });
 
-    if (!questions.length) {
-      questions.push(makeItem({
-        lane: 'questions', title: 'no asks', body: 'structa will open the next branch here',
+    if (!asks.length) {
+      asks.push(makeItem({
+        lane: 'asks', title: 'no asks', body: 'structa will open the next useful question here',
         next: '',
-        created_at: new Date().toISOString(), source: 'empty', chips: ['latest']
+        created_at: new Date().toISOString(), source: 'empty'
       }));
     }
 
-    // Signals
+    if (brief) {
+      signals.push(makeItem({
+        lane: 'signals',
+        title: 'project brief',
+        body: brief,
+        next: '',
+        created_at: project?.updated_at || project?.created_at || new Date().toISOString(),
+        source: 'brief',
+        node_id: ''
+      }));
+    }
+
     (derived.themes || []).slice(0, 6).forEach((theme, index) => {
       signals.push(makeItem({
         lane: 'signals',
@@ -2716,7 +2554,6 @@
         next: backlog[0]?.title || '',
         created_at: theme?.created_at || new Date().toISOString(),
         source: 'derived-signal',
-        chips: index < 2 ? ['latest', 'branch'] : ['branch'],
         node_id: theme?.id || '',
         links: []
       }));
@@ -2730,28 +2567,18 @@
         next: backlog[0]?.title || '',
         created_at: blocker?.created_at || new Date().toISOString(),
         source: 'derived-blocker',
-        chips: ['branch'],
         node_id: blocker?.id || '',
         links: []
       }));
     });
 
-    if (ui.last_insight_summary || ui.last_capture_summary) {
-      signals.push(makeItem({
-        lane: 'signals', title: 'working signal',
-        body: ui.last_insight_summary || ui.last_capture_summary,
-        next: backlog[0]?.title || '',
-        created_at: new Date().toISOString(), source: 'ui', chips: ['latest', 'branch']
-      }));
-    }
-
-    insights.slice(0, 4).forEach((insight, index) => {
+    (project?.insights || []).slice(0, 4).forEach((insight, index) => {
       const insightThread = cloneThread(insight.thread);
       signals.push(makeItem({
         lane: 'signals', title: insight.title || `signal ${index + 1}`,
         body: insight.body || 'extracted',
         next: backlog[0]?.title || '',
-        created_at: insight.created_at, source: insight.source || 'insight', chips: index < 2 ? ['latest'] : [],
+        created_at: insight.created_at, source: insight.source || 'insight',
         triangulated: !!insight.triangulated || lower(insight.source || '') === 'triangle',
         node_id: insight.node_id, links: insight.links, thread: insightThread, threadDepth: threadDepth(insightThread),
         threadSummary: insight.thread_summary || (insightThread[insightThread.length - 1]?.summary || ''),
@@ -2759,47 +2586,18 @@
       }));
     });
 
-    captures.slice(-4).reverse().forEach((capture, index) => {
-      const captureThread = cloneThread(capture.thread);
-      signals.push(makeItem({
-        lane: 'signals', title: capture.type === 'image' ? 'visual note' : 'voice note',
-        body: capture.summary || 'stored',
-        next: backlog[0]?.title || '',
-        created_at: capture.created_at,
-        source: capture.type === 'image' ? 'capture-image' : 'capture', chips: index < 2 ? ['latest'] : [],
-        node_id: capture.node_id, links: capture.links, thread: captureThread, threadDepth: threadDepth(captureThread),
-        threadSummary: capture.thread_summary || (captureThread[captureThread.length - 1]?.summary || '')
-      }));
-    });
-
-    // Decisions
     promoted.filter(function(item) {
       return lower(item?.kind || item?.type || '') === 'decision';
     }).slice(0, 4).forEach(function(item, index) {
-      decisionsLane.push(makeItem({
-        lane: 'decisions',
+      decided.push(makeItem({
+        lane: 'decided',
         title: item?.title || item?.text || `decision ${index + 1}`,
         body: item?.body || item?.text || 'promoted decision',
         next: backlog[0]?.title || '',
         created_at: item?.created_at || new Date().toISOString(),
         source: 'promoted-decision',
-        chips: ['latest'],
         node_id: item?.id || item?.node_id || '',
         links: item?.links || []
-      }));
-    });
-
-    (derived.decisions || []).slice(0, 4).forEach(function(item, index) {
-      decisionsLane.push(makeItem({
-        lane: 'decisions',
-        title: index === 0 ? 'decision candidate' : `decision candidate ${index + 1}`,
-        body: item?.text || item || 'decision candidate',
-        next: backlog[0]?.title || '',
-        created_at: item?.created_at || new Date().toISOString(),
-        source: 'derived-decision',
-        chips: ['latest'],
-        node_id: item?.id || '',
-        links: []
       }));
     });
 
@@ -2807,42 +2605,41 @@
       const decisionTitle = typeof decision === 'string' ? decision : (decision.title || `decision ${index + 1}`);
       const decisionBody = typeof decision === 'string' ? decision : (decision.body || decision.reason || 'locked');
       const decisionThread = cloneThread(decision.thread);
-      decisionsLane.push(makeItem({
-        lane: 'decisions', title: decisionTitle, body: decisionBody,
+      decided.push(makeItem({
+        lane: 'decided', title: decisionTitle, body: decisionBody,
         next: backlog[0]?.title || '',
-        created_at: decision.created_at, source: 'decision', chips: index === 0 ? ['latest'] : [],
+        created_at: decision.created_at, source: 'decision',
         node_id: decision.node_id, links: decision.links, thread: decisionThread, threadDepth: threadDepth(decisionThread),
         threadSummary: decision.thread_summary || (decisionThread[decisionThread.length - 1]?.summary || '')
       }));
     });
 
-    if (!decisionsLane.length) {
-      decisionsLane.push(makeItem({
-        lane: 'decisions', title: 'no decisions',
+    if (!decided.length) {
+      decided.push(makeItem({
+        lane: 'decided', title: 'no decisions',
         body: 'no decisions yet',
         next: '',
-        created_at: new Date().toISOString(), source: 'decision-gap', chips: []
+        created_at: new Date().toISOString(), source: 'decision-gap'
       }));
     }
 
-    // Loops
     backlog.slice(0, 5).forEach((item, index) => {
       const backlogThread = cloneThread(item.thread);
       loops.push(makeItem({
-        lane: 'open loops', title: item.title || `task ${index + 1}`,
+        lane: 'loops', title: item.title || `task ${index + 1}`,
         body: item.body || item.state || 'open',
         next: item.title || '',
-        created_at: item.created_at, source: 'backlog', chips: ['branch'], node_id: item.node_id || '', links: item.links || [],
+        created_at: item.created_at, source: 'backlog', node_id: item.node_id || '', links: item.links || [],
         thread: backlogThread, threadDepth: threadDepth(backlogThread),
         threadSummary: item.thread_summary || (backlogThread[backlogThread.length - 1]?.summary || '')
       }));
     });
 
     const lanes = [
-      { id: 'questions', label: 'asks', summary: 'guided asks', items: questions },
-      { id: 'signals', label: 'signals', summary: 'working signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'hold ptt or open show to begin shaping signal', next: '', created_at: new Date().toISOString(), source: 'empty', chips: ['latest'] })] },
-      { id: 'decisions', label: 'decisions', summary: 'locked decisions', items: decisionsLane },
-      { id: 'open loops', label: 'tasks', summary: 'open tasks', items: loops.length ? loops : [makeItem({ lane: 'open loops', title: 'no tasks', body: 'new tasks gather here as the project grows', next: '', created_at: new Date().toISOString(), source: 'empty', chips: [] })] }
+      { id: 'asks', label: 'asks', summary: 'guided asks', items: asks },
+      { id: 'signals', label: 'signals', summary: 'working signals', items: signals.length ? signals : [makeItem({ lane: 'signals', title: 'no signals', body: 'signals will gather here as context becomes clearer', next: '', created_at: new Date().toISOString(), source: 'empty' })] },
+      { id: 'decided', label: 'decided', summary: 'locked decisions', items: decided },
+      { id: 'loops', label: 'loops', summary: 'open loops', items: loops.length ? loops : [makeItem({ lane: 'loops', title: 'no loops', body: 'open loops gather here as work repeats or stays unresolved', next: '', created_at: new Date().toISOString(), source: 'empty' })] }
     ].map(lane => {
       lane.items
         .sort((a, b) => {
@@ -2852,21 +2649,15 @@
             if (aLinked !== bLinked) return aLinked ? -1 : 1;
           }
           return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-        })
-        .forEach((item, index) => {
-          if (index < 2 && !item.chips.includes('latest')) item.chips.push('latest');
         });
-      const availableChipIndexes = chips
-        .map((chip, index) => lane.items.some(item => item.chips.includes(chip.id)) ? index : -1)
-        .filter(index => index >= 0);
-      return { ...lane, availableChipIndexes: availableChipIndexes.length ? availableChipIndexes : [0] };
+      return lane;
     });
 
     cachedKnowModel = {
       version: dataCacheVersion,
       projectId: activeProjectId,
       focusNodeId: focusNodeId,
-      value: { chips, lanes }
+      value: { chips: [], lanes }
     };
     return cachedKnowModel.value;
   }
@@ -2874,9 +2665,7 @@
   function getKnowVisibleItems(model = buildKnowModel()) {
     const lane = model.lanes[stateData.knowLaneIndex || 0] || model.lanes[0];
     if (!lane) return [];
-    const chipId = model.chips[stateData.knowChipIndex || 0]?.id || model.chips[0]?.id;
-    const filtered = lane.items.filter(item => item.chips.includes(chipId));
-    return filtered.length ? filtered : lane.items;
+    return lane.items;
   }
 
   function getKnowHintText(item, lane, itemsCount, detailMode) {
@@ -3609,6 +3398,7 @@
 
   function drawSurfaceHeader(card, options = {}) {
     const project = getProjectMemory();
+    const mark = projectMark(project);
     if ((surfaceMode() === 'recording' || recordingActive()) && activeSurface() !== 'home') {
       recordingDot(23, 26, 10, svg);
     } else if (card.iconPath) {
@@ -3622,7 +3412,10 @@
       'font-size': '32', 'letter-spacing': '0.0em'
     });
     if (!options.hideSubtitle) {
-      text(14, 58, compactProjectName(projectDisplayName(project)), {
+      const subtitle = mark
+        ? `${mark} · ${compactProjectName(projectDisplayName(project))}`
+        : compactProjectName(projectDisplayName(project));
+      text(14, 58, subtitle, {
         fill: 'rgba(8,8,8,0.52)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '12'
@@ -3659,25 +3452,26 @@
       let statNumber = '';
       let statLabel = '';
       const project = getProjectMemory();
+      const nowData = buildNowSummary();
       if (onboardingActive() && card.id === 'now') {
         statNumber = '0';
         statLabel = 'start here';
       } else if (card.id === 'show') {
-        statNumber = String(getCaptureList().length);
-        statLabel = 'frames';
+        statNumber = '';
+        statLabel = 'off';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
         statLabel = 'spoken';
       } else if (card.id === 'know') {
-        const qCount = (project?.open_questions || []).length;
-        const iCount = (project?.insights || []).length;
-        statNumber = qCount > 0 ? String(qCount) : String(iCount);
-        statLabel = qCount > 0 ? 'asks' : 'signals';
+        const askCount = Number(nowData.asksCount || 0);
+        const signalCount = Number(nowData.signalsCount || 0);
+        statNumber = askCount > 0 ? String(askCount) : String(signalCount);
+        statLabel = askCount > 0 ? 'asks' : 'signals';
       } else if (card.id === 'now') {
-        const pCount = (project?.pending_decisions || []).length;
-        const clarity = project?.clarity_score || 0;
-        statNumber = pCount > 0 ? String(pCount) : (clarity > 0 ? clarity + '%' : '0');
-        statLabel = pCount > 0 ? 'pending' : 'clarity';
+        const decisionCount = Number(nowData.decisionCount || 0);
+        const queueCount = Number(nowData.queueCount || 0);
+        statNumber = decisionCount > 0 ? String(decisionCount) : String(queueCount);
+        statLabel = decisionCount > 0 ? 'decisions' : 'queued';
       }
 
       if (statNumber && statNumber !== '0') {
@@ -3726,10 +3520,6 @@
     const activate = event => {
       event.preventDefault();
       if (selected && isHome()) {
-        if (card.id === 'show' && event.type === 'pointerup') {
-          openCameraFromShow('touch');
-          return;
-        }
         openCard(card);
       }
       else if (isHome()) {
@@ -3884,171 +3674,21 @@
   function drawShowSurface() {
     if (!surfaceIsVisible('show') && currentState !== STATES.SHOW_PRIMED) return;
     const showCard = cards.find(c => c.id === 'show');
-    const model = buildShowSummary();
-    const inlineListening = recordingActive() && activeSurface() === 'show';
-    const canReprompt = !!(model.current && model.analysisReady);
-
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
-    drawSurfaceHeader(showCard, { hideSubtitle: true });
-    const previewY = 84;
-    const previewH = 96;
-    const detailY = 184;
-    const detailH = 58;
-    const thumbY = 248;
-    const thumbW = 56;
-    const thumbH = 28;
-    const cameraButton = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', { x: 14, y: 58, width: 212, height: 22, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.90)' }, cameraButton);
-    text(24, 73, 'open lens', {
-      fill: 'rgba(244,239,228,0.96)',
+    drawSurfaceHeader(showCard);
+    mk('rect', { x: 14, y: 84, width: 212, height: 144, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
+    text(20, 110, 'show is off for this release', {
+      fill: 'rgba(8,8,8,0.96)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '12'
-    }, cameraButton);
-    text(216, 73, inlineListening ? 'release reprompt' : (canReprompt ? 'hold ptt on frame' : 'hold ptt in lens'), {
-      fill: 'rgba(244,239,228,0.58)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '9',
-      'text-anchor': 'end'
-    }, cameraButton);
-    cameraButton.addEventListener('pointerup', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      openCameraFromShow('touch');
+      'font-size': '16'
     });
-
-    mk('rect', { x: 14, y: previewY, width: 212, height: previewH, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
-    if (currentState === STATES.SHOW_PRIMED) {
-      text(20, previewY + 36, 'click to start camera', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      text(20, previewY + 58, 'click shoots · status tap exits', {
-        fill: 'rgba(8,8,8,0.46)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-    } else if (model.imageHref) {
-      drawRasterFrame(model.imageHref, {
-        x: 14, y: previewY, width: 212, height: previewH, preserveAspectRatio: 'xMidYMid slice', opacity: 1, rx: 12, ry: 12
-      });
-      mk('rect', { x: 14, y: detailY, width: 212, height: detailH, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.12)' });
-      text(22, detailY + 12, recentTimeLabel(model.createdAt), {
-        fill: 'rgba(8,8,8,0.46)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9'
-      });
-      const detailText = String(
-        model.descriptionText ||
-        (model.analysisReady ? model.summary : '') ||
-        (model.analysisState === 'unavailable' ? 'description unavailable' : model.processingLine)
-      ).slice(0, 210);
-      wrapTextBlock(undefined, detailText, 22, detailY + 22, 182, 12, 'rgba(8,8,8,0.92)', '11', 3);
-      const metaShowLine = model.latestCommentText
-        ? 'comment · ' + model.latestCommentText.slice(0, 34)
-        : (model.captureCommentCount > 0
-          ? model.captureCommentCount + ' comments'
-          : (model.claimSummary ? 'claim · ' + model.claimSummary.slice(0, 26) : ''));
-      if (metaShowLine) {
-        text(22, detailY + 50, metaShowLine, {
-          fill: 'rgba(8,8,8,0.52)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '9',
-          'text-anchor': 'start'
-        });
-      }
-      if (!model.analysisReady) {
-        text(210, previewY + 16, model.processingLine, {
-          fill: 'rgba(244,239,228,0.88)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10',
-          'text-anchor': 'end'
-        });
-      }
-      if (inlineListening && canReprompt) {
-        mk('rect', { x: 18, y: previewY + 6, width: 132, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.78)' });
-        text(28, previewY + 18, 'release to reprompt', {
-          fill: 'rgba(244,239,228,0.96)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
-        });
-      }
-    } else if (model.captures.length) {
-      text(20, previewY + 34, COPY.frameSaved, {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
-      });
-      wrapTextBlock(undefined, lower(String(model.summary || model.processingLine || COPY.backgroundWorking)), 20, previewY + 56, 186, 13, 'rgba(8,8,8,0.76)', '12', 4);
-      text(20, detailY + 18, model.analysisState === 'pending' ? model.processingLine : 'saved without preview', {
-        fill: 'rgba(8,8,8,0.46)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-    } else {
-      const cameraRecoveryCue = !model.captures.length && (getUIState().onboarding_step4_skipped || getUIState().tutorial_step4_camera_denied);
-      text(20, previewY + 34, 'gallery starts here', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      text(20, previewY + 56, cameraRecoveryCue ? 'camera not enabled — click shutter to allow' : 'click open lens to begin', {
-        fill: 'rgba(8,8,8,0.46)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-      text(20, previewY + 76, 'frames appear here immediately', {
-        fill: 'rgba(8,8,8,0.34)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-    }
-
-    if (currentState === STATES.SHOW_PRIMED) {
-      text(226, footerY, 'waiting for click', {
-        fill: 'rgba(8,8,8,0.34)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10',
-        'text-anchor': 'end'
-      });
-      return;
-    }
-
-    const recent = model.captures.slice().reverse().slice(0, 3);
-    recent.forEach((capture, i) => {
-      const x = 14 + (i * 70);
-      const href = getCaptureImageHref(capture);
-      const active = capture === model.current;
-      mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: active ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.10)' });
-      if (href) {
-        drawRasterFrame(href, { x, y: thumbY, width: thumbW, height: thumbH, preserveAspectRatio: 'xMidYMid slice', opacity: active ? 1 : 0.68, rx: 8, ry: 8 });
-      } else {
-        text(x + 8, thumbY + 24, `${i + 1}`, {
-          fill: 'rgba(8,8,8,0.48)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '11'
-        });
-      }
-      if (active) {
-        mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.01)', stroke: 'rgba(244,239,228,0.38)', 'stroke-width': 2 });
-      }
-      const thumbTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x, y: thumbY, width: thumbW, height: thumbH, rx: 8, ry: 8, fill: 'transparent' }, thumbTap);
-      thumbTap.addEventListener('pointerup', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        fireFeedback('touch-commit');
-        const absoluteIndex = model.captures.indexOf(capture);
-        stateData.showCaptureIndex = absoluteIndex >= 0 ? absoluteIndex : 0;
-        stateData.showCaptureEntryId = capture?.entry_id || capture?.id || '';
-        stateData.showStatus = 'visual memory';
-        render();
-      });
-    });
-    const showFooter = getShowFooter(model);
-    text(226, 286, showFooter, {
+    wrapTextBlock(undefined, 'voice-first mode is active', 20, 136, 188, 13, 'rgba(8,8,8,0.92)', '13', 2);
+    wrapTextBlock(undefined, 'tell, know, now, and triangle are available', 20, 162, 188, 12, 'rgba(8,8,8,0.66)', '11', 3);
+    wrapTextBlock(undefined, 'image support will return in a later update', 20, 206, 188, 12, 'rgba(8,8,8,0.48)', '10', 3);
+    text(226, 276, 'coming later', {
       fill: 'rgba(8,8,8,0.34)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '9',
+      'font-size': '10',
       'text-anchor': 'end'
     });
   }
@@ -4087,22 +3727,7 @@
   }
 
   function buildShowVoiceContext() {
-    const captures = getCaptureList();
-    const idx = Math.max(0, Math.min(stateData.showCaptureIndex || 0, Math.max(captures.length - 1, 0)));
-    const capture = captures[idx];
-    if (!capture) return { kind: 'show', text: 'visual capture context', surface: 'show' };
-    const captureText = [
-      capture.summary || capture.ai_analysis || '',
-      capture.prompt_text || '',
-      capture.voice_annotation || '',
-      recentTimeLabel(capture.captured_at || capture.created_at || capture.meta?.captured_at || '')
-    ].filter(Boolean).join(' · ');
-    return {
-      kind: 'capture',
-      nodeId: capture.node_id || capture.entry_id || capture.id || '',
-      text: captureText.slice(0, 220),
-      surface: 'show'
-    };
+    return { kind: 'show', text: 'show is coming later', surface: 'show' };
   }
 
   function buildKnowVoiceContext() {
@@ -4120,20 +3745,11 @@
 
   function buildNowVoiceContext() {
     const data = buildNowSummary();
-    if (data.pendingDecisions && data.pendingDecisions.length) {
-      const current = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
-      return {
-        kind: 'decision',
-        nodeId: current?.node_id || '',
-        text: typeof current === 'string' ? current : ((current?.text || '') + ' ' + (current?.insight_body || '')).trim(),
-        surface: 'now'
-      };
-    }
     return {
       kind: 'project',
       nodeId: data.activeQuestionNodeId || '',
-      text: data.blockerQuestion || data.next || '',
-      surface: 'now'
+      text: data.nextPromptText || '',
+      surface: 'project'
     };
   }
 
@@ -4150,24 +3766,12 @@
       surface: 'tell',
       createdAt: entry.created_at || '',
       commentKind: 'comment',
-      projectSummary: buildNowSummary().next || ''
+      projectSummary: buildNowSummary().nextPromptText || ''
     };
   }
 
   function buildShowCommentContext() {
-    const summary = buildShowSummary();
-    const capture = summary.current;
-    if (!capture?.node_id) return null;
-    return {
-      kind: 'thread-comment',
-      nodeId: capture.node_id,
-      title: capture.description_text || capture.summary || 'visual note',
-      text: [capture.description_text || capture.summary || '', capture.latest_comment_text || '', capture.voice_annotation || ''].filter(Boolean).join(' · '),
-      surface: 'show',
-      createdAt: capture.created_at || capture.captured_at || '',
-      commentKind: 'comment',
-      projectSummary: buildNowSummary().next || ''
-    };
+    return null;
   }
 
   function buildKnowCommentContext() {
@@ -4184,37 +3788,11 @@
       surface: 'know',
       createdAt: item.created_at || '',
       commentKind: item.source === 'question' ? 'clarification' : 'comment',
-      projectSummary: buildNowSummary().next || ''
+      projectSummary: buildNowSummary().nextPromptText || ''
     };
   }
 
   function buildNowCommentContext() {
-    const data = buildNowSummary();
-    const currentDecision = data.activePendingDecision;
-    if (currentDecision?.node_id) {
-      return {
-        kind: 'thread-comment',
-        nodeId: currentDecision.node_id,
-        title: currentDecision.text || 'decision',
-        text: ((currentDecision.text || '') + ' ' + (currentDecision.insight_body || '')).trim(),
-        surface: 'now',
-        createdAt: currentDecision.created_at || '',
-        commentKind: 'decision_note',
-        projectSummary: data.next || ''
-      };
-    }
-    if (data.activeQuestionNode?.node_id) {
-      return {
-        kind: 'thread-comment',
-        nodeId: data.activeQuestionNode.node_id,
-        title: 'guided ask',
-        text: data.activeQuestionNode.body || '',
-        surface: 'now',
-        createdAt: data.activeQuestionNode.created_at || '',
-        commentKind: 'clarification',
-        projectSummary: data.next || ''
-      };
-    }
     return null;
   }
 
@@ -4278,50 +3856,18 @@
 
   function buildNowTriangleItem() {
     const data = buildNowSummary();
-    if (data.pendingDecisions && data.pendingDecisions.length) {
-      const current = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
-      const textValue = typeof current === 'string' ? current : (current?.text || '');
-      return {
-        type: 'now',
-        id: current?.node_id || `decision:${textValue}`,
-        nodeId: current?.node_id || '',
-        project_id: getActiveProjectId(),
-        title: 'decision',
-        body: textValue,
-        summary: textValue,
-        timeLabel: recentTimeLabel(current?.created_at),
-        created_at: current?.created_at || '',
-        cardId: 'now',
-        nowType: 'decision'
-      };
-    }
-    if (data.blockerQuestion) {
-      return {
-        type: 'now',
-        id: `question:${data.blockerQuestion}`,
-        nodeId: data.activeQuestionNodeId || '',
-        project_id: getActiveProjectId(),
-        title: 'blocker',
-        body: data.blockerQuestion,
-        summary: data.blockerQuestion,
-        timeLabel: 'now',
-        created_at: new Date().toISOString(),
-        cardId: 'now',
-        nowType: 'question'
-      };
-    }
     return {
       type: 'now',
-      id: `project:${getActiveProjectId()}`,
-      nodeId: '',
+      id: data.activeQuestionNodeId || `project:${getActiveProjectId()}`,
+      nodeId: data.activeQuestionNodeId || '',
       project_id: getActiveProjectId(),
-      title: 'project state',
-      body: data.next || data.insight || data.capture || 'project context',
-      summary: data.next || data.insight || data.capture || 'project context',
+      title: data.nextPromptType || 'project state',
+      body: data.nextPromptText || 'project context',
+      summary: data.nextPromptText || 'project context',
       timeLabel: 'now',
       created_at: new Date().toISOString(),
       cardId: 'now',
-      nowType: 'project'
+      nowType: data.activeQuestionNodeId ? 'question' : 'project'
     };
   }
 
@@ -4387,7 +3933,7 @@
     if (card.id === 'tell') return buildTellVoiceContext();
     if (card.id === 'know') return { kind: 'know', text: 'selected knowledge focus', surface: 'know' };
     if (card.id === 'now') return buildNowVoiceContext();
-    if (card.id === 'show') return { kind: 'show', text: 'visual capture context', surface: 'show' };
+    if (card.id === 'show') return { kind: 'show', text: 'show is coming later', surface: 'show' };
     return { kind: card.id, text: card.role || card.title || '', surface: card.id };
   }
 
@@ -4522,7 +4068,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17'
       });
-      wrapTextBlock(undefined, 'back out, then reopen now. if the tutorial is stuck, use flush in projects.', 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 5);
+      wrapTextBlock(undefined, 'back out, then reopen now.', 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 3);
       text(226, 276, 'back · reopen', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
@@ -4532,7 +4078,7 @@
       return;
     }
     const inlineListening = recordingActive() && activeSurface() === 'project';
-    const queueCount = data.visibleQueueCount || 0;
+    const queueCount = data.queueCount || 0;
     const projectSurfaceMode = activeSurface() === 'project' ? surfaceMode() : 'stable';
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
@@ -4540,12 +4086,10 @@
     if (projectSurfaceMode === 'recording' || projectSurfaceMode === 'processing') {
       const promptText = lower(
         stateData.answeringQuestion?.text ||
-        data.blockerQuestion ||
-        data.pendingDecisionText ||
-        data.next ||
+        data.nextPromptText ||
         'hold ptt to continue'
       );
-      const progressLabel = lower(String(stateData.nowFeedback || (projectSurfaceMode === 'recording' ? 'recording answer' : 'answer queued · working quietly')));
+      const progressLabel = lower(String(stateData.nowFeedback || (projectSurfaceMode === 'recording' ? 'recording answer' : 'processing quietly')));
       const queueLine = getQueueLine();
       mk('rect', { x: 10, y: 84, width: 220, height: 162, rx: 12, fill: 'rgba(8,8,8,0.13)' });
       text(18, 102, projectSurfaceMode === 'recording' ? 'recording answer' : 'processing answer', {
@@ -4576,201 +4120,24 @@
       });
       return;
     }
-    if (drawOnboardingNowPanel(nowCard, data)) return;
-    const hasBlockers = data.pendingDecisions.length > 0 || data.openQuestions > 0;
-    const chainY = 78;
-    const phaseLabel = {
-      blocked: 'waiting on blocker',
-      observe: 'observing',
-      clarify: 'clarifying',
-      research: 'working in background',
-      evaluate: 'evaluating',
-      decision: 'deciding',
-      cooldown: 'cooling down',
-      idle: 'idle'
-    }[data.chainPhase] || data.chainPhase;
-
-    if (!hasBlockers && data.chainPhase !== 'idle') {
-      text(14, chainY + 8, phaseLabel, {
-        fill: 'rgba(8,8,8,0.56)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
+    const boxY = 84;
+    mk('rect', { x: 10, y: boxY, width: 220, height: 154, rx: 12, fill: 'rgba(8,8,8,0.13)' });
+    text(18, boxY + 18, lower(data.nextPromptType || 'project update'), {
+      fill: 'rgba(8,8,8,0.50)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+    wrapTextBlock(undefined, lower(String(data.nextPromptText || 'what changed, what needs attention, or what should happen next?')), 18, boxY + 40, 192, 15, 'rgba(8,8,8,0.96)', '15', 5);
+    if (data.brief) {
+      wrapTextBlock(undefined, lower(data.brief), 18, boxY + 124, 192, 11, 'rgba(8,8,8,0.56)', '10', 2);
     }
-
-    if (!hasBlockers) {
-      if (data.lastImpact) {
-        wrapTextBlock(undefined, lower(String(data.lastImpact.output).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.96)', '13', 2);
-      } else if (data.storedImpacts.length > 0) {
-        wrapTextBlock(undefined, lower(String(data.storedImpacts[0].output || data.storedImpacts[0].type).slice(0, 72)), 14, chainY + 24, 212, 13, 'rgba(8,8,8,0.72)', '12', 2);
-      }
-    }
-
-    if (data.queueBlocker) {
-      const blocker = data.queueBlocker;
-      const boxY = 84;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 142, rx: 8, fill: 'rgba(8,8,8,0.12)' });
-      text(18, boxY + 16, 'background blocker', {
-        fill: 'rgba(8,8,8,0.50)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-      wrapTextBlock(undefined, lower(String(blocker.body || 'background work stalled').slice(0, 132)), 18, boxY + 36, 192, 13, 'rgba(8,8,8,0.96)', '13', 5);
-      mk('rect', { x: 18, y: boxY + 100, width: 88, height: 20, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
-      text(28, boxY + 113, 'click retry', {
-        fill: 'rgba(244,239,228,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
-      });
-      text(18, boxY + 136, 'double side skips', {
-        fill: 'rgba(8,8,8,0.40)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-    } else if (data.pendingDecisions.length > 0) {
-      const pd = data.pendingDecisions[data.pendingDecisionIndex] || data.pendingDecisions[0];
-      const pdText = typeof pd === 'string' ? pd : (pd.text || 'unnamed decision');
-      const pdOptions = typeof pd === 'string' ? [] : (pd.options || []);
-      const pdCount = data.pendingDecisions.length;
-      const optionTapTargets = [];
-      const controlTapTargets = [];
-
-      const attachTap = (x, y, width, height, handler) => {
-        const group = mk('g', { style: 'cursor: pointer;' });
-        mk('rect', { x, y, width, height, rx: 8, ry: 8, fill: 'transparent' }, group);
-        group.addEventListener('pointerup', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handler();
-        });
-        return group;
-      };
-
-      const boxY = 84;
-      const boxH = pdOptions.length >= 2 ? 162 : 126;
-      mk('rect', { x: 10, y: boxY, width: 220, height: boxH, rx: 8, fill: 'rgba(8,8,8,0.12)' });
-
-      const countLabel = pdCount > 1 ? ` ${data.pendingDecisionIndex + 1}/${pdCount}` : '';
-      text(18, boxY + 16, 'blocker' + countLabel, {
-        fill: 'rgba(8,8,8,0.50)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-
-      const displayText = String(pdText || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const titleRows = wrapTextBlock(undefined, lower(displayText.slice(0, 118)), 18, boxY + 34, 190, 13, 'rgba(8,8,8,0.96)', '13', 5);
-      if (data.activeThreadSummary) {
-        text(18, boxY + 26 + (titleRows * 13) + 6, 'comment · ' + lower(data.activeThreadSummary).slice(0, 34), {
-          fill: 'rgba(8,8,8,0.44)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
-        });
-        drawKnowDepthGlyph(data.activeThreadDepth || 0, 204, boxY + 20 + (titleRows * 13));
-      }
-
-      if (pdOptions.length >= 2) {
-        const slabY = boxY + 26 + (titleRows * 13) + (data.activeThreadSummary ? 20 : 10);
-        pdOptions.slice(0, 3).forEach((opt, i) => {
-          const slabTop = slabY + (i * 22);
-          const isSelected = stateData.selectedOption === i;
-          mk('rect', {
-            x: 18,
-            y: slabTop,
-            width: 204,
-            height: 18,
-            rx: 6,
-            ry: 6,
-            fill: isSelected ? 'rgba(8,8,8,0.90)' : 'rgba(8,8,8,0.14)'
-          });
-          text(24, slabTop + 12, lower(String(opt).slice(0, 34)), {
-            fill: isSelected ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.90)',
-            'font-family': 'PowerGrotesk-Regular, sans-serif',
-            'font-size': '11'
-          });
-          optionTapTargets.push({ x: 18, y: slabTop, width: 204, height: 18, handler: () => {
-            stateData.selectedOption = i;
-            render();
-          } });
-        });
-      }
-
-      const ctrlY = boxY + boxH - 24;
-      mk('rect', { x: 18, y: ctrlY, width: 96, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.90)' });
-      text(28, ctrlY + 12, 'approve', { fill: 'rgba(244,239,228,0.96)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
-      mk('rect', { x: 122, y: ctrlY, width: 48, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.16)' });
-      text(132, ctrlY + 12, 'skip', { fill: 'rgba(8,8,8,0.92)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
-      controlTapTargets.push({ x: 18, y: ctrlY, width: 96, height: 18, handler: approveCurrentNowDecision });
-      controlTapTargets.push({ x: 122, y: ctrlY, width: 48, height: 18, handler: dismissCurrentNowDecision });
-      if (pdCount > 1) {
-        mk('rect', { x: 178, y: ctrlY, width: 44, height: 18, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.16)' });
-        text(188, ctrlY + 12, 'next', { fill: 'rgba(8,8,8,0.92)', 'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '11' });
-        controlTapTargets.push({ x: 178, y: ctrlY, width: 44, height: 18, handler: advanceCurrentNowDecision });
-      }
-
-      optionTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
-      controlTapTargets.forEach(target => attachTap(target.x, target.y, target.width, target.height, target.handler));
-    } else if (data.projectCapNotice || data.openQuestions > 0) {
-      const boxY = 78;
-      mk('rect', { x: 10, y: boxY, width: 220, height: 178, rx: 12, fill: 'rgba(8,8,8,0.15)' });
-      const reasoningLabel = lower(data.activeQuestionNode?.source || '') === 'chain' ? 'from reasoning' : 'question';
-      text(18, boxY + 18, reasoningLabel, {
-        fill: 'rgba(8,8,8,0.52)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-      mk('rect', { x: 14, y: boxY + 28, width: 3, height: 110, rx: 1, ry: 1, fill: 'rgba(248,193,93,0.72)' });
-      const blockerText = String(data.blockerQuestion || '').replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-      const blockerRows = wrapTextBlock(undefined, lower(blockerText.slice(0, 152)), 20, boxY + 40, 192, 14, 'rgba(8,8,8,0.96)', '14', 5);
-      if (data.activeThreadSummary) {
-        text(20, boxY + 46 + blockerRows * 14, 'comment · ' + lower(data.activeThreadSummary).slice(0, 36), {
-          fill: 'rgba(8,8,8,0.44)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
-        });
-        drawKnowDepthGlyph(data.activeThreadDepth || 0, 204, boxY + 38 + blockerRows * 14);
-      }
-      const ctaY = Math.min(boxY + 130, boxY + 42 + blockerRows * 14 + (data.activeThreadSummary ? 28 : 16));
-      if (!data.projectCapNotice) {
-        mk('rect', { x: 18, y: ctaY, width: 148, height: 24, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.92)' });
-        text(30, ctaY + 16, inlineListening ? 'release to send answer' : 'hold ptt to answer', {
-          fill: 'rgba(244,239,228,0.96)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '12'
-        });
-      }
-      if (data.blockerCount > 1) {
-        text(18, ctaY + 42, `${data.blockerCount} asks waiting`, {
-          fill: 'rgba(8,8,8,0.36)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10'
-        });
-      }
-      if (stateData.nowFeedback) {
-        text(222, ctaY + 42, lower(stateData.nowFeedback), {
-          fill: 'rgba(8,8,8,0.44)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '10',
-          'text-anchor': 'end'
-        });
-      }
-    } else {
-      const mainPrompt = lower(data.next || (projectHasMeaningfulContent() ? 'hold ptt or open show to extend the project' : 'hold ptt or open show to begin'));
-      text(14, 112, COPY.boilerRoomReady, {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '17'
-      });
-      wrapTextBlock(undefined, mainPrompt, 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 4);
-      if (data.chainPhase !== 'idle') {
-        text(14, 214, phaseLabel, {
-          fill: 'rgba(8,8,8,0.46)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '11'
-        });
-      }
-    }
-
-    text(226, 276, hasBlockers ? (queueCount ? COPY.queuedWorking(queueCount) : COPY.waitingAnswer) : (queueCount ? COPY.queuedWorking(queueCount) : (projectHasMeaningfulContent() ? COPY.holdPttExtend : COPY.holdPttBegin)), {
+    const countsLine = `asks ${data.asksCount} · sig ${data.signalsCount} · dec ${data.decisionCount} · loops ${data.loopsCount}`;
+    text(18, 258, countsLine, {
+      fill: 'rgba(8,8,8,0.42)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+    text(226, 276, queueCount ? `${queueCount} queued` : (inlineListening ? 'release to answer' : 'hold ptt to answer'), {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -4782,135 +4149,59 @@
     const knowCard = cards.find(c => c.id === 'know');
     const model = buildKnowModel();
     const laneIdx = stateData.knowLaneIndex || 0;
-    const chipIdx = stateData.knowChipIndex || 0;
-    const itemIdx = stateData.knowItemIndex || 0;
     const lane = model.lanes[laneIdx] || model.lanes[0];
     if (!lane) return;
-    const availableChipIndexes = lane.availableChipIndexes?.length ? lane.availableChipIndexes : [0];
-    const safeChipIdx = availableChipIndexes.includes(chipIdx) ? chipIdx : availableChipIndexes[0];
-    stateData.knowChipIndex = safeChipIdx;
-    const chip = model.chips[safeChipIdx] || model.chips[0];
+    const itemIdx = stateData.knowItemIndex || 0;
     const items = getKnowVisibleItems(model);
     const safeItemIdx = Math.min(itemIdx, items.length - 1);
     if (safeItemIdx !== itemIdx) stateData.knowItemIndex = safeItemIdx;
     const item = items[safeItemIdx] || lane.items[0];
+    const detailMode = currentState === STATES.KNOW_DETAIL;
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
     drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
-    const LAYOUT = { top: 72, tabsH: 22, branchH: 16, footerY: 282, gap: 4 };
-    const detailMode = currentState === STATES.KNOW_DETAIL;
-    const laneTabs = [
-      { id: 'questions', label: 'asks', shortLabel: 'ask' },
-      { id: 'signals', label: 'signals', shortLabel: 'sig' },
-      { id: 'decisions', label: 'decided', shortLabel: 'dec' },
-      { id: 'open loops', label: 'loops', shortLabel: 'loop' }
-    ];
-    const switcherX = 84;
+    const footerY = 282;
+    const switcherX = 160;
     const switcherY = 68;
-    const switcherW = 142;
-    const segmentW = switcherW / laneTabs.length;
+    const switcherW = 66;
+    const laneDots = model.lanes.slice(0, 4);
+    const switcherTap = mk('g', { style: 'cursor: pointer;' });
     mk('rect', {
       x: switcherX,
       y: switcherY,
       width: switcherW,
-      height: 22,
+      height: 30,
       rx: 10,
       ry: 10,
       fill: 'rgba(8,8,8,0.14)'
+    }, switcherTap);
+    text(switcherX + switcherW / 2, switcherY + 13, lower(lane.label || lane.id || 'asks'), {
+      fill: 'rgba(8,8,8,0.96)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'middle'
+    }, switcherTap);
+    laneDots.forEach(function(entry, index) {
+      mk('circle', {
+        cx: switcherX + 18 + (index * 10),
+        cy: switcherY + 22,
+        r: 2.4,
+        fill: index === laneIdx ? '#3cc76a' : 'rgba(8,8,8,0.24)'
+      }, switcherTap);
     });
-    laneTabs.forEach((tab, i) => {
-      const isActive = lane.id === tab.id;
-      const pillGroup = mk('g', { 'data-lane-index': i, style: 'cursor: pointer;' });
-      mk('rect', {
-        x: switcherX + (i * segmentW), y: switcherY, width: segmentW, height: 22, rx: 10, ry: 10,
-        fill: isActive ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
-        stroke: isActive ? 'rgba(8,8,8,0.06)' : 'rgba(8,8,8,0.04)',
-        'stroke-width': 1
-      }, pillGroup);
-      const tabText = mk('text', {
-        x: switcherX + (i * segmentW) + segmentW / 2, y: switcherY + 14,
-        fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '9', 'text-anchor': 'middle'
-      }, pillGroup);
-      tabText.textContent = lower(tab.shortLabel || tab.label);
-      pillGroup.addEventListener('pointerup', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        fireFeedback('touch-commit');
-        stateData.knowLaneIndex = i;
-        stateData.knowItemIndex = 0;
-        stateData.knowBodyScrollTop = 0;
-        const newLane = model.lanes[i];
-        const activeChip = model.chips[stateData.knowChipIndex]?.id;
-        const hasChipItems = newLane?.items?.some(function(entry) { return entry.chips.includes(activeChip); });
-        if (!hasChipItems) stateData.knowChipIndex = newLane?.availableChipIndexes?.[0] ?? 0;
-        render();
-      });
+    switcherTap.addEventListener('pointerup', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      fireFeedback('touch-commit');
+      stateData.knowLaneIndex = ((laneIdx || 0) + 1) % Math.max(model.lanes.length, 1);
+      stateData.knowItemIndex = 0;
+      stateData.knowBodyScrollTop = 0;
+      stateData.knowBodyMaxScroll = 0;
+      render();
     });
 
-    const activeChips = model.chips.filter((c, i) => availableChipIndexes.includes(i));
-    const showChipRow = lane.id === 'signals' && activeChips.length > 1;
-    let contentCursorY = switcherY + 20;
-    if (showChipRow) {
-      const signalChips = activeChips.filter(function(chip) {
-        return chip.id === 'latest' || chip.id === 'branch';
-      });
-      const chipX = 154;
-      const chipY = contentCursorY;
-      const chipW = 72;
-      const chipH = 16;
-      mk('rect', {
-        x: chipX,
-        y: chipY,
-        width: chipW,
-        height: chipH,
-        rx: 7,
-        ry: 7,
-        fill: 'rgba(8,8,8,0.10)'
-      });
-      signalChips.forEach((c, chipIndex) => {
-        const realIndex = model.chips.indexOf(c);
-        const isActive = realIndex === safeChipIdx;
-        const chipWidth = chipW / Math.max(signalChips.length, 1);
-        const chipGroup = mk('g', { 'data-chip-index': realIndex, style: 'cursor: pointer;' });
-        mk('rect', {
-          x: chipX + (chipIndex * chipWidth), y: chipY, width: chipWidth, height: chipH, rx: 7, ry: 7,
-          fill: isActive ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.10)',
-          stroke: isActive ? 'rgba(8,8,8,0.10)' : 'rgba(8,8,8,0.05)', 'stroke-width': 1
-        }, chipGroup);
-        const chipText = mk('text', {
-          x: chipX + (chipIndex * chipWidth) + chipWidth / 2, y: chipY + 11,
-          fill: isActive ? 'rgba(244,239,228,0.96)' : 'rgba(8,8,8,0.76)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '8', 'text-anchor': 'middle'
-        }, chipGroup);
-        chipText.textContent = lower(c.label);
-        chipGroup.addEventListener('pointerup', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          fireFeedback('touch-commit');
-          stateData.knowChipIndex = realIndex;
-          stateData.knowItemIndex = 0;
-          stateData.knowBodyScrollTop = 0;
-          render();
-        });
-      });
-      contentCursorY += chipH + LAYOUT.gap;
-    }
-
-    const frame = {
-      x: 10,
-      y: contentCursorY + 4,
-      width: 220,
-      height: Math.max(110, LAYOUT.footerY - (contentCursorY + 2) - 12)
-    };
-    const dotsCount = Math.min(Math.max(1, items.length || 1), 6);
-    const dotsIndex = Math.min(safeItemIdx, dotsCount - 1);
-    const dotsWidth = dotsCount > 1 ? ((dotsCount - 1) * 8) : 0;
-    if (dotsCount > 1) {
-      drawKnowItemDots(dotsCount, dotsIndex, frame.x + frame.width - dotsWidth - 10, frame.y - 6);
-    }
-
+    const frame = { x: 10, y: 104, width: 220, height: Math.max(124, footerY - 110) };
     const nextText = lower(String(item?.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
     const html = buildKnowFrameMarkup({
       ...item,
@@ -4918,16 +4209,16 @@
         ? ((item?.body || 'no content yet') + '\n\nnext move\n' + nextText)
         : (item?.body || 'no content yet')
     }, detailMode);
-    drawKnowScrollFrame({ html: html }, frame, `${currentState}:${lane.id}:${safeChipIdx}:${safeItemIdx}:${item?.node_id || item?.created_at || ''}:${item?.threadDepth || 0}`);
+    drawKnowScrollFrame({ html: html }, frame, `${currentState}:${lane.id}:${safeItemIdx}:${item?.node_id || item?.created_at || ''}:${item?.threadDepth || 0}`);
 
     if (item?.triangulated) {
-      text(frame.x + frame.width - 38, contentCursorY - 2, '▼', {
+      text(frame.x + frame.width - 38, 100, '▼', {
         fill: 'rgba(8,8,8,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
       if (item?.meta?.triangle_format !== 'claims-v1') {
-        text(frame.x + frame.width - 18, contentCursorY - 2, 'legacy', {
+        text(frame.x + frame.width - 18, 100, 'legacy', {
           fill: 'rgba(8,8,8,0.42)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '7',
@@ -4973,17 +4264,17 @@
     }
 
     const footerLeft = `${Math.min(safeItemIdx + 1, Math.max(items.length, 1))} of ${Math.max(items.length, 1)}`;
-    const footerRight = onboardingActive() && getOnboardingStep() === 3
-      ? 'scroll once'
-      : (!detailMode ? 'click · detail' : (item?.triangulated && item?.meta?.triangle_format === 'claims-v1'
+    const footerRight = !detailMode
+      ? 'click · detail'
+      : (item?.triangulated && item?.meta?.triangle_format === 'claims-v1'
         ? 'click · reject'
-        : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · comment')));
-    text(14, LAYOUT.footerY, footerLeft, {
+        : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · reflect'));
+    text(14, footerY, footerLeft, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, LAYOUT.footerY, footerRight, {
+    text(226, footerY, footerRight, {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -5049,17 +4340,8 @@
         break;
       }
 
-      case STATES.SHOW_BROWSE: {
-        const captures = getCaptureList();
-        if (!captures.length) break;
-        const max = captures.length;
-        stateData.showCaptureIndex = ((stateData.showCaptureIndex || 0) + (direction > 0 ? 1 : -1) + max) % max;
-        const capture = captures[stateData.showCaptureIndex] || null;
-        stateData.showCaptureEntryId = capture?.entry_id || capture?.id || '';
-        stateData.showStatus = 'reviewing';
-        render();
+      case STATES.SHOW_BROWSE:
         break;
-      }
 
       case STATES.TELL_BROWSE: {
         const entries = getVoiceEntries();
@@ -5072,8 +4354,7 @@
       }
 
       case STATES.SHOW_PRIMED:
-        // Scroll while primed — open camera
-        openCameraFromShow('touch');
+        fireFeedback('blocked');
         break;
 
       case STATES.CAMERA_OPEN:
@@ -5114,28 +4395,6 @@
       }
 
       case STATES.NOW_BROWSE: {
-        if (onboardingActive() && getOnboardingStep() === 2 && getUIState().tutorial_step2_fallback_visible) {
-          const currentIndex = tutorialStep2FallbackIndex();
-          const nextIndex = (currentIndex + (direction > 0 ? 1 : -1) + TUTORIAL_FALLBACK_OPTIONS.length) % TUTORIAL_FALLBACK_OPTIONS.length;
-          native?.updateUIState?.({ tutorial_step2_fallback_index: nextIndex });
-          render();
-          break;
-        }
-        const project = getProjectMemory();
-        const pending = project?.pending_decisions || [];
-        const current = pending[stateData.decisionIndex || 0];
-        const options = (typeof current !== 'string' && current?.options) || [];
-
-        // If decision has 3 options, scroll cycles options first
-        if (options.length >= 2 && stateData.selectedOption !== undefined) {
-          stateData.selectedOption = (stateData.selectedOption + (direction > 0 ? 1 : -1) + options.length) % options.length;
-          render();
-        } else if (pending.length > 1) {
-          stateData.decisionIndex = (stateData.decisionIndex + (direction > 0 ? 1 : -1) + pending.length) % pending.length;
-          stateData.selectedOption = 0;
-          render();
-        }
-        // no-op when no decisions and no options — don't eject to HOME
         break;
       }
 
@@ -5198,7 +4457,7 @@
         selectedIndex = cards.findIndex(function(card) { return card.id === 'show'; });
         native?.setActiveNode?.('show');
         native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'home' });
-        openCameraFromShow('touch');
+        transition(STATES.SHOW_BROWSE, { showStatus: 'show is coming later' });
         break;
       }
 
@@ -5207,10 +4466,6 @@
       case STATES.KNOW_BROWSE:
       case STATES.KNOW_DETAIL:
       case STATES.NOW_BROWSE: {
-        if (currentState === STATES.NOW_BROWSE && buildNowSummary().queueBlocker) {
-          skipCurrentQueueBlocker();
-          break;
-        }
         fireFeedback('touch-commit');
         dispatchTriangleDoubleSide(buildTriangleCurrentItem());
         break;
@@ -5245,7 +4500,7 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        openCameraFromShow('touch');
+        fireFeedback('blocked');
         break;
 
       case STATES.TELL_BROWSE: {
@@ -5269,8 +4524,7 @@
       }
 
       case STATES.SHOW_PRIMED:
-        // Side while primed — open camera
-        openCameraFromShow('touch');
+        fireFeedback('blocked');
         break;
 
       case STATES.CAMERA_OPEN:
@@ -5316,34 +4570,8 @@
       }
 
       case STATES.NOW_BROWSE: {
-        if (onboardingActive()) {
-          const step = getOnboardingStep();
-          if (step === 0) {
-            fireFeedback('touch-commit');
-            setOnboardingStep(1, { via: 'primary' });
-            pushLog('lesson 0 complete', 'system');
-            render();
-            return;
-          }
-          if (step === 2 && getUIState().tutorial_step2_fallback_visible) {
-            fireFeedback('touch-commit');
-            submitTutorialWheelFallback();
-            return;
-          }
-          fireFeedback('blocked');
-          return;
-        }
-        if (buildNowSummary().queueBlocker) {
-          retryCurrentQueueBlocker();
-          return;
-        }
-        if (approveCurrentNowDecision()) {
-          if (window.StructaAudio?.play) window.StructaAudio.play('approve');
-          return;
-        }
-        fireFeedback('blocked');
-        pushLog('hold ptt to answer blocker', 'project');
-        break;
+        openNowNextMove();
+        return;
       }
 
       case STATES.LOG_OPEN:
@@ -5525,16 +4753,6 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        if (!buildShowCommentContext()) {
-          break;
-        }
-        voiceReturnState = STATES.SHOW_BROWSE;
-        transition(STATES.VOICE_OPEN, {
-          fromPTT: true,
-          tellStatus: 'commenting',
-          inlinePTTSurface: 'show',
-          buildContext: buildShowCommentContext()
-        });
         break;
 
       case STATES.CAMERA_OPEN:
@@ -5543,45 +4761,24 @@
         break;
 
       case STATES.NOW_BROWSE: {
-        if (onboardingActive() && getOnboardingStep() !== 2) {
-          break;
-        }
-        if (onboardingActive() && getOnboardingStep() === 2) {
-          native?.updateUIState?.({ tutorial_step2_ptt_attempted: true });
-        }
-        const project = getProjectMemory();
-        const openQuestionNodes = project?.open_question_nodes || [];
+        const data = buildNowSummary();
         voiceReturnState = STATES.NOW_BROWSE;
-        if (onboardingActive() && getOnboardingStep() === 2) {
-          transition(STATES.VOICE_OPEN, {
-            answeringQuestion: { index: -1, text: 'what is this project about?', onboarding: true },
-            fromPTT: true,
-            inlinePTTSurface: 'project'
-          });
-        } else if (openQuestionNodes.length) {
-          const openQuestion = openQuestionNodes[0] || {};
+        if (data.activeQuestionNodeId) {
           transition(STATES.VOICE_OPEN, {
             answeringQuestion: {
               index: 0,
-              nodeId: openQuestion.node_id || '',
-              text: openQuestion.body || openQuestion.title || '',
-              source: openQuestion.source || 'question'
+              nodeId: data.activeQuestionNodeId || '',
+              text: data.nextPromptText || '',
+              source: data.activeQuestionNode?.source || 'question'
             },
             fromPTT: true,
             inlinePTTSurface: 'project'
           });
-        } else if (buildNowCommentContext()) {
-          transition(STATES.VOICE_OPEN, {
-            fromPTT: true,
-            tellStatus: 'commenting',
-            inlinePTTSurface: 'project',
-            buildContext: buildNowCommentContext()
-          });
         } else {
           transition(STATES.VOICE_OPEN, {
             fromPTT: true,
-            tellStatus: 'listening',
             inlinePTTSurface: 'project',
+            tellStatus: 'listening',
             buildContext: buildNowVoiceContext()
           });
         }
@@ -5672,7 +4869,7 @@
     switch (currentState) {
       case STATES.SHOW_PRIMED:
         stateData.pendingShowNarration = false;
-        transition(STATES.SHOW_BROWSE, { showStatus: 'capture ready' });
+        transition(STATES.SHOW_BROWSE, { showStatus: 'show is coming later' });
         break;
 
       case STATES.SHOW_BROWSE:
@@ -5919,10 +5116,7 @@
       stateData.showCaptureIndex = captures.length - 1;
       stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
     }
-    if (currentState === STATES.SHOW_BROWSE) {
-      stateData.showStatus = 'describing image...';
-      render();
-    }
+    if (currentState === STATES.SHOW_BROWSE) render();
     native?.updateUIState?.({ tutorial_step4_camera_denied: false });
     if (onboardingActive() && getOnboardingStep() === 4) {
       traceTutorial('tutorial.step', 'advance', '4', { step: 4, via: 'primary' });

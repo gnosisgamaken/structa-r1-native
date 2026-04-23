@@ -365,6 +365,7 @@
       project_id: input.project_id || contracts.baseProjectCode,
       device_scope_key: deviceScopeKey,
       name: input.name || 'untitled project',
+      project_mark: input.project_mark || '',
       type: input.type || 'general',
       user_role: input.user_role || '',
       brief: input.brief || '',
@@ -402,6 +403,7 @@
   function ensureProjectKnowledge(project) {
     if (!project || typeof project !== 'object') return project;
     project.brief = typeof project.brief === 'string' ? project.brief : '';
+    project.project_mark = String(project.project_mark || '').trim().toUpperCase().slice(0, 2);
     project.derived_candidates = project.derived_candidates && typeof project.derived_candidates === 'object'
       ? project.derived_candidates
       : { decisions: [], asks: [], blockers: [], themes: [] };
@@ -912,8 +914,8 @@
       last_capture_entry_id: '',
       last_insight_summary: '',
       last_event_summary: '',
-      onboarded: false,
-      onboarding_step: 0,
+      onboarded: true,
+      onboarding_step: 'complete',
       onboarding_paused: false,
       onboarding_step2_skipped: false,
       onboarding_step4_skipped: false,
@@ -2648,23 +2650,21 @@
     if (raw.includes('lesson 0 complete') || raw.includes('lesson 1 complete') || raw.includes('lesson 2 complete') || raw.includes('lesson 3 complete')) return null;
     if (raw === 'camera opened' || raw.endsWith('camera open')) return null;
     if (raw === 'capture capture') return null;
-    if (raw === 'camera image captured' || raw === 'image captured') return 'frame saved';
-    if (raw === 'show+tell captured' || raw === 'show+tell saved' || raw === 'capture comment stored') return 'capture comment stored';
-    if (raw === 'image saved') return 'frame saved';
-    if (raw === 'description stored' || raw === 'visual result ready') return 'description stored';
     if (raw === 'note saved' || raw === 'voice note saved') return 'note saved';
     if (raw === 'project brief stored' || raw === 'project brief ready') return 'brief stored';
+    if (raw === 'project mark ready') return 'project mark ready';
     if (raw === 'follow-up queued') return 'follow-up queued';
     if (raw === 'signal derived') return 'signal derived';
     if (raw === 'decision candidate ready') return 'decision candidate ready';
+    if (raw === 'decision approved') return 'decision approved';
     if (raw === 'background blocker flagged') return 'background blocker flagged';
-    if (raw === 'description requested') return 'description requested';
+    if (raw === 'triangle ready') return 'triangle ready';
     if (raw === 'voice saved') return null;
     if (raw === 'question answered') return null;
     if (raw === 'insight extracted') return 'signal ready';
     if (raw === 'insight unavailable' || raw === 'insight failed') return null;
-    if (raw === 'visual insight ready' || raw === 'show+tell insight ready' || raw === 'visual result ready' || raw === 'show+tell result ready') return 'visual note ready';
-    if (raw === 'visual insight unavailable' || raw === 'visual insight failed' || raw === 'description unavailable') return 'description unavailable';
+    if (raw === 'visual insight ready' || raw === 'show+tell insight ready' || raw === 'visual result ready' || raw === 'show+tell result ready') return null;
+    if (raw === 'visual insight unavailable' || raw === 'visual insight failed' || raw === 'description unavailable') return null;
     if (raw.startsWith('bridge-in onpluginmessage')) return null;
     if (raw.startsWith('bridge-in response')) return null;
     if (raw.startsWith('bridge-in response received')) return null;
@@ -2711,17 +2711,14 @@
     if (k === 'product') {
       if (
         raw === 'note saved' ||
-        raw === 'frame saved' ||
-        raw === 'description requested' ||
-        raw === 'description stored' ||
-        raw === 'description unavailable' ||
-        raw === 'capture comment stored' ||
+        raw === 'brief stored' ||
+        raw === 'project mark ready' ||
         raw === 'follow-up queued' ||
         raw === 'signal derived' ||
         raw === 'decision candidate ready' ||
-        raw === 'decision promoted' ||
-        raw === 'background work failed' ||
-        raw === 'brief stored'
+        raw === 'decision approved' ||
+        raw === 'background blocker flagged' ||
+        raw === 'triangle ready'
       ) return raw;
       return compact(raw, 7);
     }
@@ -2734,36 +2731,20 @@
       if (raw.includes('archive unavailable') || raw.includes('delete unavailable')) return compact(raw, 6);
       return null;
     }
-    if (k === 'camera') {
-      if (
-        raw === 'frame captured' ||
-        raw === 'show+tell captured' ||
-        raw === 'show+tell saved' ||
-        raw === 'capture comment stored' ||
-        raw === 'description stored' ||
-        raw === 'visual note ready' ||
-        raw === 'visual note unavailable' ||
-        raw === 'description unavailable' ||
-        raw === 'frame capture failed — try again'
-      ) return raw;
-      return null;
-    }
+    if (k === 'camera') return null;
     if (k === 'llm') {
       if (
-        raw === 'signal ready' ||
         raw === 'signal derived' ||
-        raw === 'description stored' ||
         raw === 'note saved' ||
         raw === 'brief stored' ||
-        raw === 'visual note ready' ||
-        raw === 'visual note unavailable' ||
-        raw === 'description unavailable' ||
-        raw === 'background blocker flagged'
+        raw === 'project mark ready' ||
+        raw === 'background blocker flagged' ||
+        raw === 'triangle ready'
       ) return raw;
       return null;
     }
     if (k === 'decision') {
-      if (raw === 'decision candidate ready') return raw;
+      if (raw === 'decision candidate ready' || raw === 'decision approved') return raw;
       return compact(raw, 6);
     }
     if (k === 'question' && raw === 'follow-up queued') return raw;
@@ -3571,6 +3552,16 @@
     });
   }
 
+  function setProjectMark(mark) {
+    var value = String(mark || '').trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+    if (value.length !== 2) return '';
+    touchProjectMemory(function(project) {
+      ensureProjectKnowledge(project);
+      project.project_mark = value;
+    });
+    return value;
+  }
+
   function setProjectType(type) {
     if (!type || !contracts.projectTypes.includes(type)) return;
     return touchProjectMemory(function(project) {
@@ -3670,6 +3661,7 @@
     isBlockerLive,
     addBacklogItem,
     setProjectName,
+    setProjectMark,
     setProjectType,
     setUserRole,
     setProjectBrief,

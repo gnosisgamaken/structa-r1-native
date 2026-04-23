@@ -52,6 +52,41 @@
     return String(text || '').toLowerCase();
   }
 
+  function deriveProjectMark(title, brief) {
+    var filler = {
+      project: true,
+      new: true,
+      my: true,
+      the: true,
+      a: true,
+      an: true,
+      untitled: true,
+      this: true
+    };
+    function meaningfulWords(input) {
+      return String(input || '')
+        .replace(/[^a-zA-Z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .map(function(word) { return word.trim(); })
+        .filter(function(word) {
+          return word && !filler[lower(word)];
+        });
+    }
+    var words = meaningfulWords(title);
+    if (!words.length) words = meaningfulWords(brief);
+    if (!words.length) return 'ST';
+    if (words.length === 1) {
+      var single = words[0].toUpperCase().replace(/[^A-Z]/g, '');
+      return (single.slice(0, 2) || 'ST').padEnd(2, 'T');
+    }
+    var first = (words[0][0] || '').toUpperCase().replace(/[^A-Z]/g, '');
+    var second = (words[1][0] || '').toUpperCase().replace(/[^A-Z]/g, '');
+    var mark = (first + second).slice(0, 2);
+    if (mark.length === 2) return mark;
+    var fallback = (words.join('').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2) || 'ST');
+    return fallback.padEnd(2, 'T');
+  }
+
   function clearOnboardingStartTimer() {
     if (!onboardingStartTimer) return;
     clearTimeout(onboardingStartTimer);
@@ -487,7 +522,6 @@
         operation_id: payload.operationId || ''
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'note saved' });
     native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
     return candidates;
   }
@@ -498,6 +532,8 @@
     if (title && lower(title) !== 'untitled project') {
       native?.setProjectName?.(title);
     }
+    var projectMark = deriveProjectMark(title, brief);
+    if (projectMark) native?.setProjectMark?.(projectMark);
     var briefWrite = native?.recordOperationWrite?.(payload.operationId || '', 'project_brief', {
       voiceEntryId: payload.voiceEntryId || ''
     });
@@ -535,7 +571,8 @@
         };
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'project brief stored' });
+    native?.appendLogEntry?.({ kind: 'llm', message: 'brief stored' });
+    if (projectMark) native?.appendLogEntry?.({ kind: 'llm', message: 'project mark ready' });
     native?.updateUIState?.({
       last_insight_summary: (brief || title || '').slice(0, 60),
       user_status: title ? ('project: ' + title) : 'project brief ready'
@@ -908,6 +945,7 @@
         native?.recordOperationWrite?.(onboardingOperationId, 'voice_note', {
           nodeId: onboardingVoiceEntry?.node_id || ''
         });
+        native?.appendLogEntry?.({ kind: 'voice', message: 'note saved' });
         window.dispatchEvent(new CustomEvent('structa-onboarding-answer', {
           detail: {
             answer: text,
@@ -1023,12 +1061,15 @@
     }
 
     // === Normal voice input ===
-    native?.appendLogEntry?.({ kind: 'voice', message: 'voice saved' });
+    var currentProject = native?.getProjectMemory?.() || {};
+    var needsBrief = !String(currentProject?.brief || '').trim();
+    native?.appendLogEntry?.({ kind: 'voice', message: 'note saved' });
     var operationId = native?.beginOperation?.({
-      kind: 'tell',
+      kind: needsBrief ? 'project-bootstrap' : 'tell',
       allowed: {
         voice_note: 1,
-        derived_candidate: 1
+        derived_candidate: 1,
+        project_brief: needsBrief ? 1 : 0
       }
     }) || '';
     var voiceEntry = null;
@@ -1054,6 +1095,14 @@
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: 'voice-entry' }
     }));
+
+    if (needsBrief) {
+      enqueueProjectBrief(text, currentProject, {
+        voiceEntryId: voiceEntry?.node_id || buildContext?.nodeId || '',
+        operationId: operationId
+      });
+      return;
+    }
 
     // Try to detect a task and add to backlog
     var taskMatch = text.match(/^(?:need to|must|have to|gotta|remember to|don't forget to)\b(.{5,80})/i);

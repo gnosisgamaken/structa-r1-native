@@ -203,6 +203,7 @@
     return {
       project_id: input.project_id || makeEntryId('project'),
       name: (input.name || 'untitled project').toLowerCase(),
+      project_mark: String(input.project_mark || '').trim().toUpperCase().slice(0, 2),
       type: projectTypes.includes(input.type) ? input.type : 'general',
       user_role: (input.user_role || '').toLowerCase(),
       device_scope_key: input.device_scope_key || '',

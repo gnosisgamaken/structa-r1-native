@@ -829,17 +829,17 @@
     if (!job) return '';
     switch (job.kind) {
       case 'triangle-synthesize':
-        return 'synthesis stalled — click retry, double side skips';
+        return 'synthesis stalled — hold ptt to unblock';
       case 'image-analyze':
-        return 'visual note stalled — click retry, double side skips';
+        return 'visual note stalled — hold ptt to unblock';
       case 'voice-interpret':
-        return 'interpretation stalled — click retry, double side skips';
+        return 'interpretation stalled — hold ptt to unblock';
       case 'project-title':
-        return 'project naming stalled — click retry, double side skips';
+        return 'project naming stalled — hold ptt to unblock';
       case 'project-brief':
-        return 'project brief stalled — click retry, double side skips';
+        return 'project brief stalled — hold ptt to unblock';
       default:
-        return 'queue stalled — click retry, double side skips';
+        return 'queue stalled — hold ptt to unblock';
     }
   }
 
@@ -2336,7 +2336,9 @@
     const queueBlocker = queueBlockers[0] || null;
     const queueCount = getQueuePendingJobs().length;
     const queueLine = getQueueLine();
-    const activeQuestionNode = openQuestionNodes[0] || null;
+    const hideQuestionsUntil = Number(stateData.nowHideQuestionsUntil || 0);
+    const shouldHoldNowPrompt = hideQuestionsUntil > Date.now();
+    const activeQuestionNode = shouldHoldNowPrompt ? null : (openQuestionNodes[0] || null);
     const activePendingDecision = pendingDecisions[0] || null;
     const promotedDecisions = promoted.filter(function(item) {
       return lower(item?.kind || item?.type || '') === 'decision';
@@ -2357,9 +2359,9 @@
     let questionNode = activeQuestionNode;
     let decisionNode = activePendingDecision;
 
-    if (queueBlocker) {
-      nextPromptType = 'background blocker';
-      nextPromptText = String(queueBlocker?.body || queueBlocker?.message || 'background work needs attention').trim();
+    if (shouldHoldNowPrompt) {
+      nextPromptType = 'processing';
+      nextPromptText = String(stateData.nowFeedback || 'working quietly on your last answer').trim() || 'working quietly on your last answer';
       questionNode = null;
       decisionNode = null;
     } else if (!brief) {
@@ -2416,6 +2418,7 @@
       queueCount: queueCount,
       queueLine: queueLine,
       queueBlocker: queueBlocker,
+      queueBlockerText: queueBlocker ? String(queueBlocker?.body || queueBlocker?.message || '').trim() : '',
       flushRequested: !!stateData.flushRequestSource,
       flushUndoAvailableUntil: Number(getUIState().flush_undo_available_until || 0),
       flushUndoAvailable: Number(getUIState().flush_undo_available_until || 0) > Date.now()
@@ -4079,6 +4082,7 @@
     }
     const inlineListening = recordingActive() && activeSurface() === 'project';
     const queueCount = data.queueCount || 0;
+    const blockerHint = lower(String(data.queueBlockerText || '').trim());
     const projectSurfaceMode = activeSurface() === 'project' ? surfaceMode() : 'stable';
 
     mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
@@ -4127,17 +4131,25 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    wrapTextBlock(undefined, lower(String(data.nextPromptText || 'what changed, what needs attention, or what should happen next?')), 18, boxY + 40, 192, 15, 'rgba(8,8,8,0.96)', '15', 5);
+      wrapTextBlock(undefined, lower(String(data.nextPromptText || 'what changed, what needs attention, or what should happen next?')), 18, boxY + 40, 192, 15, 'rgba(8,8,8,0.96)', '15', 5);
     if (data.brief) {
       wrapTextBlock(undefined, lower(data.brief), 18, boxY + 124, 192, 11, 'rgba(8,8,8,0.56)', '10', 2);
     }
     const countsLine = `asks ${data.asksCount} · sig ${data.signalsCount} · dec ${data.decisionCount} · loops ${data.loopsCount}`;
-    text(18, 258, countsLine, {
+    text(18, 248, countsLine, {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, 276, queueCount ? `${queueCount} queued` : (inlineListening ? 'release to answer' : 'hold ptt to answer'), {
+    if (queueCount || blockerHint) {
+      text(226, 248, blockerHint ? 'background stalled' : `${queueCount} queued`, {
+        fill: 'rgba(8,8,8,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+    }
+    text(226, 276, inlineListening ? 'release to answer' : 'hold ptt anywhere', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
     });
@@ -4162,9 +4174,9 @@
     drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
     const footerY = 282;
-    const switcherX = 160;
-    const switcherY = 68;
-    const switcherW = 66;
+    const switcherX = 154;
+    const switcherY = 18;
+    const switcherW = 72;
     const laneDots = model.lanes.slice(0, 4);
     const switcherTap = mk('g', { style: 'cursor: pointer;' });
     mk('rect', {
@@ -4201,7 +4213,7 @@
       render();
     });
 
-    const frame = { x: 10, y: 104, width: 220, height: Math.max(124, footerY - 110) };
+    const frame = { x: 10, y: 92, width: 220, height: Math.max(136, footerY - 98) };
     const nextText = lower(String(item?.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
     const html = buildKnowFrameMarkup({
       ...item,
@@ -4212,13 +4224,13 @@
     drawKnowScrollFrame({ html: html }, frame, `${currentState}:${lane.id}:${safeItemIdx}:${item?.node_id || item?.created_at || ''}:${item?.threadDepth || 0}`);
 
     if (item?.triangulated) {
-      text(frame.x + frame.width - 38, 100, '▼', {
+      text(frame.x + frame.width - 38, frame.y - 4, '▼', {
         fill: 'rgba(8,8,8,0.58)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
       if (item?.meta?.triangle_format !== 'claims-v1') {
-        text(frame.x + frame.width - 18, 100, 'legacy', {
+        text(frame.x + frame.width - 18, frame.y - 4, 'legacy', {
           fill: 'rgba(8,8,8,0.42)',
           'font-family': 'PowerGrotesk-Regular, sans-serif',
           'font-size': '7',
@@ -4570,7 +4582,7 @@
       }
 
       case STATES.NOW_BROWSE: {
-        openNowNextMove();
+        fireFeedback('blocked');
         return;
       }
 
@@ -4730,13 +4742,16 @@
 
       case STATES.HOME: {
         if (onboardingActive()) break;
-        const card = currentCard();
+        const tellIndex = Math.max(0, cards.findIndex(function(card) { return card.id === 'tell'; }));
+        selectedIndex = tellIndex;
+        native?.setActiveNode?.('tell');
+        native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'home' });
         voiceReturnState = STATES.HOME;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
           tellStatus: 'listening',
           inlinePTTSurface: 'home',
-          buildContext: buildHomeCardVoiceContext(card)
+          buildContext: { kind: 'tell', text: '', surface: 'tell' }
         });
         break;
       }

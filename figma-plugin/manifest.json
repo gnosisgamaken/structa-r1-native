@@ -1,0 +1,7 @@
+{
+  "name": "Structa R1 — UI Surfaces",
+  "id": "structa-r1-surfaces",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"]
+}

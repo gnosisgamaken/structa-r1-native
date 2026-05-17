@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "-WgdIaEIsDeN9uhokMINq"
+uri = "file://structa-r1-figma-plugin.zip"
+type = "unspecified"
+title = "Structa R1 — Figma Plugin"

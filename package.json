@@ -1,1 +1,19 @@
-{"name": "structa", "scripts": {"start": "python3 server.py", "check:voice-doctrine": "sh scripts/check-voice-doctrine.sh", "check:harness": "python3 harness/run_harness.py --suite trace --scenarios harness/scenarios", "check:ux-harness": "python3 harness/run_harness.py --suite trace --scenarios harness/scenarios/ux"}, "dependencies": {"serve": "^14.2.1"}}
+{
+  "name": "structa",
+  "version": "0.3.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "python3 server.py",
+    "test": "npm run check:v3 && npm run check:harness && npm run check:ux-harness && npm run check:voice-doctrine",
+    "check:v3": "node scripts/v3-engine-smoke.mjs && node scripts/v3-orchestrator-smoke.mjs && node --test tests/vision-protocol.test.cjs tests/r1-vision-bridge.test.cjs tests/research-provenance.test.cjs tests/project-isolation.test.cjs && node scripts/v3-adapter-runtime-smoke.cjs && node scripts/v3-product-static-smoke.mjs && node scripts/v3-ui-runtime-smoke.cjs",
+    "check:voice-doctrine": "sh scripts/check-voice-doctrine.sh",
+    "check:harness": "python3 harness/run_harness.py --suite trace --scenarios harness/scenarios",
+    "check:ux-harness": "python3 harness/run_harness.py --suite trace --scenarios harness/scenarios/ux"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

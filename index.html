@@ -8,8 +8,9 @@
   <meta name="theme-color" content="#0b0b0b" />
   <meta name="color-scheme" content="dark" />
   <meta name="copyright" content="© 2026 playgranada / structa. all rights reserved." />
-  <link rel="icon" type="image/png" href="https://structa.replit.app/assets/brand/structa-app-icon.png" />
-  <link rel="apple-touch-icon" href="https://structa.replit.app/assets/brand/structa-app-icon.png" />
+  <link rel="preload" href="./assets/PowerGrotesk-Regular.ttf" as="font" type="font/ttf" crossorigin />
+  <link rel="icon" type="image/png" href="./assets/brand/structa-app-icon.png" />
+  <link rel="apple-touch-icon" href="./assets/brand/structa-app-icon.png" />
   <title>structa</title>
   <style>
     @font-face {
@@ -17,7 +18,7 @@
       src: url('./assets/PowerGrotesk-Regular.ttf') format('truetype');
       font-weight: 400;
       font-style: normal;
-      font-display: swap;
+      font-display: block;
     }
 
     :root {
@@ -71,7 +72,7 @@
 
     #app {
       width: min(240px, 100vw);
-      height: min(292px, 100vh);
+      height: min(282px, 100vh);
       position: relative;
       overflow: hidden;
       background: transparent;
@@ -278,7 +279,7 @@
     }
 
     .muted { color: rgba(244, 239, 228, 0.42); font-size: 10px; flex: 0 0 auto; min-width: 52px; }
-    .accent { color: rgba(244, 239, 228, 0.96); font-weight: 600; font-size: 10px; }
+    .accent { color: rgba(244, 239, 228, 0.96); font-weight: 400; font-size: 10px; }
     .entry[data-kind="chain"] { color: rgba(255, 138, 101, 0.78); }
     .entry[data-kind="decision"] { color: rgba(255, 138, 101, 0.92); }
 
@@ -599,13 +600,87 @@
       text-overflow: ellipsis;
     }
 
-    /* Heartbeat motion is applied per-card in JS to avoid shifting the whole scene. */
+    /* V3 production surface: the activity stream remains available to probes,
+       but never competes with the project instrument. */
+    #log-drawer {
+      display: none !important;
+    }
+
+    #app.overlay-active #log-drawer {
+      display: none !important;
+    }
+
+    .overlay.open {
+      animation: none;
+    }
+
+    #camera-glyph,
+    .capture-glyph {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    #camera-glyph::before,
+    #camera-glyph::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(244, 239, 228, 0.86);
+    }
+
+    #camera-glyph::before { width: 28px; height: 2px; }
+    #camera-glyph::after { width: 2px; height: 28px; }
+
+    #camera-status,
+    #voice-context-label {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    #voice-overlay,
+    #voice-overlay.answer-mode {
+      background: var(--tell);
+    }
+
+    #voice-glyph,
+    #voice-overlay.answer-mode #voice-glyph {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #080808;
+      box-shadow: none;
+      animation: pulse-red 720ms ease-in-out infinite;
+    }
+
+    #voice-overlay.listening .capture-glyph,
+    #voice-overlay.answer-mode .capture-glyph {
+      transform: none;
+      box-shadow: none;
+    }
+
+    #voice-wave .bar,
+    #voice-overlay.answer-mode #voice-wave .bar {
+      fill: rgba(8, 8, 8, 0.76);
+    }
   </style>
 </head>
 <body>
   <div id="app">
     <main>
-      <svg id="scene" viewBox="0 0 240 292" role="img" aria-label="structa project surface"></svg>
+      <svg id="scene" viewBox="0 0 240 282" role="img" aria-label="structa project surface"></svg>
     </main>
 
     <section id="log-drawer" aria-live="polite" aria-expanded="false">
@@ -653,10 +728,10 @@
   <script>
     const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
-      uiBuildId: 'ui-20260421-an1-rabbitcore',
+      uiBuildId: 'ui-20260811-structa-v3',
       declaredDiagnosticTests: 39,
       assetEpoch: __structaAssetEpoch,
-      expectedDiagnosticsAssetId: 'diag-20260421-an1-rabbitcore'
+      expectedDiagnosticsAssetId: 'diag-20260811-structa-v3'
     });
   </script>
   <script>
@@ -664,22 +739,25 @@
       var epoch = encodeURIComponent(window.StructaBuild.assetEpoch || 'base');
       var assetRoot = '/__structa_asset/' + encodeURIComponent(window.StructaBuild.uiBuildId || 'ui-unknown');
       [
-        'js/icons.js?v=20260418',
-        'js/contracts.js?v=20260417',
+        'js/icons.js?v=20260811',
+        'js/contracts.js?v=20260811',
         'js/validation.js?v=20260417',
         'js/storage-manager.js?v=20260417',
-        'js/rabbit-adapter.js?v=20260420g',
+        'js/rabbit-adapter.js?v=20260811',
+        'js/domain-packs.js?v=20260811',
+        'js/project-engine.js?v=20260811',
         'js/processing-queue.js?v=20260420a',
         'js/context-router.js?v=20260417',
-        'js/audio-engine.js?v=20260418',
-        'js/voice-capture.js?v=20260420a',
-        'js/camera-capture.js?v=20260421b',
-        'js/orchestrator.js?v=20260417',
-        'js/r1-llm.js?v=20260421b',
-        'js/impact-chain-engine.js?v=20260420b',
+        'js/audio-engine.js?v=20260811',
+        'js/voice-capture.js?v=20260811',
+        'js/vision-protocol.js?v=20260811',
+        'js/camera-capture.js?v=20260811',
+        'js/orchestrator.js?v=20260811',
+        'js/r1-llm.js?v=20260811',
+        'js/impact-chain-engine.js?v=20260811',
         'js/triangle-engine.js?v=20260418',
         'js/diagnostic-suite.js?v=20260421b',
-        'structa-cascade.js?v=20260421b'
+        'structa-cascade.js?v=20260811'
       ].forEach(function(src) {
         document.write('<script src="' + assetRoot + '/' + src + '&ae=' + epoch + '"><\/script>');
       });

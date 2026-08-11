@@ -74,6 +74,22 @@
     'voice-open': 140
   });
 
+  // The professional surface is silent by default. Only explicit capture,
+  // blocked and lock/resolve moments may make a brief cue.
+  const SILENT_SLOTS = Object.freeze({
+    'nav-scroll': true,
+    'nav-touch': true,
+    'decision': true,
+    'debug-bpm-up': true,
+    'debug-bpm-down': true,
+    'heartbeat-observe': true,
+    'heartbeat-clarify': true,
+    'heartbeat-research': true,
+    'heartbeat-evaluate': true,
+    'heartbeat-decision': true,
+    'heartbeat-cooldown': true
+  });
+
   function init() {
     if (initialized) return;
     try {
@@ -114,6 +130,7 @@
   }
 
   function playSlot(slotName) {
+    if (SILENT_SLOTS[slotName]) return false;
     init();
     if (!ctx || muted || !enabled) return false;
     var cfg = SOUND_SLOTS[slotName];
@@ -140,7 +157,7 @@
   }
 
   function heartbeat(phase) {
-    return playSlot(HEARTBEAT_ALIASES[phase] || 'heartbeat-observe');
+    return false;
   }
 
   function play(soundName) {

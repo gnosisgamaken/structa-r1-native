@@ -52,6 +52,43 @@
     return String(text || '').toLowerCase();
   }
 
+  function activeProjectId() {
+    return String(native?.getActiveProjectId?.() || native?.getProjectMemory?.()?.project_id || native?.getProjectMemory?.()?.id || '');
+  }
+
+  function projectById(projectId) {
+    var target = String(projectId || '').trim();
+    if (target && native?.getProjectMemoryById) return native.getProjectMemoryById(target) || null;
+    var active = native?.getProjectMemory?.() || null;
+    if (!target || String(active?.project_id || active?.id || '') === target) return active;
+    return null;
+  }
+
+  function originProjectActive(projectId) {
+    return !projectId || activeProjectId() === String(projectId);
+  }
+
+  function touchOriginProject(projectId, mutator) {
+    var target = String(projectId || '').trim();
+    if (target && native?.touchProjectMemoryById) return native.touchProjectMemoryById(target, mutator);
+    if (!originProjectActive(target)) return null;
+    return native?.touchProjectMemory?.(mutator) || null;
+  }
+
+  function ingestOriginClaims(projectId, claims, options) {
+    var target = String(projectId || '').trim();
+    if (target && native?.ingestClaimsForProject) return native.ingestClaimsForProject(target, claims, options) || [];
+    if (!originProjectActive(target)) return [];
+    return native?.ingestClaims?.(claims, options) || [];
+  }
+
+  function addOriginNode(projectId, input) {
+    var target = String(projectId || '').trim();
+    if (target && native?.addNodeToProject) return native.addNodeToProject(target, input);
+    if (!originProjectActive(target)) return null;
+    return native?.addNode?.(input) || null;
+  }
+
   function deriveProjectMark(title, brief) {
     var filler = {
       project: true,
@@ -102,7 +139,9 @@
   }
 
   function inlineMode() {
-    return !!window.__STRUCTA_INLINE_PTT__;
+    // V3 always presents the full-screen recording plane. Context is routed in
+    // data and accessibility text, never as a cramped inline status strip.
+    return false;
   }
 
   function setStatus(text) {
@@ -179,6 +218,7 @@
 
     switch (cmd.type) {
       case 'research':
+          var researchProjectId = activeProjectId();
           native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch working in background: ' + arg.slice(0, 40) });
           if (window.StructaLLM && window.StructaLLM.research) {
             window.StructaLLM.withOperationPolicy({
@@ -187,13 +227,15 @@
               source: 'research-command',
               reason: 'branch work stays quiet'
             }, function() {
-              return window.StructaLLM.research(arg);
+              return window.StructaLLM.research(arg, { projectId: researchProjectId });
             }).then(function(result) {
-              if (result && result.ok) {
+              if (result && result.ok && originProjectActive(researchProjectId)) {
                 native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch ready: ' + result.findings.slice(0, 2).join('; ').slice(0, 50) });
                 native?.updateUIState?.({ last_insight_summary: 'branch working · ' + arg.slice(0, 30) });
               }
-              window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+              if (originProjectActive(researchProjectId)) {
+                window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+              }
             });
           }
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -379,10 +421,11 @@
 
   function enqueueClaimsBackfill(payload) {
     if (!queue || !payload?.nodeId || !payload?.body) return;
+    var projectId = String(payload.projectId || payload?.project?.id || activeProjectId() || '');
     queue.enqueue({
       kind: 'claims-backfill',
       priority: 'P3',
-      payload: payload,
+      payload: { ...(payload || {}), projectId: projectId },
       origin: {
         screen: payload.surface || 'backfill',
         itemId: payload.nodeId
@@ -423,6 +466,7 @@
               summary: project?.summary || '',
               selectedSurface: node.type || 'backfill'
             },
+            projectId: project?.project_id || '',
             source: node.source || node.type || 'backfill',
             sourceRef: { itemId: node.node_id }
           });
@@ -493,11 +537,12 @@
 
   function storeVoiceInterpretation(payload, result) {
     var voiceEntryId = payload.voiceEntryId || payload.buildContext?.nodeId || '';
+    var projectId = String(payload.projectId || activeProjectId() || '');
     var transcript = payload.transcript || '';
     var sourceRef = voiceEntryId ? { itemId: voiceEntryId } : {};
     var candidates = deriveVoiceCandidates(result, transcript, sourceRef);
-    if (voiceEntryId && native?.touchProjectMemory) {
-      native.touchProjectMemory(function(project) {
+    if (voiceEntryId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+      touchOriginProject(projectId, function(project) {
         var node = (project.nodes || []).find(function(entry) {
           return entry.node_id === voiceEntryId && entry.type === 'voice-entry';
         });
@@ -519,21 +564,32 @@
       native.saveDerivedCandidates(candidates, {
         source: 'voice-note',
         sourceRef: sourceRef,
-        operation_id: payload.operationId || ''
+        operation_id: payload.operationId || '',
+        projectId: projectId
+      });
+      window.StructaProjectEngine?.ingestDecisionCandidates?.(candidates.decisions || [], {
+        projectId: projectId,
+        source: 'voice-note',
+        voiceEntryId: voiceEntryId || ''
       });
     }
-    native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
+    if (originProjectActive(projectId)) {
+      native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
+    }
     return candidates;
   }
 
   function applyProjectBriefResult(payload, result) {
+    var projectId = String(payload.projectId || activeProjectId() || '');
     var title = String(result?.title || '').trim();
     var brief = String(result?.brief || '').trim();
-    if (title && lower(title) !== 'untitled project') {
-      native?.setProjectName?.(title);
+    var currentProjectName = String(projectById(projectId)?.name || 'untitled project');
+    if (title && lower(title) !== 'untitled project' && lower(currentProjectName) === 'untitled project') {
+      native?.setProjectName?.(title, projectId);
+      currentProjectName = title;
     }
-    var projectMark = deriveProjectMark(title, brief);
-    if (projectMark) native?.setProjectMark?.(projectMark);
+    var projectMark = deriveProjectMark(currentProjectName, brief);
+    if (projectMark) native?.setProjectMark?.(projectMark, projectId);
     var briefWrite = native?.recordOperationWrite?.(payload.operationId || '', 'project_brief', {
       voiceEntryId: payload.voiceEntryId || ''
     });
@@ -541,7 +597,8 @@
       native.setProjectBrief(brief, {
         source: 'onboarding',
         operation_id: payload.operationId || '',
-        voice_entry_id: payload.voiceEntryId || ''
+        voice_entry_id: payload.voiceEntryId || '',
+        projectId: projectId
       });
     }
     var candidateWrite = native?.recordOperationWrite?.(payload.operationId || '', 'derived_candidate', {
@@ -552,11 +609,12 @@
         source: 'project-brief',
         sourceRef: payload.voiceEntryId ? { itemId: payload.voiceEntryId } : {},
         replace: true,
-        operation_id: payload.operationId || ''
+        operation_id: payload.operationId || '',
+        projectId: projectId
       });
     }
-    if (payload.voiceEntryId && native?.touchProjectMemory) {
-      native.touchProjectMemory(function(project) {
+    if (payload.voiceEntryId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+      touchOriginProject(projectId, function(project) {
         var node = (project.nodes || []).find(function(entry) {
           return entry.node_id === payload.voiceEntryId && entry.type === 'voice-entry';
         });
@@ -571,20 +629,28 @@
         };
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'brief stored' });
-    if (projectMark) native?.appendLogEntry?.({ kind: 'llm', message: 'project mark ready' });
-    native?.updateUIState?.({
-      last_insight_summary: (brief || title || '').slice(0, 60),
-      user_status: title ? ('project: ' + title) : 'project brief ready'
+    window.StructaProjectEngine?.seedFromBrief?.(result, {
+      source: 'project-brief',
+      voiceEntryId: payload.voiceEntryId || '',
+      projectId: payload.projectId || ''
     });
+    if (originProjectActive(projectId)) {
+      native?.appendLogEntry?.({ kind: 'llm', message: 'brief stored' });
+      if (projectMark) native?.appendLogEntry?.({ kind: 'llm', message: 'project mark ready' });
+      native?.updateUIState?.({
+        last_insight_summary: (brief || title || '').slice(0, 60),
+        user_status: title ? ('project: ' + title) : 'project brief ready'
+      });
+    }
   }
 
   function queueVoiceInterpret(payload) {
     if (!queue) return;
+    var projectId = String(payload?.projectId || activeProjectId() || '');
     queue.enqueue({
       kind: 'voice-interpret',
       priority: 'P1',
-      payload: payload,
+      payload: { ...(payload || {}), projectId: projectId },
       origin: {
         screen: payload.mode === 'question' ? 'now' : (payload.buildContext?.surface || 'tell'),
         itemId: payload.buildContext?.nodeId || payload.questionText || ''
@@ -596,17 +662,19 @@
     window.__STRUCTA_VOICE_QUEUE_REGISTERED__ = true;
     queue.registerHandler('project-title', function(job) {
       const payload = job.payload || {};
-      const project = native?.getProjectMemory?.();
-      if (!project || (project.project_id || project.id || '') !== (payload.projectId || '')) {
+      const projectId = String(payload.projectId || '');
+      const project = projectById(projectId);
+      if (!project) {
         return { ok: false, stale: true };
       }
       if (lower(project.name || '') !== 'untitled project') {
         return { ok: true, stale: true, title: project.name || '' };
       }
       return resolveProjectTitle(payload.transcript || '', project).then(function(title) {
+        if (!projectById(projectId)) return { ok: false, stale: true, title: '' };
         const finalTitle = title || payload.heuristic || '';
         if (finalTitle && lower(finalTitle) !== 'untitled project') {
-          native?.setProjectName?.(finalTitle);
+          native?.setProjectName?.(finalTitle, projectId);
         }
         return { ok: !!finalTitle, title: finalTitle || payload.heuristic || '' };
       });
@@ -614,6 +682,9 @@
 
     queue.registerHandler('voice-interpret', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || activeProjectId() || '');
+      payload.projectId = projectId;
+      if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable' };
       native?.traceEvent?.('voice', 'queued', 'interpreting', {
         jobId: job.id || '',
         mode: payload.mode || 'voice',
@@ -624,9 +695,10 @@
         return Promise.resolve({ ok: false, error: 'llm unavailable' });
       }
       const options = payload.mode === 'question'
-        ? { answeringQuestion: true, questionText: payload.questionText || '' }
-        : (payload.buildContext ? { buildContext: payload.buildContext } : {});
+        ? { answeringQuestion: true, questionText: payload.questionText || '', projectId: projectId }
+        : (payload.buildContext ? { buildContext: payload.buildContext, projectId: projectId } : { projectId: projectId });
       return window.StructaLLM.processVoice(payload.transcript || '', options).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable', projectId: projectId };
         if (payload.mode === 'question') {
           if (result && result.ok && result.clean) {
             var sourceRef = {
@@ -635,17 +707,24 @@
               answerId: payload.answerNodeId || ''
             };
             var storedClaims = [];
-            if (Array.isArray(result.claims) && native?.ingestClaims) {
-              storedClaims = native.ingestClaims(result.claims, {
+            if (Array.isArray(result.claims) && (native?.ingestClaimsForProject || native?.ingestClaims)) {
+              storedClaims = ingestOriginClaims(projectId, result.claims, {
                 source: 'answer',
                 sourceRef: sourceRef,
                 sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
               }).map(function(entry) { return entry.id; });
             }
             if (native?.saveDerivedCandidates) {
-              native.saveDerivedCandidates(deriveVoiceCandidates(result, payload.transcript || '', sourceRef), {
+              var answerCandidates = deriveVoiceCandidates(result, payload.transcript || '', sourceRef);
+              native.saveDerivedCandidates(answerCandidates, {
                 source: 'answer',
-                sourceRef: sourceRef
+                sourceRef: sourceRef,
+                projectId: projectId
+              });
+              window.StructaProjectEngine?.ingestDecisionCandidates?.(answerCandidates.decisions || [], {
+                projectId: projectId,
+                source: 'answer',
+                voiceEntryId: payload.answerNodeId || ''
               });
             }
             if (payload.answerNodeId && native?.enrichAnswerNode) {
@@ -654,10 +733,10 @@
                 sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null,
                 transformed_text: result.clean || '',
                 transformed_structured: result.structured || null
-              });
+              }, projectId);
             }
-            if (payload.answerNodeId && payload.questionNodeId && native?.touchProjectMemory) {
-              native.touchProjectMemory(function(project) {
+            if (payload.answerNodeId && payload.questionNodeId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+              touchOriginProject(projectId, function(project) {
                 var nodes = Array.isArray(project.nodes) ? project.nodes : [];
                 var questionNode = nodes.find(function(entry) { return entry.node_id === payload.questionNodeId; });
                 var answerNode = nodes.find(function(entry) { return entry.node_id === payload.answerNodeId; });
@@ -676,28 +755,31 @@
                 }
               });
             }
-            native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
-            native?.emitModelChange?.({
-              scope: 'now',
-              itemId: payload.questionNodeId || '',
-              jobId: job.id || ''
-            });
+            if (originProjectActive(projectId)) {
+              native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+              native?.emitModelChange?.({
+                scope: 'now',
+                itemId: payload.questionNodeId || '',
+                jobId: job.id || ''
+              });
+            }
             native?.traceEvent?.('blocker', 'answered', 'insight-created', {
               jobId: job.id || '',
               nodeId: payload.questionNodeId || '',
               insightId: payload.answerNodeId || '',
               clean: result.clean || ''
             });
-            if (result.followUpQuestion && native?.addNode) {
+            if (result.followUpQuestion && (native?.addNodeToProject || native?.addNode)) {
               setTimeout(function() {
-                var project = native?.getProjectMemory?.() || {};
+                var project = projectById(projectId) || {};
+                if (!project?.project_id && !project?.id) return;
                 var existing = (project.open_question_nodes || []).some(function(entry) {
                   var current = lower(entry?.body || entry?.title || '');
                   var nextText = lower(result.followUpQuestion || '');
                   return current === nextText || current.indexOf(nextText) !== -1 || nextText.indexOf(current) !== -1;
                 });
                 if (!existing) {
-                  native.addNode({
+                  addOriginNode(projectId, {
                     type: 'question',
                     status: 'open',
                     title: 'follow up',
@@ -716,29 +798,33 @@
                 }
               }, 200);
             }
-            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-              detail: { source: 'question-answer' }
-            }));
+            if (originProjectActive(projectId)) {
+              window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+                detail: { source: 'question-answer' }
+              }));
+            }
           }
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          if (originProjectActive(projectId)) window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           return result;
         }
 
         if (result && result.ok) {
           storeVoiceInterpretation(payload, result);
-          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-            detail: { source: 'voice-transform' }
-          }));
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-        } else {
+          if (originProjectActive(projectId)) {
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'voice-transform' }
+            }));
+            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          }
+        } else if (originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification unavailable' });
         }
         return result;
       }).catch(function(err) {
-        if (payload.mode !== 'question') {
+        if (payload.mode !== 'question' && originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification failed' });
         }
-        window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        if (originProjectActive(projectId)) window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         throw err;
       }).finally(function() {
         native?.finishOperation?.(payload.operationId || '', {
@@ -749,8 +835,9 @@
 
     queue.registerHandler('project-brief', function(job) {
       const payload = job.payload || {};
-      const project = native?.getProjectMemory?.();
-      if (!project || (project.project_id || project.id || '') !== (payload.projectId || '')) {
+      const projectId = String(payload.projectId || '');
+      const project = projectById(projectId);
+      if (!project) {
         return { ok: false, stale: true };
       }
       if (!window.StructaLLM?.buildProjectBrief) {
@@ -762,19 +849,24 @@
         voiceEntryId: payload.voiceEntryId || ''
       });
       return window.StructaLLM.buildProjectBrief(payload.transcript || '', project).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable' };
         if (result && result.ok) {
           applyProjectBriefResult(payload, result);
-          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-            detail: { source: 'project-brief' }
-          }));
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-        } else {
+          if (originProjectActive(projectId)) {
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'project-brief' }
+            }));
+            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          }
+        } else if (originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'project brief unavailable' });
         }
         return result;
       }).catch(function(err) {
-        native?.appendLogEntry?.({ kind: 'llm', message: 'project brief failed' });
-        window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        if (originProjectActive(projectId)) {
+          native?.appendLogEntry?.({ kind: 'llm', message: 'project brief failed' });
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        }
         throw err;
       }).finally(function() {
         native?.finishOperation?.(payload.operationId || '', {
@@ -785,9 +877,11 @@
 
     queue.registerHandler('claims-backfill', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || payload?.project?.id || activeProjectId() || '');
       if (!payload.nodeId || !payload.body || !window.StructaLLM?.backfillClaimsForItem) {
         return { ok: false, stale: true, claims: [] };
       }
+      if (!projectById(projectId)) return { ok: false, stale: true, claims: [] };
       native?.traceEvent?.('claim', 'queued', 'backfilling', {
         jobId: job.id || '',
         nodeId: payload.nodeId || ''
@@ -799,13 +893,14 @@
         source: payload.source || 'backfill',
         sourceRef: payload.sourceRef || { itemId: payload.nodeId }
       }).then(function(result) {
-        if (result && result.ok && Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
-          native.ingestClaims(result.claims, {
+        if (!projectById(projectId)) return { ok: false, stale: true, claims: [] };
+        if (result && result.ok && Array.isArray(result.claims) && result.claims.length && (native?.ingestClaimsForProject || native?.ingestClaims)) {
+          ingestOriginClaims(projectId, result.claims, {
             source: payload.source || 'backfill',
             sourceRef: payload.sourceRef || { itemId: payload.nodeId }
           });
         }
-        native?.touchProjectMemory?.(function(project) {
+        touchOriginProject(projectId, function(project) {
           var node = (project.nodes || []).find(function(entry) { return entry.node_id === payload.nodeId; });
           if (!node) return;
           node.meta = { ...(node.meta || {}), claims_backfilled: true };
@@ -821,9 +916,11 @@
 
     queue.registerHandler('thread-refine', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || activeProjectId() || '');
       if (!payload.nodeId || !payload.commentId || !window.StructaLLM?.refineThreadComment) {
         return { ok: false, stale: true };
       }
+      if (!projectById(projectId)) return { ok: false, stale: true };
       return window.StructaLLM.refineThreadComment({
         project: {
           id: payload.projectId || '',
@@ -843,13 +940,15 @@
           transcript: payload.commentText || ''
         }
       }).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true };
         const applied = native?.applyThreadExtraction?.(payload.nodeId, payload.commentId, {
           summary: (result && result.summary) || payload.commentText || '',
           claims: Array.isArray(result?.claims) ? result.claims : [],
           clarifies: result?.clarifies || '',
           contradicts: result?.contradicts || ''
         }, {
-          sttConfidence: typeof result?.sttConfidence === 'number' ? result.sttConfidence : null
+          sttConfidence: typeof result?.sttConfidence === 'number' ? result.sttConfidence : null,
+          projectId: projectId
         });
         return {
           ok: !!applied,
@@ -976,10 +1075,50 @@
       queueVoiceInterpret({
         mode: 'question',
         transcript: text,
+        projectId: question.projectId || activeProjectId(),
         questionText: question.text || '',
         questionNodeId: question.nodeId || '',
         answerNodeId: resolution?.answerNode?.id || ''
       });
+      return;
+    }
+
+    if (buildContext && buildContext.kind === 'decision-answer') {
+      voiceTarget = null;
+      var decisionProjectId = String(buildContext.projectId || buildContext.project_id || activeProjectId() || '');
+      var decisionId = String(buildContext.decisionId || buildContext.decision_id || buildContext.nodeId || '').trim();
+      if (!decisionId || !projectById(decisionProjectId)) return;
+      var decisionVoiceEntry = addOriginNode(decisionProjectId, {
+        type: 'voice-entry',
+        status: 'open',
+        title: text.slice(0, 42) || 'decision answer',
+        body: text,
+        source: 'decision-answer',
+        meta: {
+          entry_mode: 'decision-answer',
+          created_via: 'now',
+          decision_id: decisionId,
+          project_id: decisionProjectId
+        }
+      });
+      if (!originProjectActive(decisionProjectId)) return;
+      var decisionResult = window.StructaProjectEngine?.applyOperation?.({
+        type: 'decision.approve',
+        actor: 'human',
+        project_id: decisionProjectId,
+        decision_id: decisionId,
+        selected_option_index: -1,
+        selected_option: text
+      });
+      native?.traceEvent?.('decision.answer', decisionResult?.ok ? 'captured' : 'rejected', decisionId, {
+        projectId: decisionProjectId,
+        voiceEntryId: decisionVoiceEntry?.node_id || '',
+        ok: !!decisionResult?.ok
+      });
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: decisionResult?.ok ? 'decision-approved' : 'decision-answer-rejected' }
+      }));
       return;
     }
 
@@ -1127,6 +1266,7 @@
     queueVoiceInterpret({
       mode: 'voice',
       transcript: text,
+      projectId: String(currentProject?.project_id || currentProject?.id || activeProjectId() || ''),
       buildContext: buildContext || null,
       voiceEntryId: voiceEntry?.node_id || buildContext?.nodeId || '',
       operationId: operationId
@@ -1207,7 +1347,8 @@
         text: index.text || '',
         onboarding: !!index.onboarding,
         nodeId: index.nodeId || '',
-        source: index.source || 'question'
+        source: index.source || 'question',
+        projectId: index.projectId || index.project_id || activeProjectId()
       };
       native?.traceEvent?.('voice', 'idle', 'question-context', {
         nodeId: activeQuestion.nodeId || '',
@@ -1222,7 +1363,8 @@
       text: questionText,
       onboarding: !!(meta && meta.onboarding),
       nodeId: meta && meta.nodeId ? meta.nodeId : '',
-      source: meta && meta.source ? meta.source : 'question'
+      source: meta && meta.source ? meta.source : 'question',
+      projectId: meta && (meta.projectId || meta.project_id) ? (meta.projectId || meta.project_id) : activeProjectId()
     };
     native?.traceEvent?.('voice', 'idle', 'question-context', {
       nodeId: activeQuestion.nodeId || '',
@@ -1241,7 +1383,9 @@
       title: context.title || '',
       createdAt: context.createdAt || '',
       commentKind: context.commentKind || 'comment',
-      projectSummary: context.projectSummary || ''
+      projectSummary: context.projectSummary || '',
+      projectId: context.projectId || context.project_id || activeProjectId(),
+      decisionId: context.decisionId || context.decision_id || ''
     } : null;
     if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
   }

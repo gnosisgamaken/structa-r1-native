@@ -21,6 +21,7 @@
  */
 (function() {
   var native = window.StructaNative;
+  var vision = window.StructaVisionProtocol;
   var requestQueue = [];
   var activeRequest = null;
   var requestId = 0;
@@ -33,9 +34,7 @@
   var lastMilestoneSpeechAt = 0;
   var MILESTONE_COOLDOWN_MS = 6000;
   var pendingBridgeRequests = new Map();
-  var pendingImageBridgeRequest = null;
   var ambientBridgeListeners = [];
-  var imageRunSequence = 0;
   var operationPolicyStack = [{ allowSpeech: true, silent: false, source: 'default' }];
   var runtimeCaps = window.__structaCaps || {
     hasBridge: typeof PluginMessageHandler !== 'undefined',
@@ -103,56 +102,6 @@
     var value = String(text || '').trim().replace(/\s+/g, ' ');
     if (value.length <= max) return value;
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
-  }
-
-  function normalizeBridgeImageDataUrl(input) {
-    return new Promise(function(resolve) {
-      var source = String(input || '');
-      if (!source) {
-        resolve('');
-        return;
-      }
-      var dataUrl = /^data:image\//i.test(source) ? source : ('data:image/png;base64,' + source);
-      var image = new Image();
-      image.onload = function() {
-        var targetWidth = image.width;
-        var targetHeight = Math.round(targetWidth * 4 / 3);
-        if (image.height > targetHeight) {
-          targetHeight = image.height;
-          targetWidth = Math.round(targetHeight * 3 / 4);
-        }
-        if (targetWidth > 2048) {
-          var scaleDown = 2048 / targetWidth;
-          targetWidth = 2048;
-          targetHeight = Math.round(targetHeight * scaleDown);
-        }
-        var canvas = document.createElement('canvas');
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        var ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(dataUrl);
-          return;
-        }
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, targetWidth, targetHeight);
-        var scale = Math.min(targetWidth / Math.max(1, image.width), targetHeight / Math.max(1, image.height));
-        var drawWidth = Math.round(image.width * scale);
-        var drawHeight = Math.round(image.height * scale);
-        var offsetX = Math.floor((targetWidth - drawWidth) / 2);
-        var offsetY = Math.floor((targetHeight - drawHeight) / 2);
-        ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-        try {
-          resolve(canvas.toDataURL('image/jpeg', 0.92));
-        } catch (_) {
-          resolve(dataUrl);
-        }
-      };
-      image.onerror = function() {
-        resolve(dataUrl);
-      };
-      image.src = dataUrl;
-    });
   }
 
   function lower(text) {
@@ -372,43 +321,6 @@
     return { ok: true, normalized: normalized, reason: 'milestone' };
   }
 
-  function evaluateMilestone(kind, options) {
-    var normalized = normalizeMilestoneKind(kind);
-    var opts = options && typeof options === 'object' ? options : {};
-    var STRINGS = {
-      triangle_captured: 'signal captured',
-      signal_captured: 'signal captured',
-      decision_created: 'decision ready',
-      decision_approved: 'locked',
-      frame_ready: 'frame ready',
-      project_live: 'project live'
-    };
-    var MULTI_FIRE = {
-      triangle_captured: true,
-      signal_captured: true,
-      decision_created: true,
-      decision_approved: true
-    };
-    if (!STRINGS[normalized]) {
-      return { ok: false, normalized: normalized, reason: 'not-allowlisted' };
-    }
-    if (opts.allowSpeech === false || opts.silent === true) {
-      return { ok: false, normalized: normalized, reason: 'policy-silent' };
-    }
-    if (opts.hasBridge === false) {
-      return { ok: false, normalized: normalized, reason: 'bridge-unavailable' };
-    }
-    if (!MULTI_FIRE[normalized] && opts.projectMilestones && opts.projectMilestones[normalized]) {
-      return { ok: false, normalized: normalized, reason: 'project-dedupe' };
-    }
-    var now = Number(opts.now || Date.now());
-    var last = Number(opts.lastMilestoneSpeechAt || 0);
-    if (now - last < MILESTONE_COOLDOWN_MS) {
-      return { ok: false, normalized: normalized, reason: 'cooldown' };
-    }
-    return { ok: true, normalized: normalized, reason: 'milestone' };
-  }
-
   /**
    * sendToLLM -- core function.
    * Sends a message to the R1's on-device LLM via PluginMessageHandler.
@@ -421,14 +333,6 @@
     pendingBridgeRequests.delete(request.correlationId);
     if (activeRequest && activeRequest.id === request.id) {
       activeRequest = null;
-    }
-  }
-
-  function clearImageBridgeRequest(request) {
-    if (!request) return;
-    if (request.timeout) clearTimeout(request.timeout);
-    if (pendingImageBridgeRequest && pendingImageBridgeRequest.id === request.id) {
-      pendingImageBridgeRequest = null;
     }
   }
 
@@ -446,41 +350,73 @@
         return;
       }
 
-      pendingBridgeRequests.set(request.correlationId, request);
+      var isVisionRequest = request.mode === 'vision';
+      if (!isVisionRequest) pendingBridgeRequests.set(request.correlationId, request);
       request.timeout = setTimeout(function() {
-        if (!pendingBridgeRequests.has(request.correlationId)) return;
+        if (!activeRequest || activeRequest.id !== request.id) return;
         clearBridgeRequest(request);
-        native?.traceEvent?.('bridge', 'pending', 'timeout', {
+        var collectorSnapshot = isVisionRequest ? request.collector?.snapshot?.() : null;
+        native?.traceEvent?.(isVisionRequest ? 'vision.bridge' : 'bridge', 'pending', 'timeout', {
           correlationId: request.correlationId,
           requestId: request.id,
-          pluginId: request.opts?.pluginId || ''
+          visionId: request.visionId || '',
+          statusHistory: collectorSnapshot?.statusHistory || []
         });
         resolve({
           ok: false,
-          error: 'BridgeTimeout',
-          code: BRIDGE_TIMEOUT_CODE,
+          error: isVisionRequest ? 'VisionTimeout' : 'BridgeTimeout',
+          code: isVisionRequest ? 'vision-timeout' : BRIDGE_TIMEOUT_CODE,
           layer: 'bridge',
           latencyMs: Date.now() - (request.startedAt || request.createdAt || Date.now()),
-          correlationId: request.correlationId
+          correlationId: request.correlationId,
+          visionId: request.visionId || '',
+          imageRunId: request.visionId || '',
+          collector: collectorSnapshot
         });
         processQueue();
       }, request.opts.timeout || 30000);
 
-      var payload = {
-        message: request.message,
-        correlationId: request.correlationId,
-        useLLM: request.opts.useSerpAPI ? false : true,
-        wantsR1Response: request.opts.expectBridgeResponse === true,
-        wantsJournalEntry: request.opts.journal || false
-      };
-
-      if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
-      if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
-      else if (shouldBlockSpeech(request.opts.policy || currentOperationPolicy())) payload.pluginId = 'com.playgranada.structa';
-      if (request.opts.useSerpAPI) payload.useSerpAPI = true;
+      var payload;
+      if (isVisionRequest) {
+        payload = vision.buildRabbitPayload(request.message, request.imageBase64);
+      } else {
+        payload = {
+          message: request.message,
+          correlationId: request.correlationId,
+          useLLM: request.opts.useSerpAPI ? false : true,
+          wantsR1Response: request.opts.expectBridgeResponse === true,
+          wantsJournalEntry: request.opts.journal || false
+        };
+        if (request.opts.imageBase64) payload.imageBase64 = request.opts.imageBase64;
+        if (request.opts.pluginId) payload.pluginId = request.opts.pluginId;
+        else if (shouldBlockSpeech(request.opts.policy || currentOperationPolicy())) payload.pluginId = 'com.playgranada.structa';
+        if (request.opts.useSerpAPI) payload.useSerpAPI = true;
+      }
 
       try {
         PluginMessageHandler.postMessage(JSON.stringify(payload));
+        if (isVisionRequest) {
+          native?.traceEvent?.('vision.bridge', 'prepare', 'posted', {
+            visionId: request.visionId,
+            imageMode: request.imageMode || 'raw-base64',
+            timeoutMs: request.opts.timeout || 18000,
+            payloadKeys: Object.keys(payload),
+            silent: payload.wantsR1Response === false,
+            journal: payload.wantsJournalEntry === true
+          });
+        }
+        if (request.opts.expectResponse === false) {
+          clearBridgeRequest(request);
+          resolve({
+            ok: true,
+            posted: true,
+            visionId: request.visionId || '',
+            imageRunId: request.visionId || '',
+            latencyMs: Date.now() - (request.startedAt || Date.now())
+          });
+          processQueue();
+          return;
+        }
         resolve(null);
       } catch (err) {
         clearBridgeRequest(request);
@@ -513,6 +449,7 @@
     return new Promise(function(resolve) {
       var request = {
         id: id,
+        mode: 'text',
         correlationId: createCorrelationId(),
         message: protectedMessage,
         opts: opts,
@@ -532,28 +469,16 @@
     });
   }
 
-  function isInterimFetchResponse(text, keyword) {
-    var clean = sanitizeResponse(text || '');
-    var lowerClean = lower(clean);
-    var lowerKeyword = lower(String(keyword || '').trim());
-    if (!clean) return true;
-    if (textLooksLikeJournalSaveCue(clean, keyword)) return true;
-    if (lowerClean === 'pending') return true;
-    if (lowerClean === 'let me see what we’ve got here') return true;
-    if (lowerClean === "let me see what we've got here") return true;
-    if (lowerClean.indexOf('let me see what we') === 0) return true;
-    if (lowerClean === 'taking a look') return true;
-    if (lowerClean.indexOf('taking a look') === 0) return true;
-    if (lowerClean.indexOf('let me check') === 0) return true;
-    if (lowerClean.indexOf('one moment') === 0) return true;
-    if (lowerClean.indexOf('hold on') === 0) return true;
-    if (lowerClean.indexOf('give me a second') === 0) return true;
-    if (lowerKeyword && lowerClean === lowerKeyword) return true;
-    return false;
-  }
-
   function sendBridgeImage(imageBase64, prompt, options) {
     var opts = options || {};
+    if (!vision) {
+      return Promise.resolve({
+        ok: false,
+        error: 'StructaVisionProtocol not available',
+        code: 'vision-protocol-unavailable',
+        layer: 'client'
+      });
+    }
     if (typeof PluginMessageHandler === 'undefined') {
       return Promise.resolve({
         ok: false,
@@ -562,294 +487,102 @@
         layer: 'bridge'
       });
     }
-    if (pendingImageBridgeRequest) {
+    var requestedMode = String(opts.imageInputMode || opts.inputMode || 'raw-base64').toLowerCase();
+    var imageMode = requestedMode === 'dataurl' || requestedMode === 'data-url' ? 'data-url' : 'raw-base64';
+    var preparedImage = vision.formatImageInput(imageBase64, imageMode);
+    if (!preparedImage) {
       return Promise.resolve({
         ok: false,
-        error: 'image bridge busy',
-        code: 'bridge-busy',
-        layer: 'bridge'
+        error: 'image missing',
+        code: 'image-missing',
+        layer: 'client'
       });
     }
-    var imageRunId = 'image-' + Date.now() + '-' + (++imageRunSequence);
-    var timeoutMs = Number(opts.timeout || 30000);
-    var expectResponse = opts.expectResponse !== false;
-    var payload = {
-      imageBase64: imageBase64
-    };
-    if (!opts.omitMessage) {
-      payload.message = String(prompt || '').trim() || 'Describe what you see in this image';
+    var suppliedPrompt = String(prompt || '').trim();
+    var suppliedPromptVisionId = vision.extractVisionIdFromPrompt(suppliedPrompt);
+    if (opts.visionId && suppliedPromptVisionId && String(opts.visionId) !== suppliedPromptVisionId) {
+      return Promise.resolve({
+        ok: false,
+        error: 'prompt vision_id does not match request vision_id',
+        code: 'vision-id-mismatch',
+        layer: 'client'
+      });
     }
-    if (!opts.omitUseLLM) payload.useLLM = opts.useLLM !== false;
-    if (!opts.omitWantsR1Response) payload.wantsR1Response = opts.wantsR1Response === true;
-    if (!opts.omitWantsJournalEntry) payload.wantsJournalEntry = opts.journal === true;
-    if (opts.pluginId) payload.pluginId = String(opts.pluginId);
+    var visionId = String(opts.visionId || suppliedPromptVisionId || vision.createVisionId(opts.captureId || 'capture'));
+    var preparedPrompt = suppliedPrompt;
+    if (!vision.extractVisionIdFromPrompt(preparedPrompt)) {
+      preparedPrompt = vision.buildVisionPrompt({
+        visionId: visionId,
+        captureId: opts.captureId || '',
+        project: opts.project || buildProjectEnvelope('show'),
+        captureHint: suppliedPrompt || opts.description || 'camera capture',
+        annotation: opts.voiceAnnotation || ''
+      });
+    }
+    visionId = vision.extractVisionIdFromPrompt(preparedPrompt);
+    if (!visionId || !/^[a-z0-9_-]{4,64}$/.test(visionId)) {
+      return Promise.resolve({
+        ok: false,
+        error: 'vision_id is invalid',
+        code: 'vision-id-invalid',
+        layer: 'client'
+      });
+    }
+    var timeoutMs = Number(opts.timeout || 18000);
+    var requestId = getNextId();
     if (native && native.probeMode && native.appendProbeEvent) {
       native.appendProbeEvent({
         source: 'bridge-out',
-        name: 'image request',
+        name: 'vision request',
         payload: {
-          imageRunId: imageRunId,
-          message: compactText(payload.message || '', 140),
-          wantsR1Response: payload.wantsR1Response === true,
-          journal: payload.wantsJournalEntry === true,
+          imageRunId: visionId,
+          visionId: visionId,
+          message: compactText(preparedPrompt, 140),
+          wantsR1Response: false,
+          journal: false,
           timeoutMs: timeoutMs,
-          pluginId: payload.pluginId || '',
-          imageKind: /^data:image\//i.test(String(imageBase64 || '')) ? 'data-url' : 'raw-base64'
+          pluginId: '',
+          imageKind: imageMode
         }
       });
     }
-    native?.traceEvent?.('image.bridge', 'prepare', 'post', {
-      imageRunId: imageRunId,
+    native?.traceEvent?.('vision.dispatch', 'prepare', 'queued', {
+      imageRunId: visionId,
+      visionId: visionId,
       timeoutMs: timeoutMs,
-      wantsR1Response: payload.wantsR1Response === true,
-      journal: payload.wantsJournalEntry === true,
-      pluginId: payload.pluginId || '',
-      imageKind: /^data:image\//i.test(String(imageBase64 || '')) ? 'data-url' : 'raw-base64'
+      wantsR1Response: false,
+      journal: false,
+      pluginId: '',
+      imageKind: imageMode
     });
-    if (!expectResponse) {
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify(payload));
-        return Promise.resolve({
-          ok: true,
-          posted: true,
-          imageRunId: imageRunId,
-          latencyMs: 0
-        });
-      } catch (err) {
-        return Promise.resolve({
-          ok: false,
-          error: 'postMessage failed: ' + err.message,
-          code: 'bridge-post-failed',
-          layer: 'bridge',
-          imageRunId: imageRunId,
-          latencyMs: 0
-        });
-      }
-    }
     return new Promise(function(resolve) {
       var request = {
-        id: getNextId(),
-        startedAt: Date.now(),
+        id: requestId,
+        mode: 'vision',
+        correlationId: createCorrelationId(),
+        message: preparedPrompt,
+        imageBase64: preparedImage,
+        imageMode: imageMode,
+        visionId: visionId,
+        imageRunId: visionId,
+        collector: vision.createCollector(visionId),
+        opts: {
+          timeout: timeoutMs,
+          priority: opts.priority || 'low',
+          expectResponse: opts.expectResponse !== false,
+          policy: { allowSpeech: false, silent: true, source: 'vision' }
+        },
+        createdAt: Date.now(),
         resolve: resolve,
-        timeout: null,
-        imageRunId: imageRunId,
-        statusHistory: []
+        timeout: null
       };
-      pendingImageBridgeRequest = request;
-      request.timeout = setTimeout(function() {
-        if (!pendingImageBridgeRequest || pendingImageBridgeRequest.id !== request.id) return;
-        clearImageBridgeRequest(request);
-        if (native && native.probeMode && native.appendProbeEvent) {
-          native.appendProbeEvent({
-            source: 'bridge-timeout',
-            name: 'image response missing',
-            payload: {
-              imageRunId: request.imageRunId,
-              timeoutMs: timeoutMs
-            }
-          });
-        }
-        native?.traceEvent?.('bridge', 'pending', 'timeout', {
-          requestId: request.id,
-          mode: 'image',
-          imageRunId: request.imageRunId,
-          timeoutMs: timeoutMs
-        });
-        resolve({
-          ok: false,
-          error: 'BridgeTimeout',
-          code: BRIDGE_TIMEOUT_CODE,
-          layer: 'bridge',
-          imageRunId: request.imageRunId,
-          latencyMs: Date.now() - request.startedAt
-        });
-      }, timeoutMs);
-
-      try {
-        PluginMessageHandler.postMessage(JSON.stringify(payload));
-      } catch (err) {
-        clearImageBridgeRequest(request);
-        resolve({
-          ok: false,
-          error: 'postMessage failed: ' + err.message,
-          code: 'bridge-post-failed',
-          layer: 'bridge',
-          imageRunId: request.imageRunId,
-          latencyMs: Date.now() - request.startedAt
-        });
+      if (request.opts.priority === 'low') requestQueue.push(request);
+      else {
+        var firstLowIndex = requestQueue.findIndex(function(entry) { return entry.opts && entry.opts.priority === 'low'; });
+        if (firstLowIndex === -1) requestQueue.push(request);
+        else requestQueue.splice(firstLowIndex, 0, request);
       }
-    });
-  }
-
-  function sendR1CoverSpeech(message, options) {
-    var text = String(message || '').trim();
-    if (!text || typeof PluginMessageHandler === 'undefined') {
-      return Promise.resolve({ ok: false, error: 'cover unavailable', code: 'cover-unavailable' });
-    }
-    var opts = options || {};
-    return Promise.resolve().then(function() {
-      PluginMessageHandler.postMessage(JSON.stringify({
-        message: text,
-        useLLM: false,
-        wantsR1Response: true,
-        wantsJournalEntry: false
-      }));
-      native?.traceEvent?.('image.cover', 'posted', compactText(text, 16), {
-        delayMs: Number(opts.delay || 0)
-      });
-      return { ok: true, posted: true, text: text };
-    }).catch(function(error) {
-      return {
-        ok: false,
-        error: error?.message || 'cover failed',
-        code: 'cover-post-failed'
-      };
-    });
-  }
-
-  function listenForNativeSpeechResult(options) {
-    var opts = options || {};
-    if (typeof CreationVoiceHandler === 'undefined') {
-      return Promise.resolve({
-        ok: false,
-        error: 'native stt unavailable',
-        code: 'listenback-unavailable'
-      });
-    }
-    var warmupMs = Number(opts.warmupMs || 120);
-    var stopAfterMs = Number(opts.stopAfterMs || 5200);
-    var timeoutMs = Number(opts.timeoutMs || 7000);
-    return new Promise(function(resolve) {
-      var settled = false;
-      var timeoutHandle = null;
-      var stopHandle = null;
-
-      function cleanup() {
-        window.removeEventListener('structa-stt-ended', handleEnded);
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        if (stopHandle) clearTimeout(stopHandle);
-        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
-      }
-
-      function finish(result) {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve(result);
-      }
-
-      function handleEnded(event) {
-        var transcript = String(event?.detail?.transcript || '').trim();
-        if (!transcript) return;
-        var clean = sanitizeResponse(transcript);
-        finish({
-          ok: true,
-          text: transcript,
-          clean: clean || transcript,
-          raw: transcript,
-          mode: 'listenback'
-        });
-      }
-
-      window.addEventListener('structa-stt-ended', handleEnded);
-      try {
-        CreationVoiceHandler.postMessage('start');
-      } catch (error) {
-        finish({
-          ok: false,
-          error: error?.message || 'native stt start failed',
-          code: 'listenback-start-failed'
-        });
-        return;
-      }
-
-      stopHandle = setTimeout(function() {
-        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
-      }, warmupMs + stopAfterMs);
-      timeoutHandle = setTimeout(function() {
-        finish({
-          ok: false,
-          error: 'native stt timeout',
-          code: 'listenback-timeout'
-        });
-      }, timeoutMs);
-    });
-  }
-
-  function sendBridgeImageWithListenback(imageBase64, prompt, options) {
-    var opts = options || {};
-    var warmupMs = Number(opts.listenbackWarmupMs || 120);
-    var stopAfterMs = Number(opts.listenbackStopAfterMs || 5200);
-    var timeoutMs = Number(opts.listenbackTimeoutMs || 7000);
-    var listenbackPostFirst = opts.listenbackPostFirst === true;
-    var listenbackStartDelayMs = Number(opts.listenbackStartDelayMs || 320);
-
-    function normalizeListenResult(listenResult) {
-      if (!listenResult || !listenResult.ok || !listenResult.clean) {
-        return listenResult || {
-          ok: false,
-          error: 'listenback failed',
-          code: 'listenback-failed'
-        };
-      }
-      return {
-        ok: true,
-        text: listenResult.text,
-        clean: listenResult.clean,
-        raw: listenResult.raw,
-        mode: 'listenback',
-        posted: true
-      };
-    }
-
-    if (listenbackPostFirst) {
-      return sendBridgeImage(imageBase64, prompt, Object.assign({}, opts, {
-        expectResponse: false
-      })).then(function(postResult) {
-        if (!postResult || !postResult.ok) {
-          return postResult || {
-            ok: false,
-            error: 'listenback post failed',
-            code: 'listenback-post-failed'
-          };
-        }
-        return new Promise(function(resolve) {
-          setTimeout(function() {
-            listenForNativeSpeechResult({
-              warmupMs: warmupMs,
-              stopAfterMs: stopAfterMs,
-              timeoutMs: timeoutMs
-            }).then(function(listenResult) {
-              resolve(normalizeListenResult(listenResult));
-            });
-          }, listenbackStartDelayMs);
-        });
-      });
-    }
-
-    var listenPromise = listenForNativeSpeechResult({
-      warmupMs: warmupMs,
-      stopAfterMs: stopAfterMs,
-      timeoutMs: timeoutMs
-    });
-    return new Promise(function(resolve) {
-      setTimeout(function() {
-        sendBridgeImage(imageBase64, prompt, Object.assign({}, opts, {
-          expectResponse: false
-        })).then(function(postResult) {
-          if (!postResult || !postResult.ok) {
-            resolve(postResult || {
-              ok: false,
-              error: 'listenback post failed',
-              code: 'listenback-post-failed'
-            });
-            return;
-          }
-          listenPromise.then(function(listenResult) {
-            resolve(normalizeListenResult(listenResult));
-          });
-        });
-      }, warmupMs);
+      processQueue();
     });
   }
 
@@ -949,8 +682,8 @@
 
     notifyAmbientBridgeListeners(data);
 
-    if (pendingImageBridgeRequest) {
-      var imageRequest = pendingImageBridgeRequest;
+    if (activeRequest && activeRequest.mode === 'vision') {
+      var imageRequest = activeRequest;
       var rawDump = '';
       var payloadObject = data && typeof data === 'object' ? data : null;
       var bridgeStatus = String(payloadObject?.status || '').trim().toLowerCase();
@@ -963,86 +696,109 @@
       if (native && native.probeMode && native.appendProbeEvent) {
         native.appendProbeEvent({
           source: 'bridge-in-raw',
-          name: 'image response' +
+          name: 'vision response' +
             (rawDump ? ' raw=' + compactText(rawDump, 120) : ''),
           payload: {
-            imageRunId: imageRequest.imageRunId,
+            imageRunId: imageRequest.visionId,
+            visionId: imageRequest.visionId,
             raw: compactText(rawDump, 240)
           }
         });
       }
-      native?.traceEvent?.('plugin.message.raw', 'in', 'image', {
-        imageRunId: imageRequest.imageRunId,
+      native?.traceEvent?.('plugin.message.raw', 'in', 'vision', {
+        imageRunId: imageRequest.visionId,
+        visionId: imageRequest.visionId,
         dump: compactText(rawDump, 800),
         hasText: !!imageText
       });
       if (bridgeStatus) {
-        imageRequest.statusHistory = imageRequest.statusHistory || [];
-        imageRequest.statusHistory.push(bridgeStatus);
         if (native && native.probeMode && native.appendProbeEvent) {
           native.appendProbeEvent({
             source: 'bridge-in-status',
-            name: 'image status ' + compactText(bridgeStatus, 24),
+            name: 'vision status ' + compactText(bridgeStatus, 24),
             payload: {
-              imageRunId: imageRequest.imageRunId,
+              imageRunId: imageRequest.visionId,
+              visionId: imageRequest.visionId,
               status: bridgeStatus
             }
           });
         }
-        native?.traceEvent?.('plugin.message.status', 'in', 'image', {
-          imageRunId: imageRequest.imageRunId,
+        native?.traceEvent?.('plugin.message.status', 'in', 'vision', {
+          imageRunId: imageRequest.visionId,
+          visionId: imageRequest.visionId,
           status: bridgeStatus
         });
       }
-      var textBearingKeys = ['response', 'text', 'output', 'answer', 'body', 'summary', 'caption', 'content', 'parts', 'blocks', 'segments', 'candidates', 'data', 'results', 'result', 'candidate'];
-      var hasStructuredText = payloadObject && textBearingKeys.some(function(key) {
-        return typeof payloadObject[key] !== 'undefined' && payloadObject[key] !== null && payloadObject[key] !== '';
-      });
-      if (bridgeStatus && !payloadObject?.error && !hasStructuredText && !imageText) {
+      if (payloadObject?.error && !imageText) {
+        clearBridgeRequest(imageRequest);
+        imageRequest.resolve({
+          ok: false,
+          error: String(payloadObject.error?.message || payloadObject.error || 'vision bridge error'),
+          code: 'vision-bridge-error',
+          layer: 'bridge',
+          visionId: imageRequest.visionId,
+          imageRunId: imageRequest.visionId,
+          raw: rawDump,
+          latencyMs: Date.now() - imageRequest.startedAt
+        });
+        processQueue();
         return;
       }
-      clearImageBridgeRequest(imageRequest);
-      if (!imageText) {
-        if (rawDump && rawDump !== '{}' && rawDump !== 'null') {
-          imageText = rawDump;
-        } else {
-          imageRequest.resolve({
-            ok: false,
-            error: 'image bridge empty response',
-            code: 'bridge-empty-response',
-            layer: 'bridge',
-            imageRunId: imageRequest.imageRunId,
-            raw: rawDump,
-            latencyMs: Date.now() - imageRequest.startedAt
-          });
-          return;
-        }
+      var collected = imageRequest.collector.feed(data);
+      var collectorSnapshot = imageRequest.collector.snapshot();
+      if (!collected.done) {
+        native?.traceEvent?.('vision.response', 'received', 'collecting', {
+          visionId: imageRequest.visionId,
+          reason: collected.reason || 'pending',
+          messageCount: collectorSnapshot.messages.length,
+          fragmentCount: collectorSnapshot.fragments.length
+        });
+        return;
       }
-      var imageClean = sanitizeResponse(imageText);
+      var envelope = collected.envelope;
+      var imageClean = vision.observationSummary(envelope) || 'visual signal insufficient';
+      clearBridgeRequest(imageRequest);
       if (native && native.probeMode && native.appendProbeEvent) {
         native.appendProbeEvent({
           source: 'bridge-in-parsed',
-          name: 'image text' +
+          name: 'vision envelope' +
             (imageClean ? ' text=' + compactText(imageClean, 120) : ''),
           payload: {
-            imageRunId: imageRequest.imageRunId,
+            imageRunId: imageRequest.visionId,
+            visionId: imageRequest.visionId,
             text: compactText(imageClean, 240)
           }
         });
       }
-      native?.traceEvent?.('plugin.message.parsed', 'in', 'image', {
-        imageRunId: imageRequest.imageRunId,
+      native?.traceEvent?.('plugin.message.parsed', 'in', 'vision', {
+        imageRunId: imageRequest.visionId,
+        visionId: imageRequest.visionId,
+        observationCount: envelope.observations.length,
+        interpretationCount: envelope.interpretations.length,
+        implicationCount: envelope.implications.length,
+        uncertaintyCount: envelope.uncertainties.length,
         text: compactText(imageClean, 240)
       });
       imageRequest.resolve({
         ok: true,
-        imageRunId: imageRequest.imageRunId,
-        text: imageText,
+        imageRunId: imageRequest.visionId,
+        visionId: imageRequest.visionId,
+        text: collected.candidate || JSON.stringify(envelope),
         clean: imageClean,
         raw: rawDump,
-        structured: extractFields(imageClean),
+        structured: envelope,
+        envelope: envelope,
+        ocr: envelope.ocr,
+        projectRole: envelope.project_role,
+        projectRoleConfidence: envelope.project_role_confidence,
+        observations: envelope.observations,
+        interpretations: envelope.interpretations,
+        implications: envelope.implications,
+        uncertainties: envelope.uncertainties,
+        statusHistory: collectorSnapshot.statusHistory,
         latencyMs: Date.now() - imageRequest.startedAt
       });
+      processQueue();
       return;
     }
 
@@ -1056,19 +812,6 @@
         : activeRequest;
       if (cb) {
         var clean = sanitizeResponse(responseText);
-        if (cb.opts?.waitForSettledText && isInterimFetchResponse(clean, cb.opts?.pendingKeyword || '')) {
-          if (native && native.probeMode && native.appendProbeEvent) {
-            native.appendProbeEvent({
-              source: 'bridge-in',
-              name: 'response pending'
-            });
-          }
-          native?.traceEvent?.('plugin.message.interim', 'in', 'llm', {
-            correlationId: cb.correlationId || correlationId || '',
-            text: compactText(clean, 120)
-          });
-          return;
-        }
         clearBridgeRequest(cb);
         if (native && native.probeMode && native.appendProbeEvent) {
           native.appendProbeEvent({
@@ -1222,9 +965,29 @@
 
   // === Context builder ===
 
+  function activeProjectId() {
+    return String(native?.getActiveProjectId?.() || native?.getProjectMemory?.()?.project_id || native?.getProjectMemory?.()?.id || '');
+  }
+
+  function projectById(projectId) {
+    var target = String(projectId || '').trim();
+    if (target && native?.getProjectMemoryById) return native.getProjectMemoryById(target) || null;
+    var active = native?.getProjectMemory?.() || null;
+    if (!target || String(active?.project_id || active?.id || '') === target) return active;
+    return null;
+  }
+
+  function originProjectExists(projectId) {
+    return !!projectById(projectId);
+  }
+
+  function originProjectActive(projectId) {
+    return !projectId || activeProjectId() === String(projectId);
+  }
+
   function buildProjectContext(opts) {
     var options = opts || {};
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+    var project = options.project || projectById(options.projectId) || {};
     var parts = [];
 
     if (project.name && project.name !== 'untitled project') {
@@ -1311,8 +1074,10 @@
       });
   }
 
-  function getActiveBranch(project) {
-    var focus = native?.getActiveFocus?.();
+  function getActiveBranch(project, projectId) {
+    var focus = projectId && native?.getActiveFocusForProject
+      ? native.getActiveFocusForProject(projectId)
+      : native?.getActiveFocus?.();
     if (focus?.target?.branchId || focus?.target?.id) {
       return {
         id: focus.target.branchId || focus.target.id || 'main',
@@ -1334,24 +1099,40 @@
     }).join('\n');
   }
 
-  function buildProjectEnvelope(surface) {
-    var project = native && native.getProjectMemory ? native.getProjectMemory() : {};
+  function buildProjectEnvelope(surface, projectId) {
+    var project = projectById(projectId) || {};
+    var map = window.StructaProjectEngine?.getMapView?.(project) || null;
+    var composedPacks = window.StructaDomainPacks?.compose?.(map?.pack_ids || project?.structa_v3?.pack_ids || []) || null;
     return {
       id: project.project_id || project.id || '',
       name: project.name || 'untitled project',
       type: project.type || 'general',
       brief: project.brief || '',
+      outcome: map?.outcome || project?.structa_v3?.constitution?.outcome || '',
+      constitution: map?.constitution || project?.structa_v3?.constitution || {},
+      pack_ids: map?.pack_ids || project?.structa_v3?.pack_ids || ['creative-core'],
+      branches: map?.branches || project?.structa_v3?.branches || [],
+      imageLenses: composedPacks?.imageLenses || {},
+      expertOnly: composedPacks?.expertOnly || [],
       topQuestions: (project.open_questions || []).slice(0, 3),
       openQuestions: getProjectOpenQuestions(project, 2),
       recentClaims: getRecentProjectClaims(project, 3),
-      activeBranch: getActiveBranch(project),
+      activeBranch: getActiveBranch(project, projectId),
       selectedSurface: surface || '',
-      summary: buildProjectContext({ deep: true })
+      summary: buildProjectContext({ deep: true, project: project, projectId: projectId })
     };
   }
 
-  function buildSelectionEnvelope(buildContext) {
+  function buildSelectionEnvelope(buildContext, projectId) {
     if (!buildContext) return null;
+    var project = projectById(projectId) || {};
+    var itemClaims = buildContext.nodeId
+      ? (project.claims || []).filter(function(claim) {
+          var sourceRef = claim?.sourceRef || {};
+          return [sourceRef.itemId, sourceRef.imageId, sourceRef.questionId, sourceRef.answerId]
+            .some(function(id) { return String(id || '') === String(buildContext.nodeId); });
+        }).slice(0, 6)
+      : [];
     return {
       kind: buildContext.kind || '',
       id: buildContext.nodeId || '',
@@ -1359,7 +1140,7 @@
       summary: String(buildContext.text || '').slice(0, 220),
       status: buildContext.status || 'open',
       createdAt: buildContext.createdAt || '',
-      claims: buildContext.nodeId && native?.getClaimsForItem ? native.getClaimsForItem(buildContext.nodeId).slice(0, 6) : []
+      claims: itemClaims
     };
   }
 
@@ -1390,13 +1171,22 @@
       return Promise.resolve({ ok: false, error: 'orchestrator unavailable' });
     }
 
-    // Track in conversation history
-    conversationHistory.push({ role: 'user', text: transcript, time: Date.now() });
+    var projectId = String(opts.projectId || activeProjectId() || '');
+    if (projectId && !originProjectExists(projectId)) {
+      return Promise.resolve({ ok: false, stale: true, error: 'origin project unavailable' });
+    }
+
+    // History is project-scoped so switching projects never leaks conversational context.
+    conversationHistory.push({ role: 'user', text: transcript, time: Date.now(), projectId: projectId });
     if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
+    var projectHistory = conversationHistory.filter(function(entry) {
+      return String(entry.projectId || '') === projectId;
+    }).slice(-4);
 
     var payload = {
-      project: buildProjectEnvelope(opts.buildContext && opts.buildContext.surface ? opts.buildContext.surface : (opts.answeringQuestion ? 'know' : 'tell')),
-      selection: buildSelectionEnvelope(opts.buildContext),
+      projectId: projectId,
+      project: buildProjectEnvelope(opts.buildContext && opts.buildContext.surface ? opts.buildContext.surface : (opts.answeringQuestion ? 'know' : 'tell'), projectId),
+      selection: buildSelectionEnvelope(opts.buildContext, projectId),
       input: {
         transcript: transcript
       },
@@ -1405,7 +1195,7 @@
         allowSearch: false,
         allowSpeech: false
       },
-      history: conversationHistory.slice(-4),
+      history: projectHistory,
       answeringQuestion: !!opts.answeringQuestion,
       questionText: opts.questionText || ''
     };
@@ -1413,277 +1203,22 @@
     return orchestrator.interpretVoice(payload, executePreparedLLM).then(function(result) {
       // Track LLM response in history
       if (result && result.ok && result.clean) {
-        conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now() });
+        conversationHistory.push({ role: 'bot', text: result.clean, time: Date.now(), projectId: projectId });
         if (conversationHistory.length > MAX_HISTORY) conversationHistory.shift();
       }
-      return result;
+      return Object.assign({}, result || {}, { projectId: projectId });
     });
   }
 
   function buildBridgeImagePrompt(projectEnvelope, description, options) {
-    var lines = [
-      'Analyze this image.',
-      'Visible facts only.',
-      'One short sentence.',
-      'Return text only.'
-    ];
-    return lines.join('\n');
-  }
-
-  function logImageFetchStage(keyword, stage, detail, captureId) {
-    native?.appendLogEntry?.({
-      kind: 'product',
-      message: 'img fetch · ' + stage,
-      linked_capture_id: captureId || null,
-      meta: {
-        keyword: keyword || '',
-        detail: detail || ''
-      }
-    });
-  }
-
-  function buildFollowupImageFetchPrompt(keyword, attemptIndex) {
-    var label = String(keyword || 'latest image analysis').trim();
-    var exactTagLine = 'Image Analysis Tag:' + label;
-    if (Number(attemptIndex || 0) <= 0) {
-      return [
-        'Can you pull the details of the latest image analysis note you created with this exact tag line?',
-        exactTagLine,
-        'Return only the note details in plain text.',
-        'Do not analyze any image.',
-        'Do not create or save any note.',
-        'If the note is not ready yet, reply exactly: PENDING'
-      ].join('\n');
-    }
-    return [
-      'Find the saved image analysis note in my journal with this exact tag line: ' + exactTagLine,
-      'Return only the note text in plain text.',
-      'Do not add any intro or label.',
-      'Do not analyze any image.',
-      'Do not create or save any note.',
-      'If the note is not ready yet, reply exactly: PENDING'
-    ].join('\n');
-  }
-
-  function extractFollowupFetchNoteText(result, keyword) {
-    var label = String(keyword || '').trim();
-    var sources = [
-      result?.text || '',
-      result?.clean || ''
-    ].filter(Boolean);
-    for (var i = 0; i < sources.length; i += 1) {
-      var raw = String(sources[i] || '').trim();
-      var upper = raw.toUpperCase();
-      if (upper === 'PENDING') {
-        return { ok: false, pending: true, tag: label };
-      }
-      var markerMatch = raw.match(/NOTE_TEXT:\s*([\s\S]+)/i);
-      if (markerMatch && markerMatch[1]) {
-        var noteText = String(markerMatch[1] || '').trim();
-        if (noteText) {
-          return {
-            ok: true,
-            text: noteText,
-            clean: sanitizeResponse(noteText) || noteText,
-            raw: raw,
-            tag: label
-          };
-        }
-      }
-      var clean = sanitizeResponse(raw);
-      clean = clean.replace(/^here(?:'s| is)\s+(?:the\s+)?(?:note|saved note|note details)\s*:?/i, '').trim();
-      clean = clean.replace(/^image analysis tag\s*:\s*[^\n]+\n*/i, '').trim();
-      var lowerClean = lower(clean);
-      if (clean &&
-          lowerClean !== 'pending' &&
-          (!label || lowerClean.indexOf(lower(label)) === -1 || lowerClean.indexOf('analysis tag') === -1) &&
-          lowerClean.indexOf('let me see what we') !== 0 &&
-          lowerClean.indexOf('taking a look') !== 0 &&
-          lowerClean.indexOf('let me check') !== 0 &&
-          lowerClean.indexOf('one moment') !== 0 &&
-          lowerClean.indexOf('hold on') !== 0) {
-        return {
-          ok: true,
-          text: clean,
-          clean: clean,
-          raw: raw,
-          tag: label
-        };
-      }
-    }
-    return null;
-  }
-
-  function isBridgeFillerText(text, keyword) {
-    var clean = sanitizeResponse(text || '');
-    var lowerClean = lower(clean);
-    var lowerKeyword = lower(String(keyword || '').trim());
-    if (!clean) return true;
-    if (lowerClean === 'hm') return true;
-    if (lowerClean === 'pending') return true;
-    if (lowerClean === 'let me see what we’ve got here') return true;
-    if (lowerClean === "let me see what we've got here") return true;
-    if (lowerClean.indexOf('let me see what we') === 0) return true;
-    if (lowerClean === 'taking a look') return true;
-    if (lowerClean.indexOf('taking a look') === 0) return true;
-    if (lowerClean.indexOf('let me check') === 0) return true;
-    if (lowerClean.indexOf('one moment') === 0) return true;
-    if (lowerClean.indexOf('hold on') === 0) return true;
-    if (lowerClean.indexOf('give me a second') === 0) return true;
-    if (lowerKeyword && lowerClean === lowerKeyword) return true;
-    return false;
-  }
-
-  function textLooksLikeJournalSaveCue(text, keyword) {
-    var clean = sanitizeResponse(text || '');
-    var lowerClean = lower(clean);
-    var lowerKeyword = lower(String(keyword || '').trim());
-    if (!lowerClean || !lowerKeyword) return false;
-    if (lowerClean.indexOf('let me see what we') === 0) return false;
-    if (lowerClean.indexOf('taking a look') === 0) return false;
-    if (lowerClean.indexOf('let me check') === 0) return false;
-    if (lowerClean.indexOf('one moment') === 0) return false;
-    if (lowerClean.indexOf(lowerKeyword) === -1) return false;
-    return (
-      lowerClean.indexOf('saved a note in my journal') !== -1 ||
-      lowerClean.indexOf('saved a note in your journal') !== -1 ||
-      lowerClean.indexOf('recorded a note in my journal') !== -1 ||
-      lowerClean.indexOf('recorded a note in your journal') !== -1 ||
-      lowerClean.indexOf('saved in your journal') !== -1 ||
-      lowerClean.indexOf('saved successfully') !== -1 ||
-      lowerClean.indexOf('analysis tag') !== -1
-    );
-  }
-
-  function waitForTaggedJournalReady(keyword, options) {
     var opts = options || {};
-    var timeoutMs = Math.max(4000, Number(opts.timeoutMs || 22000));
-    var minResponses = Math.max(1, Number(opts.minResponses || 3));
-    return new Promise(function(resolve) {
-      var done = false;
-      var timer = null;
-      var responseCount = 0;
-      var remove = addAmbientBridgeListener(function(_data, text) {
-        if (done || isBridgeFillerText(text, keyword)) return;
-        responseCount += 1;
-        if (textLooksLikeJournalSaveCue(text, keyword)) {
-          done = true;
-          if (timer) clearTimeout(timer);
-          remove();
-          resolve({ ok: true, cue: 'journal-save', text: text, responseCount: responseCount });
-          return;
-        }
-        if (responseCount >= minResponses) {
-          done = true;
-          if (timer) clearTimeout(timer);
-          remove();
-          resolve({ ok: true, cue: 'response-count', text: text, responseCount: responseCount });
-        }
-      });
-      timer = setTimeout(function() {
-        if (done) return;
-        done = true;
-        remove();
-        resolve({ ok: false, cue: 'timeout', responseCount: responseCount });
-      }, timeoutMs);
-    });
-  }
-
-  function isPendingFollowupFetchResult(result, keyword) {
-    var parsed = extractFollowupFetchNoteText(result, keyword);
-    if (parsed && parsed.ok) return false;
-    if (parsed && parsed.pending) return true;
-    var clean = sanitizeResponse(result?.clean || result?.text || '');
-    if (!clean) return true;
-    if (textLooksLikeJournalSaveCue(clean, keyword)) return true;
-    return isBridgeFillerText(clean, keyword);
-  }
-
-  function fetchLabeledImageAnalysisText(keyword, options) {
-    var opts = options || {};
-    var attempts = Math.max(1, Number(opts.attempts || 3));
-    var initialDelayMs = Math.max(0, Number(opts.initialDelayMs || 10000));
-    var intervalMs = Math.max(0, Number(opts.intervalMs || 3500));
-    var timeoutMs = Math.max(4000, Number(opts.timeout || 14000));
-    var captureId = String(opts.captureId || '').trim();
-    var prefetchCoverText = String(opts.prefetchCoverText || '').trim();
-    var prefetchCoverDelayMs = Math.max(0, Number(opts.prefetchCoverDelayMs || 240));
-    var prefetchPostWaitMs = Math.max(0, Number(opts.prefetchPostWaitMs || 1400));
-    var readyResponses = Math.max(1, Number(opts.minReadyResponses || 3));
-    return new Promise(function(resolve) {
-      function runAttempt(index) {
-        var humanAttempt = index + 1;
-        logImageFetchStage(keyword, 'fetch ' + humanAttempt, 'retrieve by tag', captureId);
-        sendToLLM(buildFollowupImageFetchPrompt(keyword, index), {
-          timeout: timeoutMs,
-          priority: 'high',
-          allowMemoryLookup: true,
-          expectBridgeResponse: true,
-          waitForSettledText: true,
-          pendingKeyword: keyword
-        }).then(function(fetchResult) {
-          var parsed = extractFollowupFetchNoteText(fetchResult, keyword);
-          if (parsed && parsed.ok) {
-            fetchResult = Object.assign({}, fetchResult || {}, {
-              ok: true,
-              text: parsed.text,
-              clean: parsed.clean,
-              raw: parsed.raw || fetchResult?.raw || ''
-            });
-          }
-          if (!fetchResult || !fetchResult.ok || isPendingFollowupFetchResult(fetchResult, keyword)) {
-            if (index + 1 >= attempts) {
-              logImageFetchStage(keyword, 'fetch miss', fetchResult?.error || fetchResult?.code || 'pending', captureId);
-              resolve(fetchResult && typeof fetchResult === 'object'
-                ? Object.assign({}, fetchResult, {
-                    ok: false,
-                    code: fetchResult.code || 'followup-pending',
-                    error: fetchResult.error || 'followup pending'
-                  })
-                : {
-                    ok: false,
-                    code: 'followup-pending',
-                    error: 'followup pending'
-                  });
-              return;
-            }
-            logImageFetchStage(keyword, 'wait', Math.round(intervalMs / 1000) + 's then retry', captureId);
-            setTimeout(function() {
-              runAttempt(index + 1);
-            }, intervalMs);
-            return;
-          }
-          if (fetchResult && typeof fetchResult === 'object') {
-            fetchResult.mode = 'followup-fetch';
-          }
-          logImageFetchStage(keyword, 'fetch hit', compactText(fetchResult?.clean || fetchResult?.text || '', 64), captureId);
-          resolve(fetchResult);
-        });
-      }
-      logImageFetchStage(keyword, 'requested', 'tagged analysis posted', captureId);
-      logImageFetchStage(keyword, 'wait', Math.round(initialDelayMs / 1000) + 's note-save window', captureId);
-      waitForTaggedJournalReady(keyword, {
-        timeoutMs: initialDelayMs,
-        minResponses: readyResponses
-      }).then(function(cueResult) {
-        if (cueResult?.ok) {
-          logImageFetchStage(keyword, 'cue', cueResult.cue === 'response-count' ? 'confirmation settled' : 'journal saved', captureId);
-        } else {
-          logImageFetchStage(keyword, 'cue miss', 'timed fallback', captureId);
-        }
-        if (!prefetchCoverText) {
-          runAttempt(0);
-          return;
-        }
-        logImageFetchStage(keyword, 'cover', compactText(prefetchCoverText, 16), captureId);
-        setTimeout(function() {
-          sendR1CoverSpeech(prefetchCoverText, { delay: prefetchCoverDelayMs }).finally(function() {
-            setTimeout(function() {
-              runAttempt(0);
-            }, prefetchPostWaitMs);
-          });
-        }, prefetchCoverDelayMs);
-      });
+    if (!vision) return '';
+    return vision.buildVisionPrompt({
+      visionId: opts.visionId || vision.createVisionId(opts.imageId || opts.captureId || 'capture'),
+      captureId: opts.imageId || opts.captureId || '',
+      project: projectEnvelope || buildProjectEnvelope('show'),
+      captureHint: description || opts.promptContext || 'camera capture',
+      annotation: opts.voiceAnnotation || opts.annotation || ''
     });
   }
 
@@ -1878,56 +1413,36 @@
   }
 
   /**
-   * processImage -- deterministic Rabbit-only image entry.
+   * processImage -- silent, schema-bound Rabbit vision entry.
    *
-   * The reliable product path is save-first capture plus Rabbit text analysis
-   * when the user adds a spoken annotation. Native Rabbit image callbacks stay
-   * available as a separate probe/assist lane, but core SHOW behavior does not
-   * depend on them returning inline.
+   * Capture persistence is owned by camera-capture.js. This method is an
+   * asynchronous enhancement: failure returns a degraded result and never
+   * changes the fact that the original frame was saved.
    */
   function processImage(rawBase64, description, meta) {
     var options = meta || {};
-    if (String(options.voiceAnnotation || '').trim()) {
-      return withOperationPolicy({
-        allowSpeech: false,
-        silent: true,
-        source: 'show-tell',
-        reason: 'show+tell stays quiet'
-      }, function() {
-        return analyzeShowTell(rawBase64, description, options).then(function(result) {
-          if (result && result.ok) return result;
-          native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
-            entryId: options.imageId || '',
-            error: result?.error || 'show-tell failed'
-          });
-          return storeCaptureOnlyResult(Object.assign({}, options, {
-            savedSummary: 'show+tell saved',
-            savedPrompt: 'hold ptt to describe'
-          }));
-        }).catch(function(error) {
-          native?.traceEvent?.('show.tell', 'failed', 'saved-only', {
-            entryId: options.imageId || '',
-            error: error?.message || 'show-tell failed'
-          });
-          return storeCaptureOnlyResult(Object.assign({}, options, {
-            savedSummary: 'show+tell saved',
-            savedPrompt: 'hold ptt to describe'
-          }));
-        });
-      });
-    }
-
     return requestCaptureDescription(options.imageId || '', rawBase64, {
       itemId: options.itemId || '',
       facingMode: options.facingMode || '',
       description: description || '',
+      voiceAnnotation: options.voiceAnnotation || '',
+      imageInputMode: options.imageInputMode || 'raw-base64',
       priority: options.priority || 'low',
-      timeout: options.timeout || 22000
+      timeout: options.timeout || 18000
     });
   }
 
   function requestCaptureDescription(captureId, imageBase64, context) {
     var options = context || {};
+    if (!vision) {
+      return Promise.resolve({
+        ok: false,
+        error: 'StructaVisionProtocol not available',
+        code: 'vision-protocol-unavailable',
+        layer: 'client',
+        captureId: captureId || ''
+      });
+    }
     if (!imageBase64) {
       native?.recordProductEvent?.('description unavailable', {
         captureId: captureId || '',
@@ -1942,8 +1457,10 @@
       });
     }
     var projectEnvelope = buildProjectEnvelope('show');
+    var visionId = options.visionId || vision.createVisionId(captureId || 'capture');
     var prompt = buildBridgeImagePrompt(projectEnvelope, options.description || 'camera capture', {
-      voiceAnnotation: '',
+      visionId: visionId,
+      voiceAnnotation: options.voiceAnnotation || '',
       itemId: options.itemId || '',
       imageId: captureId || '',
       facingMode: options.facingMode || '',
@@ -1957,88 +1474,58 @@
     }, function() {
       native?.recordProductEvent?.('description requested', {
         captureId: captureId || '',
-        detail: 'silent default'
+        detail: 'silent vision relay'
       });
-      native?.traceEvent?.('image.truth', 'requested', 'bridge', {
+      native?.traceEvent?.('vision.analysis', 'saved', 'requested', {
         captureId: captureId || '',
-        timeoutMs: Number(options.timeout || 22000),
+        visionId: visionId,
+        timeoutMs: Number(options.timeout || 18000),
         itemId: options.itemId || ''
       });
-      return normalizeBridgeImageDataUrl(imageBase64).then(function(normalizedImage) {
-        var attempt = {
-          label: 'magic-norm-silent',
-          image: normalizedImage,
-          prompt: prompt,
-          options: {
-            timeout: Number(options.timeout || 16000),
-            pluginId: 'com.r1.pixelart',
-            omitUseLLM: true,
-            wantsR1Response: false,
-            omitWantsJournalEntry: true
-          }
-        };
-        native?.traceEvent?.('image.truth', 'attempt', attempt.label, {
-          captureId: captureId || '',
-          itemId: options.itemId || '',
-          index: 1,
-          total: 1
-        });
-        return sendBridgeImage(attempt.image, attempt.prompt, attempt.options).then(function(result) {
-          if (result && typeof result === 'object') result.bridgeStrategy = attempt.label;
-          return result;
-        });
+      return sendBridgeImage(imageBase64, prompt, {
+        visionId: visionId,
+        captureId: captureId || '',
+        project: projectEnvelope,
+        voiceAnnotation: options.voiceAnnotation || '',
+        imageInputMode: options.imageInputMode || 'raw-base64',
+        timeout: Number(options.timeout || 18000),
+        priority: options.priority || 'low'
       }).then(function(result) {
-        if (!result || !result.ok || !result.clean) {
+        if (!result || !result.ok || !result.envelope) {
           native?.recordProductEvent?.('description unavailable', {
             captureId: captureId || '',
-            detail: compactText(result?.bridgeStrategy || result?.code || result?.error || 'bridge timeout', 10)
+            detail: compactText(result?.code || result?.error || 'vision unavailable', 10)
           });
-          native?.traceEvent?.('image.truth', 'missing', 'bridge', {
+          native?.traceEvent?.('vision.analysis', 'requested', 'unavailable', {
             captureId: captureId || '',
+            visionId: visionId,
             itemId: options.itemId || '',
             code: result?.code || '',
             error: result?.error || ''
           });
           return result;
         }
-        return extractClaimsFromText({
-          project: projectEnvelope,
-          input: {
-            text: result.clean || '',
-            deviceId: native?.deviceId || ''
-          },
-          source: 'image',
-          sourceRef: {
-            imageId: captureId || '',
-            itemId: options.itemId || ''
-          },
-          meta: {
-            deviceId: native?.deviceId || '',
-            imageId: captureId || ''
-          }
-        }).then(function(extracted) {
-          var claims = Array.isArray(extracted?.claims) ? extracted.claims : [];
-          native?.recordProductEvent?.('description stored', {
-            captureId: captureId || '',
-            detail: compactText((result.clean || result.text || '').slice(0, 72), 10)
-          });
-          native?.traceEvent?.('image.truth', 'stored', 'capture', {
-            captureId: captureId || '',
-            itemId: options.itemId || '',
-            claimCount: claims.length,
-            text: compactText(result.clean || result.text || '', 120)
-          });
-          return {
-            ok: true,
-            text: result.text || result.clean || '',
-            clean: result.clean || result.text || '',
-            raw: result.raw || '',
-            structured: extractFields(result.clean || result.text || ''),
-            claims: claims,
-            claim_extraction_pending: !claims.length,
-            captureId: captureId || '',
-            bridge: true
-          };
+        native?.recordProductEvent?.('description stored', {
+          captureId: captureId || '',
+          detail: compactText(result.clean || 'visual signal stored', 10)
+        });
+        native?.traceEvent?.('vision.analysis', 'requested', 'stored', {
+          captureId: captureId || '',
+          visionId: visionId,
+          itemId: options.itemId || '',
+          observationCount: result.observations?.length || 0,
+          interpretationCount: result.interpretations?.length || 0,
+          implicationCount: result.implications?.length || 0,
+          uncertaintyCount: result.uncertainties?.length || 0
+        });
+        return Object.assign({}, result, {
+          captureId: captureId || '',
+          visionId: visionId,
+          imageRunId: visionId,
+          structured: result.envelope,
+          claims: [],
+          claim_extraction_pending: false,
+          bridge: true
         });
       });
     });
@@ -2060,90 +1547,23 @@
       keyword: options.keyword || '',
       timeoutMs: timeoutMs
     });
-    var baseInput = String(rawBase64 || '');
-    var imageInput = baseInput;
-    if (options.imageInputMode === 'dataUrl' && !/^data:image\//i.test(baseInput)) {
-      imageInput = 'data:image/png;base64,' + baseInput;
-    }
+    var imageInput = String(rawBase64 || '');
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
       source: 'image-probe',
       reason: 'image prompt probes stay quiet'
     }, function() {
-      var bridgeCall;
-      if (options.followupFetch === true) {
-        logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'requested', 'journal-backed image analysis', options.captureId || '');
-        bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
-          journal: options.journal === true,
-          timeout: timeoutMs,
-          expectResponse: false,
-          pluginId: options.pluginId || '',
-          useLLM: options.useLLM,
-          wantsR1Response: options.wantsR1Response === true,
-          omitMessage: options.omitMessage === true,
-          omitUseLLM: options.omitUseLLM === true,
-          omitWantsR1Response: options.omitWantsR1Response === true,
-          omitWantsJournalEntry: options.omitWantsJournalEntry === true
-        }).then(function(postResult) {
-          if (!postResult || !postResult.ok) return postResult || {
-            ok: false,
-            error: 'journal image request failed',
-            code: 'followup-post-failed'
-          };
-          logImageFetchStage(options.keyword || options.label || 'latest image analysis', 'wait', Math.round(Number(options.followupDelayMs || 10000) / 1000) + 's before text fetch', options.captureId || '');
-          return fetchLabeledImageAnalysisText(options.keyword || options.label || 'latest image analysis', {
-            attempts: Number(options.followupFetchAttempts || 3),
-            initialDelayMs: Number(options.followupDelayMs || 10000),
-            intervalMs: Number(options.followupIntervalMs || 3500),
-            timeout: Number(options.fetchTimeout || 18000),
-            captureId: options.captureId || '',
-            prefetchCoverText: options.prefetchCoverText || '',
-            prefetchCoverDelayMs: Number(options.prefetchCoverDelayMs || 240)
-          });
-        });
-      } else if (options.listenback === true) {
-        bridgeCall = sendBridgeImageWithListenback(imageInput, String(prompt || '').trim(), {
-          journal: options.journal === true,
-          timeout: timeoutMs,
-          pluginId: options.pluginId || '',
-          useLLM: options.useLLM,
-          wantsR1Response: options.wantsR1Response === true,
-          omitMessage: options.omitMessage === true,
-          omitUseLLM: options.omitUseLLM === true,
-          omitWantsR1Response: options.omitWantsR1Response === true,
-          omitWantsJournalEntry: options.omitWantsJournalEntry === true,
-          listenbackPostFirst: options.listenbackPostFirst === true,
-          listenbackStartDelayMs: options.listenbackStartDelayMs || 320,
-          listenbackWarmupMs: options.listenbackWarmupMs || 120,
-          listenbackStopAfterMs: options.listenbackStopAfterMs || 5200,
-          listenbackTimeoutMs: options.listenbackTimeoutMs || 7000
-        });
-      } else {
-        bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
-          journal: options.journal === true,
-          timeout: timeoutMs,
-          expectResponse: options.expectResponse !== false,
-          pluginId: options.pluginId || '',
-          useLLM: options.useLLM,
-          wantsR1Response: options.wantsR1Response === true,
-          omitMessage: options.omitMessage === true,
-          omitUseLLM: options.omitUseLLM === true,
-          omitWantsR1Response: options.omitWantsR1Response === true,
-          omitWantsJournalEntry: options.omitWantsJournalEntry === true
-        }).then(function(result) {
-          if (options.coverText && result && result.ok) {
-            return new Promise(function(resolve) {
-              setTimeout(function() {
-                sendR1CoverSpeech(options.coverText, { delay: options.coverDelayMs || 260 }).finally(function() {
-                  resolve(Object.assign({}, result, { mode: 'cover' }));
-                });
-              }, Number(options.coverDelayMs || 260));
-            });
-          }
-          return result;
-        });
-      }
+      var bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
+        visionId: options.visionId || '',
+        captureId: options.captureId || '',
+        project: options.project || buildProjectEnvelope('show'),
+        voiceAnnotation: options.voiceAnnotation || '',
+        imageInputMode: options.imageInputMode || 'raw-base64',
+        timeout: timeoutMs,
+        expectResponse: options.expectResponse !== false,
+        priority: options.priority || 'low'
+      });
       return bridgeCall.then(function(result) {
         if (options.expectResponse === false && result && result.ok && !result.clean) {
           native?.appendLogEntry?.({
@@ -2421,18 +1841,198 @@
   }
 
   // === SERP Research ===
+  function normalizeResearchUrl(value) {
+    var match = String(value || '').trim().match(/https?:\/\/[^\s<>"'`]+/i);
+    if (!match) return '';
+    return match[0].replace(/[\])},.;!?]+$/g, '');
+  }
+
+  function researchUrlKey(value) {
+    return normalizeResearchUrl(value);
+  }
+
+  function researchDomain(value) {
+    return normalizeResearchUrl(value)
+      .replace(/^https?:\/\//i, '')
+      .split('/')[0]
+      .replace(/^www\./i, '')
+      .toLowerCase();
+  }
+
+  function parseResearchJSON(value) {
+    var raw = String(value || '').trim();
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (_) {}
+    var fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) {
+      try { return JSON.parse(fenced[1].trim()); } catch (_) {}
+    }
+    var objectStart = raw.indexOf('{');
+    var objectEnd = raw.lastIndexOf('}');
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      try { return JSON.parse(raw.slice(objectStart, objectEnd + 1)); } catch (_) {}
+    }
+    var arrayStart = raw.indexOf('[');
+    var arrayEnd = raw.lastIndexOf(']');
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      try { return JSON.parse(raw.slice(arrayStart, arrayEnd + 1)); } catch (_) {}
+    }
+    return null;
+  }
+
+  function collectResearchSources(searchResult, searchQuery, retrievedAt) {
+    var sources = [];
+    var byUrl = {};
+    var visited = new Set();
+    var stamp = retrievedAt || new Date().toISOString();
+
+    function addSource(urlValue, record, path, recordType) {
+      var url = normalizeResearchUrl(urlValue);
+      var key = researchUrlKey(url);
+      if (!key) return;
+      var input = record && typeof record === 'object' && !Array.isArray(record) ? record : {};
+      var title = compactText(input.title || input.name || input.headline || '', 180);
+      var snippet = compactText(input.snippet || input.description || input.summary || input.text || '', 360);
+      var publisher = compactText(input.publisher || input.source || input.site_name || input.siteName || '', 120);
+      var publishedAt = compactText(input.published_at || input.publishedAt || input.date || input.datePublished || '', 80);
+      if (byUrl[key]) {
+        if (!byUrl[key].title && title) byUrl[key].title = title;
+        if (!byUrl[key].snippet && snippet) byUrl[key].snippet = snippet;
+        if (!byUrl[key].publisher && publisher) byUrl[key].publisher = publisher;
+        if (!byUrl[key].published_at && publishedAt) byUrl[key].published_at = publishedAt;
+        if (byUrl[key].record_type === 'url-only' && recordType === 'structured') byUrl[key].record_type = 'structured';
+        return;
+      }
+      var rankValue = Number(input.position || input.rank || input.index || sources.length + 1);
+      var source = {
+        id: 'serp-source-' + String(sources.length + 1),
+        url: url,
+        title: title,
+        snippet: snippet,
+        domain: researchDomain(url),
+        publisher: publisher,
+        published_at: publishedAt,
+        rank: Number.isFinite(rankValue) && rankValue > 0 ? rankValue : sources.length + 1,
+        provider: 'rabbit-serp',
+        search_query: String(searchQuery || ''),
+        retrieved_at: stamp,
+        record_type: recordType || 'structured',
+        record_path: compactText(path || '', 120)
+      };
+      sources.push(source);
+      byUrl[key] = source;
+    }
+
+    function walk(value, path, depth) {
+      if (value == null || depth > 6 || sources.length >= 20) return;
+      if (typeof value === 'string') {
+        var parsed = parseResearchJSON(value);
+        if (parsed && parsed !== value) walk(parsed, path + '.json', depth + 1);
+        var matches = value.match(/https?:\/\/[^\s<>"'`]+/gi) || [];
+        matches.forEach(function(url) { addSource(url, null, path, 'url-only'); });
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      if (Array.isArray(value)) {
+        value.slice(0, 30).forEach(function(entry, index) {
+          walk(entry, path + '[' + index + ']', depth + 1);
+        });
+        return;
+      }
+      var directUrl = value.url || value.link || value.href || value.source_url || value.sourceUrl || value.canonical_url || value.canonicalUrl;
+      if (directUrl) addSource(directUrl, value, path, 'structured');
+      Object.keys(value).slice(0, 40).forEach(function(key) {
+        walk(value[key], path ? path + '.' + key : key, depth + 1);
+      });
+    }
+
+    walk(searchResult || {}, 'searchResult', 0);
+    return sources.slice(0, 12);
+  }
+
+  function serializeResearchResults(searchResult, sources) {
+    var raw = searchResult?.text || searchResult?.clean || searchResult?.raw || '';
+    if (raw) return String(raw);
+    var structured = searchResult?.results || searchResult?.organic_results || searchResult?.organicResults || searchResult?.items || searchResult?.sources || searchResult?.records || searchResult?.data;
+    if (structured) {
+      try { return JSON.stringify(structured); } catch (_) {}
+    }
+    return (sources || []).map(function(source) {
+      return [source.title, source.url, source.snippet].filter(Boolean).join(' — ');
+    }).join('\n');
+  }
+
+  function parseResearchSynthesis(rawValue, sources, query, searchQuery, retrievedAt) {
+    var raw = String(rawValue || '');
+    var labels = {};
+    raw.split(/\r?\n/).forEach(function(line) {
+      var separator = line.indexOf(':');
+      if (separator < 1) return;
+      labels[line.slice(0, separator).trim().toUpperCase()] = line.slice(separator + 1).trim();
+    });
+    var numbered = raw.split(/\r?\n/).map(function(line) {
+      return line.replace(/^\s*\d+[.)]\s*/, '').trim();
+    }).filter(function(line) {
+      return !!line && !/^SOURCE\d*\s*:/i.test(line) && !/^FINDING\d*\s*:/i.test(line);
+    });
+    var sourceByUrl = {};
+    (sources || []).forEach(function(source) {
+      sourceByUrl[researchUrlKey(source.url)] = source;
+    });
+    var records = [];
+    for (var index = 1; index <= 3; index += 1) {
+      var findingText = compactText(labels['FINDING' + index] || numbered[index - 1] || '', 180);
+      if (!findingText || lower(findingText) === 'omit') continue;
+      var requestedUrl = normalizeResearchUrl(labels['SOURCE' + index] || findingText);
+      var matchedSource = requestedUrl ? sourceByUrl[researchUrlKey(requestedUrl)] || null : null;
+      if (matchedSource && findingText.indexOf(requestedUrl) !== -1) {
+        findingText = compactText(findingText.replace(requestedUrl, '').replace(/[—–-]\s*$/, ''), 180);
+      }
+      var sourceBacked = !!matchedSource;
+      records.push({
+        id: 'research-finding-' + index,
+        text: findingText,
+        epistemic_status: sourceBacked ? 'source-backed' : 'hypothesis',
+        truth_role: sourceBacked ? 'sourced_research' : 'research_lead',
+        evidence_status: sourceBacked ? 'candidate' : 'withheld',
+        source_id: matchedSource?.id || '',
+        source_url: matchedSource?.url || '',
+        source_title: matchedSource?.title || '',
+        provenance: {
+          provider: sourceBacked ? 'rabbit-serp' : 'llm-synthesis',
+          query: String(query || ''),
+          search_query: String(searchQuery || ''),
+          retrieved_at: retrievedAt || '',
+          source_id: matchedSource?.id || '',
+          source_url: matchedSource?.url || '',
+          basis: sourceBacked ? 'returned-source-url' : 'unsourced-synthesis'
+        }
+      });
+    }
+    return records;
+  }
+
   /**
    * research — performs web search via R1 SERP API + LLM synthesis.
-   * Returns 3 compressed findings.
+   * Returns 3 compressed findings while retaining source provenance. A
+   * synthesized statement without a URL returned by SERP stays a hypothesis.
    */
-  function research(query) {
+  function research(query, options) {
+    var opts = options && typeof options === 'object' ? options : {};
+    var projectId = String(opts.projectId || activeProjectId() || '');
+    var originProject = projectById(projectId);
+    if (projectId && !originProject) {
+      return Promise.resolve({ ok: false, stale: true, error: 'origin project unavailable', projectId: projectId, findings: [] });
+    }
     return withOperationPolicy({
       allowSpeech: false,
       silent: true,
       source: 'research',
       reason: 'background research stays written'
     }, function() {
-      var context = buildProjectContext({ deep: false });
+      var context = buildProjectContext({ deep: false, project: originProject || {}, projectId: projectId });
       var formulationPrompt = '🚫 DO NOT SEARCH. DO NOT SAVE NOTES.\n' +
         (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
         'Topic: "' + query + '"\n' +
@@ -2451,33 +2051,96 @@
             timeout: 25000,
             priority: 'high'
           }).then(function(searchResult) {
-            return { searchQuery: searchQuery, searchResult: searchResult };
+            var retrievedAt = new Date().toISOString();
+            var sources = collectResearchSources(searchResult, searchQuery, retrievedAt);
+            return {
+              searchQuery: searchQuery,
+              searchResult: searchResult,
+              retrievedAt: retrievedAt,
+              sources: sources,
+              rawResults: serializeResearchResults(searchResult, sources)
+            };
           });
         })
         .then(function(payload) {
           if (!payload.searchResult || !payload.searchResult.ok) return { ok: false, findings: [] };
-          var rawResults = payload.searchResult.text || payload.searchResult.clean || '';
+          var rawResults = payload.rawResults || '';
+          var sourceLines = (payload.sources || []).map(function(source) {
+            return source.id + ': ' + source.url + (source.title ? ' — ' + source.title : '');
+          }).join('\n');
           var synthesisPrompt = '🚫 DO NOT SEARCH AGAIN. DO NOT SAVE NOTES.\n' +
             (context ? 'Project context:\n' + context.slice(0, 220) + '\n\n' : '') +
             'Search topic: "' + query + '"\n' +
             'Search query used: "' + payload.searchQuery + '"\n\n' +
             'Search results:\n' + String(rawResults).slice(0, 2400) + '\n\n' +
-            'Return exactly 3 numbered findings. Each finding must be 10 words max and useful for the project.';
+            'Returned source URLs:\n' + (sourceLines || 'none returned') + '\n\n' +
+            'Return exactly these labeled lines:\n' +
+            'FINDING1: <10 words max and useful for the project>\n' +
+            'SOURCE1: <exact returned URL, or NONE>\n' +
+            'FINDING2: <10 words max and useful for the project>\n' +
+            'SOURCE2: <exact returned URL, or NONE>\n' +
+            'FINDING3: <10 words max and useful for the project>\n' +
+            'SOURCE3: <exact returned URL, or NONE>\n' +
+            'Never invent or rewrite a URL. Use NONE when no returned URL directly supports a finding.';
           return sendToLLM(synthesisPrompt, { journal: false, timeout: 20000, priority: 'high' })
             .then(function(result) {
               if (!result || !result.ok) return { ok: false, findings: [] };
-              var lines = (result.clean || '').split(/\n/).filter(function(l) { return l.trim(); });
-              var findings = lines.slice(0, 3).map(function(l) { return l.replace(/^\d+[\.\)]\s*/, '').trim(); });
-              if (native && native.addNode && findings.length) {
-                native.addNode({
+              var findingRecords = parseResearchSynthesis(
+                result.text || result.clean || '',
+                payload.sources || [],
+                query,
+                payload.searchQuery,
+                payload.retrievedAt
+              );
+              var findings = findingRecords.map(function(record) { return record.text; });
+              if (!originProjectExists(projectId)) {
+                return { ok: false, stale: true, error: 'origin project unavailable', projectId: projectId, findings: [] };
+              }
+              var provenance = {
+                provider: 'rabbit-serp',
+                query: String(query || ''),
+                search_query: payload.searchQuery,
+                retrieved_at: payload.retrievedAt,
+                source_count: (payload.sources || []).length,
+                source_urls: (payload.sources || []).map(function(source) { return source.url; }),
+                synthesis_policy: 'unsourced findings remain hypotheses with evidence withheld'
+              };
+              var nodeInput = {
                   type: 'research', title: 'branch: ' + query.slice(0, 40),
                   body: findings.join(' | '), source: 'serp',
-                  research_findings: findings,
+                  research_findings: findingRecords,
                   tags: query.toLowerCase().split(/\s+/).slice(0, 3),
-                  meta: { search_query: payload.searchQuery, silent: true }
-                });
+                  meta: {
+                    search_query: payload.searchQuery,
+                    silent: true,
+                    project_id: projectId,
+                    research_sources: payload.sources || [],
+                    research_records: findingRecords,
+                    provenance: provenance
+                  }
+                };
+              var stored = null;
+              if (findings.length && projectId && native?.addNodeToProject) {
+                stored = native.addNodeToProject(projectId, nodeInput);
+              } else if (findings.length && originProjectActive(projectId) && native?.addNode) {
+                stored = native.addNode(nodeInput);
               }
-              return { ok: true, query: query, searchQuery: payload.searchQuery, findings: findings, raw: result.clean, serpRaw: rawResults };
+              if (findings.length && !stored) {
+                return { ok: false, stale: true, error: 'origin project write unavailable', projectId: projectId, findings: [] };
+              }
+              return {
+                ok: true,
+                query: query,
+                searchQuery: payload.searchQuery,
+                findings: findings,
+                findingRecords: findingRecords,
+                sources: payload.sources || [],
+                provenance: provenance,
+                raw: result.text || result.clean || '',
+                serpRaw: rawResults,
+                projectId: projectId,
+                node: stored
+              };
             });
         });
     });
@@ -2540,6 +2203,7 @@
         name: project?.name || 'untitled project',
         type: project?.type || 'general',
         brief: project?.brief || '',
+        user_role: project?.user_role || '',
         topQuestions: (project?.open_questions || []).slice(0, 3),
         selectedSurface: 'now',
         summary: buildProjectContext({ deep: true })
@@ -2595,6 +2259,7 @@
             name: project?.name || 'untitled project',
             type: project?.type || 'general',
             brief: project?.brief || '',
+            user_role: project?.user_role || '',
             topQuestions: (project?.open_questions || []).slice(0, 3),
             selectedSurface: 'tell',
             summary: buildProjectContext({ deep: true })
@@ -2643,6 +2308,13 @@
         title: titleResult.title || '',
         brief: briefResult.brief || '',
         candidates: mergedCandidates,
+        constitution: briefResult.constitution && typeof briefResult.constitution === 'object'
+          ? briefResult.constitution
+          : {},
+        packHints: Array.isArray(briefResult.packHints)
+          ? briefResult.packHints
+          : (Array.isArray(briefResult.pack_hints) ? briefResult.pack_hints : []),
+        branches: Array.isArray(briefResult.branches) ? briefResult.branches : [],
         suggestedNext: briefResult.suggestedNext || ''
       };
     });

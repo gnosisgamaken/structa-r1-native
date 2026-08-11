@@ -1,3 +1,5 @@
+> Historical document. `STRUCTA_V3_PRODUCT_SPEC.md` is canonical where the specifications conflict.
+
 # Structa V2 — Visual System & UX Design
 
 ## 1. Typography Scale

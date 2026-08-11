@@ -1,3 +1,5 @@
+> Historical document. `STRUCTA_V3_PRODUCT_SPEC.md` is canonical where the specifications conflict.
+
 # Structa Capture UX Optimization Plan
 
 > For Hermes: implement only after this plan is approved. Do not change hardware interaction rules again without checking this plan and the R1 guide constraints.

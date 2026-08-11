@@ -2,12 +2,17 @@
 
 Run this on physical Rabbit R1 hardware before calling the silent visual relay production-ready. Browser diagnostics are necessary but cannot prove speaker, journal, callback, camera, or memory behavior on the device.
 
+R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but RabbitOS runs only one creation at a time, so it cannot validate STRUCTA's own callback, camera, voice, controls, persistence, or silence contract. Physical STRUCTA remains the release gate. See `v3-device-feedback-loop.md`.
+
 ## Build identity
 
-- UI build: `ui-20260811-structa-v3`
+- UI build: `ui-20260811-structa-v3.1`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
+- Device-proof session ID:
+- rabbitOS version:
+- Deployed server SHA:
 
 ## Twenty-capture matrix
 
@@ -48,3 +53,7 @@ For every capture record:
 - All six fault injections pass.
 
 Any speech, journal write, mismatched callback, or lost original is an automatic release blocker regardless of the aggregate score.
+
+The sanitized proof verifies intercepted transport flags; it cannot hear the speaker or inspect Rabbit Hole. Direct tester observation and the Rabbit Hole screenshot are required in addition to a green proof validator result.
+
+After the run, attach the sanitized device proof, synthetic `.structa.json`, and a Rabbit Hole screenshot covering the test window. Real project content and any R1 Anywhere key must not appear in the bundle.

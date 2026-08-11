@@ -12,27 +12,25 @@ we need the exact event trace from the device.
 ## fastest way to run probe mode
 
 open the app with:
-- `#probe`
+- `?debug=1#probe`
 
 example:
 - normal app url: `https://...replit.dev`
-- probe url: `https://...replit.dev/#probe`
+- probe url: `https://...replit.dev/?debug=1#probe`
 
-if the replit preview strips hashes, open the public url directly in the rabbit browser and append `#probe` there.
+the combined route enables the owner proof recorder. the production diagnostic drawer remains hidden.
 
 ## what probe mode should show
 
-on boot, the log line should show something like:
-- `probe started`
-- `probe mode active`
+on boot, a 44×44 `proof` control should appear at the top-right. tap it, then tap `check build`.
 
-if you do not see that, stop there and send a screenshot.
+if the control is missing or the build check reports a fallback/mismatch, stop there and send a screenshot.
 
 ## exact test sequence on rabbit
 
 do these one at a time, slowly:
 
-1. open app in `#probe`
+1. open app in `?debug=1#probe`, tap `proof`, and run `check build`
 2. press system back once
 3. scroll wheel up once
 4. scroll wheel down once
@@ -48,14 +46,14 @@ do these one at a time, slowly:
 ### minimum useful evidence
 send me these three things:
 
-1. a photo of the rabbit screen after the test sequence
+1. a photo of the rabbit screen showing the build check
 2. a screenshot of the replit console or shell showing the requests and any runtime output
-3. the visible in-app log lines after the test
+3. every sequential proof email after tapping `finish + send`
 
 ## best evidence
 
 best case, send me two photos:
-- photo 1: app in `#probe` right after boot
+- photo 1: the `check build` result
 - photo 2: app after you have done the full hardware sequence
 
 and one replit console screenshot.
@@ -73,12 +71,12 @@ i need the visible lines that mention things like:
 - anything with `ptt`
 - anything with `camera`
 
-## if the in-app logs are not enough
+## if the proof is not enough
 
 use replit browser devtools if available, or the browser console panel if replit preview exposes it.
 
 if not, do this simpler fallback:
-- take a device photo of the app logs
+- take a device photo of the failed screen
 - take a replit console screenshot
 - send both
 
@@ -90,7 +88,7 @@ just send:
 - one post-test device photo
 - one replit console/shell screenshot
 
-then i will map the real hardware contract and patch the app from that.
+then i will map the real hardware contract and patch the app from the emailed machine-readable proof.
 
 ## if you want an even faster loop
 
@@ -106,4 +104,4 @@ then:
 - `ptt`
 - photo
 
-that is slower for you but much faster for debugging certainty.
+that is slower for you but much faster for debugging certainty. use `journal backup` only after the run if email transport fails, because it deliberately creates a rabbit hole entry.

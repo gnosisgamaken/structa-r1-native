@@ -728,10 +728,11 @@
   <script>
     const __structaAssetEpoch = new URLSearchParams(window.location.search || '').get('asset_epoch') || 'base';
     window.StructaBuild = Object.freeze({
-      uiBuildId: 'ui-20260811-structa-v3',
+      uiBuildId: 'ui-20260811-structa-v3.1',
       declaredDiagnosticTests: 39,
       assetEpoch: __structaAssetEpoch,
-      expectedDiagnosticsAssetId: 'diag-20260811-structa-v3'
+      expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
+      deviceProofSchema: 'structa.device-proof.v1'
     });
   </script>
   <script>
@@ -754,6 +755,7 @@
         'js/camera-capture.js?v=20260811',
         'js/orchestrator.js?v=20260811',
         'js/r1-llm.js?v=20260811',
+        'js/device-lab.js?v=20260811-lab1',
         'js/impact-chain-engine.js?v=20260811',
         'js/triangle-engine.js?v=20260418',
         'js/diagnostic-suite.js?v=20260421b',

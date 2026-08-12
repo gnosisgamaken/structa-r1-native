@@ -25,6 +25,9 @@
   let streamReady = false;
   let overlayVisible = false;
   let streamAcquiring = false;
+  let cameraSessionEpoch = 0;
+  let cameraSessionOpen = false;
+  let acquisitionEpoch = 0;
 
   // === SHOW+TELL voice strip state ===
   let voiceStripActive = false;
@@ -985,10 +988,75 @@
     });
   }
 
-  async function readyOverlay(targetMode) {
-    const ready = await attachPreview();
+  function beginCameraSession() {
+    cameraSessionOpen = true;
+    cameraSessionEpoch += 1;
+    return cameraSessionEpoch;
+  }
+
+  function invalidateCameraSession() {
+    cameraSessionOpen = false;
+    cameraSessionEpoch += 1;
+    streamAcquiring = false;
+    acquisitionEpoch = 0;
+  }
+
+  function isCurrentCameraSession(epoch) {
+    return cameraSessionOpen && epoch === cameraSessionEpoch;
+  }
+
+  function finishAcquisition(epoch) {
+    if (acquisitionEpoch !== epoch) return;
+    acquisitionEpoch = 0;
+    streamAcquiring = false;
+  }
+
+  function stopMediaStream(mediaStream) {
+    if (!mediaStream) return;
+    try {
+      mediaStream.getTracks().forEach(function(track) {
+        if (track?.readyState !== 'ended') track.stop();
+      });
+    } catch (_) {}
+  }
+
+  function releaseMediaStream(mediaStream) {
+    if (!mediaStream) return;
+    stopMediaStream(mediaStream);
+    if (preview?.srcObject === mediaStream) preview.srcObject = null;
+    if (window.__STRUCTA_PRIMED_STREAM__ === mediaStream) {
+      window.__STRUCTA_PRIMED_STREAM__ = null;
+    }
+    if (stream === mediaStream) {
+      stream = null;
+      streamReady = false;
+    }
+  }
+
+  function releaseAllCameraStreams() {
+    const activeStream = stream;
+    const primedStream = window.__STRUCTA_PRIMED_STREAM__;
+    releaseMediaStream(activeStream);
+    if (primedStream && primedStream !== activeStream) releaseMediaStream(primedStream);
+    if (preview) preview.srcObject = null;
+    stream = null;
+    streamReady = false;
+  }
+
+  async function readyOverlay(targetMode, epoch, mediaStream) {
+    const candidate = mediaStream || stream;
+    if (!isCurrentCameraSession(epoch)) {
+      releaseMediaStream(candidate);
+      return false;
+    }
+    const ready = await attachPreview(candidate, epoch);
+    if (!isCurrentCameraSession(epoch)) {
+      releaseMediaStream(candidate);
+      return false;
+    }
     if (!ready) {
-      killStream();
+      invalidateCameraSession();
+      releaseMediaStream(candidate);
       setStatus('preview unavailable');
       return false;
     }
@@ -1026,23 +1094,20 @@
   }
 
   function killStream() {
-    streamReady = false;
-    streamAcquiring = false;
+    invalidateCameraSession();
     stopVoiceStrip();
-    if (stream) {
-      try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
-      stream = null;
-    }
-    if (preview) preview.srcObject = null;
+    releaseAllCameraStreams();
     setStatus('idle');
   }
 
-  async function attachPreview() {
+  async function attachPreview(mediaStream, epoch) {
     if (!preview) return true;
-    preview.srcObject = stream;
+    if (epoch && !isCurrentCameraSession(epoch)) return false;
+    preview.srcObject = mediaStream || stream;
     await preview.play().catch(() => {});
     const start = Date.now();
     while (Date.now() - start < 3000) {
+      if (epoch && !isCurrentCameraSession(epoch)) return false;
       if (preview.readyState >= 2 && preview.videoWidth > 0) return true;
       if (!preview.paused) return true;
       await new Promise(r => setTimeout(r, 60));
@@ -1054,29 +1119,32 @@
     const target = mode === 'user' || mode === 'selfie' ? 'user' : 'environment';
 
     if (streamReady && stream) {
+      const epoch = beginCameraSession();
       setStatus('opening');
-      void readyOverlay(target).then(() => {
-        if (target !== facingMode) flip();
+      void readyOverlay(target, epoch, stream).then((opened) => {
+        if (opened && isCurrentCameraSession(epoch) && target !== facingMode) flip();
       });
       return;
     }
 
     const primed = window.__STRUCTA_PRIMED_STREAM__;
     if (primed && primed.active) {
+      const epoch = beginCameraSession();
       stream = primed;
       facingMode = target;
       if (preview) preview.srcObject = stream;
       native?.setCameraFacing?.(facingMode);
       setStatus('opening');
-      void readyOverlay(target);
+      void readyOverlay(target, epoch, stream);
       return;
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
       if (getCaps().nativeCapturePreferred && window.r1?.camera?.capturePhoto) {
+        beginCameraSession();
         facingMode = target;
         native?.setCameraFacing?.(facingMode);
-      setStatus(CAMERA_READY_STATUS);
+        setStatus(CAMERA_READY_STATUS);
         showOverlay();
         showOverlayReady();
         return;
@@ -1089,23 +1157,31 @@
     }
 
     if (streamAcquiring) return;
+    const epoch = beginCameraSession();
     streamAcquiring = true;
+    acquisitionEpoch = epoch;
     facingMode = target;
     setStatus('opening');
 
     navigator.mediaDevices.getUserMedia({ video: { facingMode, width: { max: 640 }, height: { max: 480 } } })
       .then(async (mediaStream) => {
-        streamAcquiring = false;
+        finishAcquisition(epoch);
+        if (!isCurrentCameraSession(epoch)) {
+          releaseMediaStream(mediaStream);
+          return;
+        }
         stream = mediaStream;
         window.__STRUCTA_PRIMED_STREAM__ = stream;
         if (preview) preview.srcObject = stream;
         native?.setCameraFacing?.(facingMode);
-        const ok = await readyOverlay(target);
+        const ok = await readyOverlay(target, epoch, mediaStream);
         if (!ok) return;
       })
       .catch(err => {
-        streamAcquiring = false;
-        killStream();
+        finishAcquisition(epoch);
+        if (!isCurrentCameraSession(epoch)) return;
+        invalidateCameraSession();
+        releaseAllCameraStreams();
         setStatus('camera blocked');
         window.dispatchEvent(new CustomEvent('structa-camera-denied', {
           detail: { reason: err?.name || 'permission-denied' }
@@ -1114,21 +1190,40 @@
   }
 
   async function flip() {
-    if (flipLocked || !streamReady) return;
+    if (flipLocked || !streamReady || !cameraSessionOpen) return;
     flipLocked = true;
+    const epoch = cameraSessionEpoch;
     try {
       const nextMode = facingMode === 'user' ? 'environment' : 'user';
-      killStream();
+      releaseAllCameraStreams();
+      if (!isCurrentCameraSession(epoch)) return;
+      streamAcquiring = true;
+      acquisitionEpoch = epoch;
       navigator.mediaDevices.getUserMedia({ video: { facingMode: nextMode, width: { max: 640 }, height: { max: 480 } } })
         .then(async (mediaStream) => {
+          finishAcquisition(epoch);
+          if (!isCurrentCameraSession(epoch)) {
+            releaseMediaStream(mediaStream);
+            return;
+          }
           stream = mediaStream;
           facingMode = nextMode;
-          await attachPreview();
+          window.__STRUCTA_PRIMED_STREAM__ = stream;
+          const attached = await attachPreview(mediaStream, epoch);
+          if (!attached || !isCurrentCameraSession(epoch)) {
+            releaseMediaStream(mediaStream);
+            return;
+          }
           streamReady = true;
           native?.setCameraFacing?.(facingMode);
           setStatus(CAMERA_READY_STATUS);
         })
-        .catch(() => { killStream(); setStatus('flip failed'); });
+        .catch(() => {
+          finishAcquisition(epoch);
+          if (!isCurrentCameraSession(epoch)) return;
+          releaseAllCameraStreams();
+          setStatus('flip failed');
+        });
     } finally {
       setTimeout(() => { flipLocked = false; }, 200);
     }
@@ -1322,6 +1417,8 @@
         projectId: captureProjectId,
         activeProjectId: activeProjectId()
       });
+      invalidateCameraSession();
+      releaseAllCameraStreams();
       hideOverlay();
       return null;
     }
@@ -1420,6 +1517,11 @@
     window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
       detail: { source: annotation ? 'show-tell' : 'capture' }
     }));
+    // Retire this presentation session before hiding it so a late preview or
+    // acquisition callback cannot reopen the overlay. A completed frame also
+    // releases every camera track; STRUCTA never keeps a hidden lens live.
+    invalidateCameraSession();
+    releaseAllCameraStreams();
     hideOverlay();
 
     // Also store as node if available
@@ -1501,9 +1603,11 @@
     voiceStripTranscript = '';
     voiceStripStopping = false;
     pendingVoiceCapture = false;
-    setStatus('camera closed');
     clearTimeout(pendingVoiceCaptureTimer);
     pendingVoiceCaptureTimer = null;
+    invalidateCameraSession();
+    releaseAllCameraStreams();
+    setStatus('camera closed');
     hideOverlay();
   }
 

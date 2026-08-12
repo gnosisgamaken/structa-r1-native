@@ -16,6 +16,8 @@ const dom = new JSDOM(fs.readFileSync(path.join(repo, 'index.html'), 'utf8'), {
   virtualConsole
 });
 const { window } = dom;
+let historyBackCalls = 0;
+window.history.back = () => { historyBackCalls += 1; };
 
 window.HTMLCanvasElement.prototype.getContext = function() {
   return {
@@ -98,10 +100,27 @@ window.StructaNative = {
 };
 
 let cameraOpened = 0;
+let cameraClosed = 0;
+let cameraCaptured = 0;
+let cameraIsOpen = false;
 window.StructaCamera = {
-  openFromGesture() { cameraOpened += 1; },
-  close() {},
-  capture() {},
+  openFromGesture() {
+    cameraOpened += 1;
+    cameraIsOpen = true;
+    window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
+  },
+  close() {
+    if (!cameraIsOpen) return;
+    cameraIsOpen = false;
+    cameraClosed += 1;
+    window.dispatchEvent(new window.CustomEvent('structa-camera-close'));
+  },
+  capture() {
+    cameraCaptured += 1;
+    if (!cameraIsOpen) return;
+    cameraIsOpen = false;
+    window.dispatchEvent(new window.CustomEvent('structa-camera-close'));
+  },
   flip() {},
   startVoiceStrip() {},
   get voiceStripActive() { return false; }
@@ -167,6 +186,58 @@ panel.transition(states.SHOW_BROWSE);
 assert.match(textContent(), /project reading|visual note/, 'SHOW renders the selected reference');
 window.dispatchEvent(new window.CustomEvent('sideClick'));
 assert.equal(cameraOpened, 1, 'SHOW side click opens the camera');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera ready event enters the camera state');
+assert.ok(window.history.state?.__structaCameraGuard, 'camera open arms one same-page Back guard');
+const captureCountBeforeCameraBack = project.captures.length;
+window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'system Back from camera returns to SHOW');
+assert.equal(cameraClosed, 1, 'system Back closes the live camera once');
+assert.equal(cameraCaptured, 0, 'system Back does not capture a frame');
+assert.equal(project.captures.length, captureCountBeforeCameraBack, 'system Back does not mutate project captures');
+window.history.replaceState({}, '', window.location.href);
+
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera can reopen after a Back cancellation');
+window.StructaCamera.close();
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'in-camera cancel returns to SHOW');
+assert.equal(historyBackCalls, 1, 'in-camera cancel removes its temporary history guard');
+const openedBeforeCleanup = cameraOpened;
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(cameraOpened, openedBeforeCleanup, 'a fast reopen waits for the prior guard cleanup');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'guard cleanup keeps the queued reopen out of the old camera session');
+window.history.replaceState({}, '', window.location.href);
+window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'the queued reopen begins only after its exact cleanup pop settles');
+assert.equal(cameraOpened, openedBeforeCleanup + 1, 'the queued reopen runs exactly once');
+assert.ok(window.history.state?.__structaCameraGuard, 'the reopened camera owns a new Back guard');
+
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(cameraCaptured, 1, 'camera Side capture still captures exactly once');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'capture completion returns to SHOW');
+assert.equal(historyBackCalls, 2, 'capture completion removes its temporary history guard');
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'a post-capture reopen also waits for cleanup');
+window.history.replaceState({}, '', window.location.href);
+window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'capture cleanup opens only the newly requested camera');
+window.StructaCamera.close();
+assert.equal(historyBackCalls, 3, 'final camera cancel starts one cleanup');
+window.history.replaceState({}, '', window.location.href);
+window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'a delayed cleanup with no reopen stays on SHOW');
+
+const readyOpenFromGesture = window.StructaCamera.openFromGesture;
+window.StructaCamera.openFromGesture = function() { cameraOpened += 1; };
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'camera acquisition stays on SHOW until preview is ready');
+assert.ok(window.history.state?.__structaCameraGuard, 'camera acquisition is guarded before preview readiness');
+panel.goHome();
+assert.equal(panel.getState(), states.HOME, 'leaving SHOW cancels a still-opening lens');
+window.history.replaceState({}, '', window.location.href);
+window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
+window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
+assert.equal(panel.getState(), states.HOME, 'a late camera-ready event cannot reopen over Home');
+window.StructaCamera.openFromGesture = readyOpenFromGesture;
 
 panel.transition(states.KNOW_BROWSE);
 assert.match(textContent(), /branches/, 'KNOW renders the project map');
@@ -277,4 +348,4 @@ assert.equal(oversized.length, 0, 'rendered SVG stays within the 282px surface')
 assert.equal(window.document.getElementById('log-drawer').style.display, 'none', 'production log drawer stays hidden');
 assert.equal(errors.length, 0, errors.map(error => error.message).join('\n'));
 
-console.log('v3 ui runtime smoke · 49 assertions passed');
+console.log('v3 ui runtime smoke · 76 assertions passed');

@@ -25,7 +25,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     return true;
   };
   window.StructaBuild = Object.freeze({
-    uiBuildId: 'ui-20260812-structa-v3.3',
+    uiBuildId: 'ui-20260812-structa-v3.4',
     expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
     assetEpoch: 'test'
   });
@@ -45,7 +45,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     handleAction: actionId => Promise.resolve({
       ok: actionId === 'diagnostics-build-check',
       result: {
-        uiBuildId: 'ui-20260812-structa-v3.3',
+        uiBuildId: 'ui-20260812-structa-v3.4',
         serverBuildSha,
         status: 'current'
       }
@@ -108,7 +108,7 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.enabled, true, url);
     assert.equal(proof.schema, 'structa.device-proof.v1');
     assert.match(proof.session_id, /^ST-\d{8}-[A-Za-z0-9]{8}$/);
-    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.3');
+    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.4');
     assert.equal(proof.step_id, 'B00');
     assert.equal(proof.events[0].type, 'session.start');
     assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 2 * 60 * 60 * 1000);
@@ -254,7 +254,7 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   assert.ok(proof.events.some(event => event.type === 'hardware.touch'));
   assert.ok(proof.events.some(event => event.type === 'hardware.motion' && event.flags.shake_detected === true));
   assert.ok(proof.events.every(event => event.session_id === proof.session_id));
-  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.3'));
+  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.4'));
   assert.ok(proof.events.every((event, index) => event.seq === index + 1));
 
   const { validateDeviceProof, decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
@@ -394,7 +394,7 @@ test('build control reports workspace as mismatch and records the safe result', 
   button.click();
   await waitFor(() => button.disabled === false);
   const status = runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent;
-  assert.match(status, /ui-20260812-structa-v3\.3 · server workspace · mismatch/);
+  assert.match(status, /ui-20260812-structa-v3\.4 · server workspace · mismatch/);
   const event = runtime.window.StructaDeviceLab.getProof().events.filter(entry => entry.type === 'proof.control').at(-1);
   assert.equal(event.flags.current, false);
   assert.equal(event.flags.ok, false);

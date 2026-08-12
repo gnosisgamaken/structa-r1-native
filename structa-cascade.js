@@ -85,6 +85,10 @@
   let voiceReturnState = STATES.HOME;
   let pttInputActive = false;
   let transitionTargetState = null;
+  let cameraHistoryGuardArmed = false;
+  let cameraHistoryGuardToken = '';
+  let cameraHistoryCleanupPending = null;
+  let pendingCameraOpenRequest = null;
   let sideClickTimer = null;
   let touchLogPressTimer = null;
   let touchLogPressPointerId = null;
@@ -188,6 +192,106 @@
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
+  }
+
+  function cameraGuardStateToken() {
+    const value = window.history?.state;
+    return value && typeof value === 'object'
+      ? String(value.__structaCameraGuard || '')
+      : '';
+  }
+
+  // Rabbit creations do not receive the system toolbar Back as a hardware
+  // event. A single same-page entry lets the WebView consume Back while the
+  // lens is active; every other close removes it immediately.
+  function armCameraHistoryGuard() {
+    if (cameraHistoryGuardArmed) return true;
+    if (cameraHistoryCleanupPending) return false;
+    try {
+      if (!window.history || typeof window.history.pushState !== 'function') {
+        throw new Error('history unavailable');
+      }
+      const existingToken = cameraGuardStateToken();
+      cameraHistoryGuardToken = existingToken || ('camera-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+      if (!existingToken) {
+        const previousState = window.history?.state;
+        const nextState = previousState && typeof previousState === 'object'
+          ? { ...previousState }
+          : {};
+        nextState.__structaCameraGuard = cameraHistoryGuardToken;
+        window.history.pushState(nextState, '', window.location.href);
+      }
+      cameraHistoryGuardArmed = true;
+      native?.traceEvent?.('camera.navigation', 'idle', 'guarded', {
+        guardId: cameraHistoryGuardToken
+      });
+      return true;
+    } catch (error) {
+      cameraHistoryGuardArmed = false;
+      cameraHistoryGuardToken = '';
+      native?.traceEvent?.('camera.navigation', 'idle', 'guard-unavailable', {
+        reason: error?.message || 'history unavailable'
+      });
+      return false;
+    }
+  }
+
+  function markCameraHistoryGuardConsumed(reason = 'back') {
+    if (!cameraHistoryGuardArmed) return false;
+    const guardId = cameraHistoryGuardToken;
+    cameraHistoryGuardArmed = false;
+    cameraHistoryGuardToken = '';
+    native?.traceEvent?.('camera.navigation', 'guarded', 'consumed', {
+      guardId: guardId,
+      reason: reason
+    });
+    return true;
+  }
+
+  function disarmCameraHistoryGuard(reason = 'close') {
+    if (!cameraHistoryGuardArmed) return false;
+    const guardId = cameraHistoryGuardToken;
+    const ownsCurrentEntry = cameraGuardStateToken() === guardId;
+    cameraHistoryGuardArmed = false;
+    cameraHistoryGuardToken = '';
+    if (ownsCurrentEntry && typeof window.history?.back === 'function') {
+      cameraHistoryCleanupPending = {
+        guardId: guardId,
+        reason: reason,
+        requestedAt: Date.now()
+      };
+      try {
+        window.history.back();
+      } catch (_) {
+        cameraHistoryCleanupPending = null;
+      }
+    }
+    native?.traceEvent?.('camera.navigation', 'guarded', 'disarmed', {
+      guardId: guardId,
+      reason: reason,
+      historyBack: ownsCurrentEntry
+    });
+    return true;
+  }
+
+  function settleCameraHistoryCleanup() {
+    if (!cameraHistoryCleanupPending) return false;
+    const cleanup = cameraHistoryCleanupPending;
+    cameraHistoryCleanupPending = null;
+    native?.traceEvent?.('camera.navigation', 'cleanup', 'settled', {
+      guardId: cleanup.guardId,
+      reason: cleanup.reason,
+      durationMs: Math.max(0, Date.now() - Number(cleanup.requestedAt || Date.now()))
+    });
+    const request = pendingCameraOpenRequest;
+    pendingCameraOpenRequest = null;
+    if (request) {
+      onNextFrame(function() {
+        if (cameraHistoryCleanupPending || currentState !== STATES.SHOW_BROWSE) return;
+        openCameraFromShow(request.source, request.options);
+      });
+    }
+    return true;
   }
 
   function recordingDot(x, y, r, parent = svg, fill = '#b51212') {
@@ -903,6 +1007,8 @@
   }
 
   function fullUIRuntimeReset(options = {}) {
+    pendingCameraOpenRequest = null;
+    disarmCameraHistoryGuard('runtime-reset');
     clearPendingSideClick();
     clearTouchLogPress();
     clearTutorialSkipTouch();
@@ -1720,6 +1826,12 @@
   }
 
   function openCameraFromShow(source = 'touch', options = {}) {
+    if (cameraHistoryCleanupPending) {
+      pendingCameraOpenRequest = { source: source, options: { ...options } };
+      stateData.showStatus = 'resetting lens';
+      scheduleRender();
+      return true;
+    }
     stateData.showStatus = 'opening lens';
     stateData.pendingShowNarration = false;
     if (currentState !== STATES.SHOW_BROWSE) {
@@ -1728,6 +1840,7 @@
       });
     }
     cameraReturnState = STATES.SHOW_BROWSE;
+    armCameraHistoryGuard();
     window.StructaCamera?.openFromGesture?.(options.facingMode || 'environment');
     scheduleRender();
     return true;
@@ -5434,9 +5547,19 @@
     if (stateData.flushRequestSource) {
       clearFlushRequest();
     }
+    pendingCameraOpenRequest = null;
+    if (cameraHistoryGuardArmed || cameraHistoryCleanupPending) {
+      cameraReturnState = STATES.HOME;
+      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
+      disarmCameraHistoryGuard('navigation');
+      if (currentState !== STATES.HOME && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
+        transition(STATES.HOME);
+      }
+      return;
+    }
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       cameraReturnState = STATES.HOME;
-      window.StructaCamera?.close?.();
+      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
       return;
     }
     transition(STATES.HOME);
@@ -5445,6 +5568,21 @@
   function handleNativeBack(event) {
     clearPendingSideClick();
     pttInputActive = false;
+    if (event?.type === 'popstate' && cameraHistoryCleanupPending) {
+      if (event) event.preventDefault?.();
+      settleCameraHistoryCleanup();
+      return;
+    }
+    if (cameraHistoryGuardArmed && (event?.type === 'popstate' || event?.type === 'backbutton')) {
+      if (event) event.preventDefault?.();
+      if (event?.type === 'popstate') markCameraHistoryGuardConsumed('system-back');
+      cameraReturnState = STATES.SHOW_BROWSE;
+      window.StructaCamera?.close?.({ reason: 'back', teardown: true });
+      if (currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE && currentState !== STATES.SHOW_BROWSE) {
+        transition(STATES.SHOW_BROWSE, { showStatus: 'camera cancelled' });
+      }
+      return;
+    }
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       if (event) event.preventDefault?.();
       native?.updateUIState?.({ flush_undo_available_until: 0 });
@@ -5468,6 +5606,13 @@
         stateData.uncertaintyCorrectionId = '';
         if (window.StructaVoice?.listening) window.StructaVoice.stopListening(false);
         else window.StructaVoice?.close?.();
+        return;
+
+      case STATES.CAMERA_OPEN:
+      case STATES.CAMERA_CAPTURE:
+        if (event) event.preventDefault?.();
+        cameraReturnState = STATES.SHOW_BROWSE;
+        window.StructaCamera?.close?.({ reason: 'back', teardown: true });
         return;
 
       case STATES.SHOW_BROWSE:
@@ -5622,12 +5767,14 @@
   // Camera events — transition state machine
   window.addEventListener('structa-camera-open', () => {
     if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
+      armCameraHistoryGuard();
       transition(STATES.CAMERA_OPEN);
     }
     stateData.pendingShowNarration = false;
   });
 
   window.addEventListener('structa-camera-close', () => {
+    disarmCameraHistoryGuard('camera-close');
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       const returnState = cameraReturnState;
       cameraReturnState = STATES.HOME;
@@ -5692,6 +5839,7 @@
   });
 
   window.addEventListener('structa-camera-denied', function(event) {
+    disarmCameraHistoryGuard('camera-denied');
     if (!onboardingActive() || getOnboardingStep() !== 4) return;
     native?.updateUIState?.({ tutorial_step4_camera_denied: true });
     traceTutorial('tutorial.step', 'camera_denied', '4', { step: 4 });

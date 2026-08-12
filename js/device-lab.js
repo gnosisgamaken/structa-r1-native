@@ -12,6 +12,8 @@
 
   var SCHEMA = 'structa.device-proof.v1';
   var STORAGE_KEY = 'structa.device-proof.v1.active';
+  var EMAIL_PROGRESS_KEY = 'structa.device-proof.v1.email-progress';
+  var EMAIL_PROGRESS_SCHEMA = 'structa.device-proof-email-progress.v1';
   // A full B00-B07 owner lab is intentionally deliberate and may span most of
   // a working day on physical hardware. Keep one sanitized proof alive long
   // enough to complete that run while still enforcing a finite expiry.
@@ -92,6 +94,7 @@
   var controlInstalled = false;
   var lastMotionAt = 0;
   var resumeAbandonedDelta = 0;
+  var terminalRefreshPending = false;
   var provider = {
     active: [],
     outbound: 0,
@@ -674,12 +677,12 @@
     if (!proof) return false;
     try {
       storageAvailable = true;
-      refreshSummary();
+      if (proof.status === 'running') refreshSummary();
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(proof));
       return true;
     } catch (_) {
       storageAvailable = false;
-      refreshSummary();
+      if (proof.status === 'running') refreshSummary();
       return false;
     }
   }
@@ -732,6 +735,7 @@
       if (now() < startedMs) return null;
       if (now() > expiresMs || now() - startedMs > SESSION_TTL_MS) {
         parsed = terminalizeExpiredProof(parsed);
+        terminalRefreshPending = true;
       } else if (parsed.build.ui_build_id !== buildId()) {
         return null;
       }
@@ -1205,11 +1209,14 @@
       try {
         if (proof && proof.status === 'running') finish();
         var result = await exportProof();
-        if (result.email && result.email.ok) {
-          updateStatus('proof emailed');
-          send.textContent = 'send again';
+        if (result.email && result.email.ok && result.email.outcome === 'complete') {
+          updateStatus('all ' + result.email.total + ' requested · check inbox');
+          send.textContent = 'all requested';
+        } else if (result.email && result.email.ok && result.email.outcome === 'requested') {
+          updateStatus('email requested ' + result.email.requested_total + '/' + result.email.total + ' · check inbox');
+          send.textContent = result.email.more ? 'send next part' : 'all requested';
         } else if (result.local && result.local.ok) {
-          updateStatus('email unavailable · proof retained');
+          updateStatus(emailFailureStatus(result.email));
           send.textContent = 'retry send';
         } else {
           updateStatus('proof export failed');
@@ -1381,6 +1388,13 @@
         abandonedRequests: resumeAbandonedDelta
       });
     }
+    if (terminalRefreshPending && proof.status !== 'running') {
+      refreshSummary();
+      terminalRefreshPending = false;
+    }
+    if (opts.reset === true) {
+      try { window.localStorage.removeItem(EMAIL_PROGRESS_KEY); } catch (_) {}
+    }
     installListeners();
     installBridgeWrappers();
     installControl();
@@ -1442,13 +1456,14 @@
     }, true);
     proof.status = passed ? 'passed' : (failed ? 'failed' : 'complete');
     proof.finished_at = new Date(now()).toISOString();
+    refreshSummary();
     persist();
     return getProof();
   }
 
   function getProof() {
     if (!proof) return null;
-    refreshSummary();
+    if (proof.status === 'running') refreshSummary();
     return clone(proof);
   }
 
@@ -1572,74 +1587,199 @@
     return parts;
   }
 
-  async function createProofTransport(value) {
-    var originalBytes = utf8Bytes(JSON.stringify(value));
-    var checksum = await checksumBytes(originalBytes);
-    var compressed = await gzipBytes(originalBytes);
-    var transportBytes = compressed || originalBytes;
+  async function createProofTransport(value, originalBytes, checksum) {
+    var proofBytes = originalBytes || utf8Bytes(JSON.stringify(value));
+    var proofChecksum = checksum || await checksumBytes(proofBytes);
+    var compressed = await gzipBytes(proofBytes);
+    var transportBytes = compressed || proofBytes;
     var encoding = compressed ? 'gzip+base64' : 'base64';
     var meta = {
       sessionId: value.session_id,
       encoding: encoding,
-      checksum: checksum
+      checksum: proofChecksum
     };
     return {
       session_id: value.session_id,
       encoding: encoding,
-      checksum: checksum,
+      checksum: proofChecksum,
       parts: splitTransport(meta, bytesToBase64(transportBytes))
+    };
+  }
+
+  function validEmailProgress(value, sessionId, checksum) {
+    if (!value || value.schema !== EMAIL_PROGRESS_SCHEMA) return false;
+    if (value.session_id !== sessionId || value.checksum !== checksum) return false;
+    if (value.encoding !== 'gzip+base64' && value.encoding !== 'base64') return false;
+    if (!Array.isArray(value.parts) || !value.parts.length) return false;
+    var total = value.parts.length;
+    if (total > MAX_TRANSPORT_PARTS) return false;
+    if (!Number.isInteger(value.next_part) || value.next_part < 1 || value.next_part > total + 1) return false;
+    if (!Number.isInteger(value.requested_parts) || value.requested_parts !== value.next_part - 1) return false;
+    return value.parts.every(function(part, index) {
+      return part && part.part === index + 1 && part.total === total
+        && typeof part.body === 'string' && part.body.length <= MAX_TRANSPORT_BODY
+        && part.body.indexOf('session_id=' + sessionId + '\n') !== -1
+        && part.body.indexOf('part=' + (index + 1) + '\n') !== -1
+        && part.body.indexOf('total=' + total + '\n') !== -1
+        && part.body.indexOf('encoding=' + value.encoding + '\n') !== -1
+        && part.body.indexOf('checksum=' + checksum + '\n') !== -1;
+    });
+  }
+
+  function readEmailProgress(sessionId, checksum) {
+    try {
+      var parsed = JSON.parse(window.localStorage.getItem(EMAIL_PROGRESS_KEY) || 'null');
+      return validEmailProgress(parsed, sessionId, checksum) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeEmailProgress(value) {
+    try {
+      window.localStorage.setItem(EMAIL_PROGRESS_KEY, JSON.stringify(value));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function newEmailProgress(transport) {
+    return {
+      schema: EMAIL_PROGRESS_SCHEMA,
+      session_id: transport.session_id,
+      checksum: transport.checksum,
+      encoding: transport.encoding,
+      parts: transport.parts,
+      next_part: 1,
+      requested_parts: 0,
+      updated_at: new Date(now()).toISOString()
     };
   }
 
   async function sendProofTransport(value) {
     if (!window.StructaLLM || typeof window.StructaLLM.emailText !== 'function') {
-      return { ok: false, attempted: false, mode: 'unavailable', sent: 0, total: 0 };
+      return { ok: false, attempted: false, mode: 'unavailable', outcome: 'api-unavailable', requested: 0, requested_total: 0, total: 0 };
     }
     var transport;
+    var progress;
     try {
-      transport = await createProofTransport(value);
+      var proofBytes = utf8Bytes(JSON.stringify(value));
+      var proofChecksum = await checksumBytes(proofBytes);
+      progress = readEmailProgress(value.session_id, proofChecksum);
+      if (!progress) transport = await createProofTransport(value, proofBytes, proofChecksum);
     } catch (error) {
       return {
         ok: false,
-        attempted: true,
-        mode: safeToken(error && error.message, 48) || 'transport-failed',
-        sent: 0,
+        attempted: false,
+        mode: 'transport',
+        outcome: 'transport-failed',
+        requested: 0,
+        requested_total: 0,
         total: 0
       };
     }
-    var receipts = [];
-    for (var index = 0; index < transport.parts.length; index += 1) {
-      var part = transport.parts[index];
-      var response;
-      try {
-        response = await promiseWithTimeout(
-          window.StructaLLM.emailText(
-            'STRUCTA proof ' + value.session_id + ' [' + part.part + '/' + part.total + ']',
-            part.body
-          ),
-          EMAIL_PART_TIMEOUT_MS
-        );
-      } catch (error) {
-        response = { ok: false, mode: error && error.message === 'timeout' ? 'timeout' : 'failed' };
+    if (!progress) {
+      progress = newEmailProgress(transport);
+      if (!writeEmailProgress(progress)) {
+        return { ok: false, attempted: false, mode: 'progress', outcome: 'progress-unavailable', requested: 0, requested_total: 0, total: transport.parts.length };
       }
-      var receipt = {
-        part: part.part,
-        ok: !!(response && response.ok),
-        mode: safeToken(response && response.mode, 48) || (response && response.ok ? 'sent' : 'failed')
-      };
-      receipts.push(receipt);
-      if (!receipt.ok) break;
     }
+    var total = progress.parts.length;
+    if (progress.next_part > total) {
+      return {
+        ok: true,
+        attempted: false,
+        requested: 0,
+        confirmed: false,
+        mode: 'bridge-requested',
+        outcome: 'complete',
+        encoding: progress.encoding,
+        checksum: progress.checksum,
+        part: total,
+        next: null,
+        more: false,
+        requested_total: total,
+        total: total
+      };
+    }
+    var part = progress.parts[progress.next_part - 1];
+    var response;
+    try {
+      response = await promiseWithTimeout(
+        window.StructaLLM.emailText(
+          'STRUCTA proof ' + value.session_id + ' [' + part.part + '/' + part.total + ']',
+          part.body
+        ),
+        EMAIL_PART_TIMEOUT_MS
+      );
+    } catch (error) {
+      response = {
+        ok: false,
+        mode: error && error.message === 'timeout' ? 'timeout' : 'failed',
+        code: error && error.message === 'timeout' ? 'email-timeout' : 'email-call-error'
+      };
+    }
+    var requested = !!(response && response.ok && response.requested !== false);
+    if (requested) {
+      progress.requested_parts = part.part;
+      progress.next_part = part.part + 1;
+      progress.last_outcome = 'requested';
+      progress.last_mode = safeToken(response && response.mode, 48) || 'requested';
+      progress.updated_at = new Date(now()).toISOString();
+      if (!writeEmailProgress(progress)) {
+        return { ok: false, attempted: true, mode: 'progress', outcome: 'progress-unavailable', requested: 0, requested_total: part.part - 1, total: total };
+      }
+    } else {
+      progress.last_outcome = classifyEmailResponse(response);
+      progress.last_mode = safeToken(response && response.mode, 48) || 'failed';
+      progress.updated_at = new Date(now()).toISOString();
+      writeEmailProgress(progress);
+    }
+    var complete = requested && progress.next_part > total;
     return {
-      ok: receipts.length === transport.parts.length && receipts.every(function(entry) { return entry.ok; }),
+      ok: requested,
       attempted: true,
-      mode: 'transport',
-      encoding: transport.encoding,
-      checksum: transport.checksum,
-      sent: receipts.filter(function(entry) { return entry.ok; }).length,
-      total: transport.parts.length,
-      receipts: receipts
+      requested: requested ? 1 : 0,
+      confirmed: false,
+      mode: safeToken(response && response.mode, 48) || (requested ? 'requested' : 'failed'),
+      outcome: requested ? (complete ? 'complete' : 'requested') : classifyEmailResponse(response),
+      encoding: progress.encoding,
+      checksum: progress.checksum,
+      part: part.part,
+      next: complete ? null : progress.next_part,
+      more: !complete,
+      requested_total: progress.requested_parts,
+      total: total
     };
+  }
+
+  function classifyEmailResponse(response) {
+    if (response && response.ok && response.requested !== false) return 'requested';
+    var code = (safeToken(response && response.code, 64) || '').toLowerCase();
+    var mode = (safeToken(response && response.mode, 64) || '').toLowerCase();
+    if (code === 'email-timeout' || mode === 'timeout') return 'timeout';
+    if (code === 'email-unavailable' || mode === 'unavailable' || mode === 'none' || mode === 'api-unavailable') return 'api-unavailable';
+    if (code === 'email-native-rejected' || mode === 'rejected' || mode === 'native-rejected') return 'rejected';
+    return 'failed';
+  }
+
+  function emailFailureStatus(email) {
+    var result = email && typeof email === 'object' ? email : {};
+    var outcome = safeToken(result.outcome, 48) || classifyEmailResponse(result);
+    var labels = {
+      'api-unavailable': 'email API unavailable',
+      timeout: 'email timed out',
+      rejected: 'email rejected',
+      'transport-failed': 'proof packaging failed',
+      'progress-unavailable': 'email progress unavailable',
+      failed: 'email failed'
+    };
+    var label = labels[outcome] || 'email failed';
+    var sent = Math.max(0, Number(result.requested_total || 0));
+    var total = Math.max(0, Number(result.total || 0));
+    if (sent > 0 && total > sent) label += ' ' + sent + '/' + total;
+    return label + ' · proof retained';
   }
 
   function promiseWithTimeout(value, timeoutMs) {
@@ -1666,7 +1806,6 @@
 
   function retainLocally(value) {
     try {
-      refreshSummary();
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
       storageAvailable = true;
       return {
@@ -1708,11 +1847,6 @@
   async function exportProof(options) {
     var opts = options && typeof options === 'object' ? options : {};
     if (!proof) start();
-    record('proof.export', {
-      emailRequested: opts.email !== false,
-      emailDigestRequested: opts.emailDigest === true,
-      journalFallbackRequested: opts.journalFallback === true
-    }, proof.status !== 'running');
     var snapshot = getProof();
     // The R1 WebView does not reliably honor the HTML `download` attribute.
     // Navigating it to a generated blob URL replaces the creation with a black
@@ -1721,8 +1855,8 @@
     // transport without changing the current document.
     var local = retainLocally(snapshot);
     var body = digest(snapshot);
-    var email = { ok: false, attempted: false, mode: 'unavailable' };
-    if (opts.email !== false && window.StructaLLM && typeof window.StructaLLM.emailText === 'function') {
+    var email = { ok: false, attempted: false, mode: 'not-requested', outcome: 'not-requested', requested: 0, requested_total: 0, total: 0 };
+    if (opts.email !== false) {
       email = await sendProofTransport(snapshot);
     }
     var digestEmail = { ok: false, attempted: false, mode: 'not-requested' };
@@ -1740,7 +1874,6 @@
     }
     var journal = { ok: false, attempted: false, mode: 'not-requested' };
     if (!email.ok && !digestEmail.ok && opts.journalFallback === true) journal = journalFallback(body);
-    persist();
     return {
       ok: !!(local.ok || email.ok || digestEmail.ok || journal.ok),
       schema: SCHEMA,

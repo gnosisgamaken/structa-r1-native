@@ -111,7 +111,7 @@ function createRuntime(options = {}) {
         this.detail = init.detail;
       }
     },
-    PluginMessageHandler: {
+    PluginMessageHandler: options.bridge === false ? undefined : {
       postMessage(payload) { posted.push(JSON.parse(payload)); }
     },
     setTimeout,
@@ -235,19 +235,38 @@ test('schema-valid insufficient remains transport success and is explicit in pro
   assert.equal(parsedTrace.context.uncertaintyCount, 1);
 });
 
-test('native proof email uses the R1 content-string contract without journaling', async () => {
-  const runtime = createRuntime();
+test('proof email requests use the direct R1 bridge without an injected window.r1 facade', async () => {
+  const runtime = createRuntime({ nativeEmail: false });
   const result = await runtime.window.StructaLLM.emailText(
     'STRUCTA proof ST-20260812-test [1/2]',
     'STRUCTA_DEVICE_PROOF_TRANSPORT_V1\nPART 1/2'
   );
 
-  assert.equal(result.ok, true);
-  assert.equal(runtime.emailCalls.length, 1);
-  assert.equal(
-    runtime.emailCalls[0].content,
-    'STRUCTA proof ST-20260812-test [1/2]\n\nSTRUCTA_DEVICE_PROOF_TRANSPORT_V1\nPART 1/2'
+  assert.deepEqual(
+    { ok: result.ok, requested: result.requested, confirmed: result.confirmed, mode: result.mode },
+    { ok: true, requested: true, confirmed: false, mode: 'bridge-requested' }
   );
-  assert.equal(runtime.emailCalls[0].options, undefined);
-  assert.equal(runtime.posted.length, 0, 'email must not fall through to the generic bridge or journal');
+  assert.equal(runtime.emailCalls.length, 0);
+  assert.equal(runtime.posted.length, 1);
+  assert.equal(
+    runtime.posted[0].message,
+    'Please email this to the user: STRUCTA proof ST-20260812-test [1/2]\n\nSTRUCTA_DEVICE_PROOF_TRANSPORT_V1\nPART 1/2'
+  );
+  assert.equal(runtime.posted[0].useLLM, true);
+  assert.equal(runtime.posted[0].useSerpAPI, false);
+  assert.equal(runtime.posted[0].wantsR1Response, false);
+  assert.equal(runtime.posted[0].wantsJournalEntry, false);
+});
+
+test('proof email retains the optional native facade fallback when no direct bridge exists', async () => {
+  const runtime = createRuntime({ bridge: false });
+  const result = await runtime.window.StructaLLM.emailText('STRUCTA proof', 'PART');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requested, true);
+  assert.equal(result.confirmed, false);
+  assert.equal(result.mode, 'native-requested');
+  assert.equal(runtime.emailCalls.length, 1);
+  assert.equal(runtime.emailCalls[0].content, 'STRUCTA proof\n\nPART');
+  assert.equal(runtime.posted.length, 0);
 });

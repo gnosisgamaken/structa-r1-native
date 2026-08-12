@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.8`
+- UI build: `ui-20260812-structa-v3.9`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
@@ -14,7 +14,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 - rabbitOS version:
 - Deployed server SHA:
 
-Fresh v3.8 proof sessions remain active for twelve hours so one careful B00–B07 owner run can finish without silently rolling into a replacement session. An older two-hour proof remains recoverable and exportable, but it cannot pass the release validator if its recorded finish occurred after its own `expires_at`.
+Fresh v3.9 proof sessions remain active for twelve hours so one careful B00–B07 owner run can finish without silently rolling into a replacement session. An older proof remains recoverable and exportable, but it cannot pass the release validator if its recorded finish occurred after its own `expires_at`.
 
 ## Twenty-capture matrix
 

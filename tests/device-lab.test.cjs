@@ -27,7 +27,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     return true;
   };
   window.StructaBuild = Object.freeze({
-    uiBuildId: 'ui-20260812-structa-v3.8',
+    uiBuildId: options.uiBuildId || 'ui-20260812-structa-v3.9',
     expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
     assetEpoch: 'test'
   });
@@ -47,7 +47,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     handleAction: actionId => Promise.resolve({
       ok: actionId === 'diagnostics-build-check',
       result: {
-        uiBuildId: 'ui-20260812-structa-v3.8',
+        uiBuildId: 'ui-20260812-structa-v3.9',
         serverBuildSha,
         status: 'current'
       }
@@ -67,6 +67,9 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     downloadClicks.push({ href: this.href, download: this.download });
   };
   if (seed) window.localStorage.setItem('structa.device-proof.v1.active', seed);
+  if (options.emailProgress !== undefined) {
+    window.localStorage.setItem('structa.device-proof.v1.email-progress', options.emailProgress);
+  }
   window.eval(source);
   return { dom, window, posts, inbound, emails, downloadClicks, originalPost };
 }
@@ -99,6 +102,23 @@ async function waitFor(predicate, timeoutMs = 1000) {
   }
 }
 
+async function requestRemainingProofParts(runtime, result) {
+  let current = result || await runtime.window.StructaDeviceLab.exportProof();
+  let guard = 0;
+  while (current.email.more) {
+    assert.ok(guard++ < 48, 'incremental proof transport must terminate');
+    const before = runtime.emails.length;
+    current = await runtime.window.StructaDeviceLab.exportProof();
+    assert.equal(runtime.emails.length, before + 1, 'one explicit export call requests exactly one part');
+  }
+  return current;
+}
+
+function emailProgress(runtime) {
+  const raw = runtime.window.localStorage.getItem('structa.device-proof.v1.email-progress');
+  return raw ? JSON.parse(raw) : null;
+}
+
 test('device lab is inert outside explicit lab routes', () => {
   const runtime = boot();
   assert.equal(runtime.window.StructaDeviceLab.enabled, false);
@@ -122,7 +142,7 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.enabled, true, url);
     assert.equal(proof.schema, 'structa.device-proof.v1');
     assert.match(proof.session_id, /^ST-\d{8}-[A-Za-z0-9]{8}$/);
-    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.8');
+    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.9');
     assert.equal(proof.step_id, 'B00');
     assert.equal(proof.events[0].type, 'session.start');
     assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 12 * 60 * 60 * 1000);
@@ -225,12 +245,15 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   lab.setStep('B07');
 
   lab.finish(true);
-  const exported = await lab.exportProof();
+  let exported = await lab.exportProof();
   assert.equal(exported.local.ok, true);
   assert.equal(exported.email.ok, true);
   assert.equal(exported.journal.attempted, false);
+  assert.equal(runtime.emails.length, 1, 'first explicit export requests only the first part');
+  exported = await requestRemainingProofParts(runtime, exported);
   assert.equal(runtime.emails.length, exported.email.total);
-  assert.equal(exported.email.sent, exported.email.total);
+  assert.equal(exported.email.requested_total, exported.email.total);
+  assert.equal(exported.email.outcome, 'complete');
   assert.ok(['gzip+base64', 'base64'].includes(exported.email.encoding));
   assert.ok(runtime.emails.every(email => email.body.length <= 2700));
   assert.ok(runtime.emails.every(email => email.body.startsWith('STRUCTA_DEVICE_PROOF_TRANSPORT_V1\n')));
@@ -275,7 +298,7 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   assert.ok(proof.events.some(event => event.type === 'hardware.touch'));
   assert.ok(proof.events.some(event => event.type === 'hardware.motion' && event.flags.shake_detected === true));
   assert.ok(proof.events.every(event => event.session_id === proof.session_id));
-  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.8'));
+  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.9'));
   assert.ok(proof.events.every((event, index) => event.seq === index + 1));
 
   const { validateDeviceProof, decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
@@ -338,7 +361,10 @@ test('lab panel can finish, email, and reset a proof entirely on-device', async 
   assert.ok(runtime.emails.length >= 1);
   assert.ok(runtime.emails.every(email => email.body.length <= 2700));
   assert.equal(runtime.downloadClicks.length, 0, 'finish + send must not navigate the R1 WebView to a blob URL');
-  assert.equal(runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'proof emailed');
+  assert.match(
+    runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent,
+    /^(?:email requested 1\/\d+|all \d+ requested) · check inbox$/
+  );
 
   const reset = runtime.window.document.getElementById('structa-device-proof-reset');
   reset.click();
@@ -449,11 +475,12 @@ test('failed email retains the completed proof without navigation and can retry 
   assert.equal(retained.status, 'complete');
   assert.equal(first.downloadClicks.length, 0);
   assert.equal(first.posts.some(payload => payload.wantsJournalEntry === true), false);
-  assert.equal(first.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'email unavailable · proof retained');
+  assert.equal(first.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'email API unavailable · proof retained');
   assert.equal(first.window.document.getElementById('structa-device-proof-send').textContent, 'retry send');
+  const storedProgress = first.window.localStorage.getItem('structa.device-proof.v1.email-progress');
   first.dom.window.close();
 
-  const second = boot('https://structa.test/?lab=1', stored);
+  const second = boot('https://structa.test/?lab=1', stored, { emailProgress: storedProgress });
   assert.equal(second.window.StructaDeviceLab.getProof().session_id, sessionId);
   assert.equal(second.window.StructaDeviceLab.getProof().status, 'complete');
   second.window.document.getElementById('structa-device-proof-control').click();
@@ -464,8 +491,69 @@ test('failed email retains the completed proof without navigation and can retry 
   assert.equal(second.downloadClicks.length, 0);
   assert.equal(second.posts.some(payload => payload.wantsJournalEntry === true), false);
   assert.equal(second.window.StructaDeviceLab.getProof().session_id, sessionId);
-  assert.equal(second.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'proof emailed');
+  assert.match(
+    second.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent,
+    /^(?:email requested 1\/\d+|all \d+ requested) · check inbox$/
+  );
   second.dom.window.close();
+});
+
+test('proof email failures expose safe exact outcomes in the panel and retained proof', async () => {
+  const cases = [
+    {
+      expectedOutcome: 'api-unavailable',
+      expectedStatus: 'email API unavailable · proof retained',
+      prepare(runtime) {
+        delete runtime.window.StructaLLM.emailText;
+      }
+    },
+    {
+      expectedOutcome: 'rejected',
+      expectedStatus: 'email rejected · proof retained',
+      options: {
+        emailHandler: () => ({ ok: false, mode: 'native', code: 'email-native-rejected' })
+      }
+    },
+    {
+      expectedOutcome: 'timeout',
+      expectedStatus: 'email timed out · proof retained',
+      options: {
+        emailHandler: () => new Promise(() => {})
+      },
+      prepare(runtime) {
+        const nativeSetTimeout = runtime.window.setTimeout.bind(runtime.window);
+        runtime.window.setTimeout = (callback, delay, ...args) => nativeSetTimeout(
+          callback,
+          delay === 8000 ? 1 : delay,
+          ...args
+        );
+      }
+    }
+  ];
+
+  for (const testCase of cases) {
+    const runtime = boot('https://structa.test/?lab=1', '', testCase.options || {});
+    if (testCase.prepare) testCase.prepare(runtime);
+    const frozen = JSON.stringify(runtime.window.StructaDeviceLab.finish());
+    const frozenStorage = runtime.window.localStorage.getItem('structa.device-proof.v1.active');
+    runtime.window.document.getElementById('structa-device-proof-control').click();
+    runtime.window.document.getElementById('structa-device-proof-send').click();
+    await waitFor(() => runtime.window.document.getElementById('structa-device-proof-send').disabled === false);
+
+    assert.equal(
+      runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent,
+      testCase.expectedStatus
+    );
+    assert.equal(JSON.stringify(runtime.window.StructaDeviceLab.getProof()), frozen, 'delivery failure must not mutate a finished proof');
+    assert.equal(runtime.window.localStorage.getItem('structa.device-proof.v1.active'), frozenStorage);
+    assert.equal(runtime.window.StructaDeviceLab.getProof().events.some(event => event.type.startsWith('proof.export')), false);
+    const progress = emailProgress(runtime);
+    if (progress) {
+      assert.equal(progress.next_part, 1, testCase.expectedOutcome);
+      assert.equal(progress.requested_parts, 0, testCase.expectedOutcome);
+    }
+    runtime.dom.window.close();
+  }
 });
 
 test('mismatched completion cannot remove an active request and reload abandonment fails settlement', () => {
@@ -513,7 +601,7 @@ test('build control reports workspace as mismatch and records the safe result', 
   button.click();
   await waitFor(() => button.disabled === false);
   const status = runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent;
-  assert.match(status, /ui-20260812-structa-v3\.8 · server workspace · mismatch/);
+  assert.match(status, /ui-20260812-structa-v3\.9 · server workspace · mismatch/);
   const event = runtime.window.StructaDeviceLab.getProof().events.filter(entry => entry.type === 'proof.control').at(-1);
   assert.equal(event.flags.current, false);
   assert.equal(event.flags.ok, false);
@@ -610,8 +698,10 @@ test('vision traces retain only allowlisted categorical wire facts', async () =>
 test('base64 transport reassembles with checksum and digest email is explicit only', async () => {
   const runtime = boot('https://structa.test/?lab=1', '', { compression: false });
   runtime.window.StructaDeviceLab.finish();
-  const result = await runtime.window.StructaDeviceLab.exportProof();
+  let result = await runtime.window.StructaDeviceLab.exportProof();
   assert.equal(result.email.encoding, 'base64');
+  assert.equal(runtime.emails.length, 1);
+  result = await requestRemainingProofParts(runtime, result);
   assert.equal(runtime.emails.length, result.email.total);
   const { decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
   const decoded = decodeDeviceProofTransport(runtime.emails.map(email => email.body));
@@ -630,12 +720,148 @@ test('base64 transport reassembles with checksum and digest email is explicit on
     emailHandler: () => ({ ok: false, mode: 'unavailable' })
   });
   const failedResult = await failed.window.StructaDeviceLab.exportProof({ emailDigest: true });
-  assert.equal(failedResult.email.sent, 0);
+  assert.equal(failedResult.email.requested, 0);
   assert.equal(failedResult.digest_email.attempted, true);
   assert.equal(failed.emails.length, 2, 'one transport attempt plus one explicitly requested digest; no retry');
   assert.match(failed.emails[0].body, /^STRUCTA_DEVICE_PROOF_TRANSPORT_V1/);
   assert.match(failed.emails[1].body, /^STRUCTA DEVICE PROOF/);
   failed.dom.window.close();
+});
+
+test('finished proof stays byte-identical while incremental email resumes across relaunch and build changes', async () => {
+  const first = boot('https://structa.test/?lab=1', '', { compression: false });
+  const frozenProof = first.window.StructaDeviceLab.finish();
+  const frozenJson = JSON.stringify(frozenProof);
+  const frozenStorage = first.window.localStorage.getItem('structa.device-proof.v1.active');
+
+  const firstResult = await first.window.StructaDeviceLab.exportProof();
+  assert.equal(first.emails.length, 1);
+  assert.equal(firstResult.email.requested, 1);
+  assert.equal(firstResult.email.part, 1);
+  assert.ok(firstResult.email.total > 1, 'uncompressed proof fixture must exercise multipart resume');
+  assert.equal(JSON.stringify(first.window.StructaDeviceLab.getProof()), frozenJson);
+  assert.equal(first.window.localStorage.getItem('structa.device-proof.v1.active'), frozenStorage);
+  const frozenProgress = first.window.localStorage.getItem('structa.device-proof.v1.email-progress');
+  const firstBody = first.emails[0].body;
+  const checksum = firstResult.email.checksum;
+  first.dom.window.close();
+
+  const second = boot('https://structa.test/?lab=1', frozenStorage, {
+    compression: true,
+    emailProgress: frozenProgress,
+    uiBuildId: 'ui-20260813-structa-v4.0'
+  });
+  assert.equal(JSON.stringify(second.window.StructaDeviceLab.getProof()), frozenJson, 'a newer UI build must not rederive a completed proof');
+  assert.equal(second.window.localStorage.getItem('structa.device-proof.v1.active'), frozenStorage);
+
+  let resumed = await second.window.StructaDeviceLab.exportProof();
+  assert.equal(second.emails.length, 1);
+  assert.equal(resumed.email.part, 2);
+  assert.equal(resumed.email.checksum, checksum);
+  assert.equal(resumed.email.encoding, 'base64', 'frozen transport framing survives newly available gzip support');
+  resumed = await requestRemainingProofParts(second, resumed);
+  assert.equal(resumed.email.outcome, 'complete');
+  assert.equal(resumed.email.requested_total, resumed.email.total);
+  assert.equal(JSON.stringify(second.window.StructaDeviceLab.getProof()), frozenJson);
+  assert.equal(second.window.localStorage.getItem('structa.device-proof.v1.active'), frozenStorage);
+
+  const requestsBeforeCompleteTap = second.emails.length;
+  const complete = await second.window.StructaDeviceLab.exportProof();
+  assert.equal(complete.email.outcome, 'complete');
+  assert.equal(complete.email.attempted, false);
+  assert.equal(complete.email.requested, 0);
+  assert.equal(second.emails.length, requestsBeforeCompleteTap, 'completed progress cannot request another email');
+
+  const { decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
+  const transported = decodeDeviceProofTransport([firstBody, ...second.emails.map(email => email.body)]);
+  assert.equal(JSON.stringify(transported), frozenJson);
+  second.dom.window.close();
+});
+
+test('failed incremental request retries the exact same part without advancing progress or proof', async () => {
+  let attempt = 0;
+  const runtime = boot('https://structa.test/?lab=1', '', {
+    compression: false,
+    emailHandler: () => (++attempt === 1
+      ? { ok: false, requested: false, mode: 'unavailable' }
+      : { ok: true, requested: true, confirmed: false, mode: 'bridge-requested' })
+  });
+  const frozen = JSON.stringify(runtime.window.StructaDeviceLab.finish());
+  const frozenStorage = runtime.window.localStorage.getItem('structa.device-proof.v1.active');
+
+  const failed = await runtime.window.StructaDeviceLab.exportProof();
+  assert.equal(failed.email.outcome, 'api-unavailable');
+  assert.equal(failed.email.requested, 0);
+  assert.equal(failed.email.part, 1);
+  let progress = emailProgress(runtime);
+  assert.equal(progress.next_part, 1);
+  assert.equal(progress.requested_parts, 0);
+  const failedBody = runtime.emails[0].body;
+
+  const retried = await runtime.window.StructaDeviceLab.exportProof();
+  assert.equal(runtime.emails.length, 2, 'each explicit attempt makes one bridge request');
+  assert.equal(retried.email.requested, 1);
+  assert.equal(retried.email.part, 1);
+  assert.equal(runtime.emails[1].body, failedBody, 'a failed part retry must be byte-identical');
+  progress = emailProgress(runtime);
+  assert.equal(progress.next_part, 2);
+  assert.equal(progress.requested_parts, 1);
+  assert.equal(JSON.stringify(runtime.window.StructaDeviceLab.getProof()), frozen);
+  assert.equal(runtime.window.localStorage.getItem('structa.device-proof.v1.active'), frozenStorage);
+  runtime.dom.window.close();
+});
+
+test('corrupt or mismatched email progress fails closed and restarts at part one', async () => {
+  const sourceRuntime = boot('https://structa.test/?lab=1', '', { compression: false });
+  sourceRuntime.window.StructaDeviceLab.finish();
+  await sourceRuntime.window.StructaDeviceLab.exportProof();
+  const proofStorage = sourceRuntime.window.localStorage.getItem('structa.device-proof.v1.active');
+  const validProgress = emailProgress(sourceRuntime);
+  sourceRuntime.dom.window.close();
+
+  const corruptions = [
+    ['invalid JSON', '{'],
+    ['wrong session', JSON.stringify({ ...validProgress, session_id: 'ST-20990101-deadbeef' })],
+    ['wrong checksum', JSON.stringify({ ...validProgress, checksum: 'fnv1a32:00000000' })],
+    ['wrong encoding', JSON.stringify({ ...validProgress, encoding: 'rot13' })],
+    ['counter mismatch', JSON.stringify({ ...validProgress, next_part: 2, requested_parts: 0 })],
+    ['out-of-range next', JSON.stringify({ ...validProgress, next_part: validProgress.parts.length + 2 })],
+    ['tampered frozen body', JSON.stringify({
+      ...validProgress,
+      parts: validProgress.parts.map((part, index) => index === 0 ? { ...part, body: part.body.replace('part=1\n', 'part=9\n') } : part)
+    })]
+  ];
+
+  for (const [label, seededProgress] of corruptions) {
+    const runtime = boot('https://structa.test/?lab=1', proofStorage, {
+      compression: false,
+      emailProgress: seededProgress
+    });
+    const result = await runtime.window.StructaDeviceLab.exportProof();
+    assert.equal(runtime.emails.length, 1, label);
+    assert.equal(result.email.part, 1, label);
+    assert.equal(result.email.requested, 1, label);
+    assert.match(runtime.emails[0].body, /\npart=1\n/, label);
+    const repaired = emailProgress(runtime);
+    assert.equal(repaired.session_id, result.session_id, label);
+    assert.equal(repaired.next_part, 2, label);
+    assert.equal(repaired.requested_parts, 1, label);
+    runtime.dom.window.close();
+  }
+});
+
+test('explicit two-tap new session clears frozen delivery progress', async () => {
+  const runtime = boot('https://structa.test/?lab=1', '', { compression: false });
+  runtime.window.StructaDeviceLab.finish();
+  await runtime.window.StructaDeviceLab.exportProof();
+  assert.ok(emailProgress(runtime));
+  runtime.window.document.getElementById('structa-device-proof-control').click();
+  const reset = runtime.window.document.getElementById('structa-device-proof-reset');
+  reset.click();
+  reset.click();
+  assert.equal(emailProgress(runtime), null);
+  assert.equal(runtime.window.StructaDeviceLab.getProof().status, 'running');
+  runtime.dom.window.close();
 });
 
 test('staged phase evidence stays incomplete instead of being reported as a failure', async () => {

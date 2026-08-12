@@ -1367,10 +1367,50 @@
     }
     var messaging = window.r1?.messaging;
     var hasNativeEmail = typeof messaging?.emailUser === 'function';
-    traceEmail('email.attempt', 'idle', hasNativeEmail ? 'native' : 'unavailable', {
+    var hasBridgeEmail = typeof PluginMessageHandler !== 'undefined'
+      && typeof PluginMessageHandler.postMessage === 'function';
+    traceEmail('email.attempt', 'idle', hasBridgeEmail ? 'bridge' : (hasNativeEmail ? 'native' : 'unavailable'), {
       subject: safeSubject,
       bodyBytes: safeBody.length
     });
+    if (hasBridgeEmail) {
+      try {
+        // Mirrors r1-create's emailUser helper without assuming that its
+        // `window.r1` facade is injected into the creation WebView.
+        PluginMessageHandler.postMessage(JSON.stringify({
+          message: 'Please email this to the user: ' + safeSubject + '\n\n' + safeBody,
+          useLLM: true,
+          useSerpAPI: false,
+          wantsR1Response: false,
+          wantsJournalEntry: false
+        }));
+        traceEmail('email.bridge.requested', 'pending', 'requested', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length
+        });
+        return Promise.resolve({
+          ok: true,
+          requested: true,
+          confirmed: false,
+          mode: 'bridge-requested',
+          subject: safeSubject
+        });
+      } catch (error) {
+        traceEmail('email.bridge.failed', 'pending', 'failed', {
+          subject: safeSubject,
+          bodyBytes: safeBody.length,
+          error: error?.message || 'email request failed'
+        });
+        return Promise.resolve({
+          ok: false,
+          requested: false,
+          confirmed: false,
+          error: error?.message || 'email request failed',
+          code: 'email-bridge-error',
+          mode: 'bridge-failed'
+        });
+      }
+    }
     if (hasNativeEmail) {
       // The R1 messaging SDK accepts content as its first argument, not a
       // `{ subject, body }` object. Include the proof subject in the content so
@@ -1393,7 +1433,13 @@
           subject: safeSubject,
           bodyBytes: safeBody.length
         });
-        return { ok: true, mode: 'native', subject: safeSubject };
+        return {
+          ok: true,
+          requested: true,
+          confirmed: false,
+          mode: 'native-requested',
+          subject: safeSubject
+        };
       }).catch(function(error) {
         traceEmail('email.native.failed', 'pending', 'failed', {
           subject: safeSubject,
@@ -1408,7 +1454,7 @@
         };
       });
     }
-    traceEmail('email.native.unavailable', 'pending', 'no-native-api', {
+    traceEmail('email.native.unavailable', 'pending', 'no-email-bridge', {
       subject: safeSubject,
       bodyBytes: safeBody.length
     });

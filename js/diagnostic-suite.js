@@ -812,7 +812,8 @@
     if (llm?.emailText) {
       return Promise.resolve(llm.emailText(subject, body)).then(function(result) {
         if (result?.ok) {
-          diagTrace('diag.report.emailed', 'report', 'emailed', {
+          var requestedOnly = result.requested === true && result.confirmed === false;
+          diagTrace(requestedOnly ? 'diag.report.email_requested' : 'diag.report.emailed', 'report', requestedOnly ? 'requested' : 'emailed', {
             runId: state.currentRunId,
             subject: subject,
             bytes: body.length,
@@ -2137,7 +2138,9 @@
           kind: state.report.delivery.ok ? 'status' : 'muted',
           message: state.report.delivery.ok ? 'report exported' : 'report saved locally',
           detail: state.report.delivery.ok
-            ? ('email sent · saved locally')
+            ? (state.report.delivery.requested === true && state.report.delivery.confirmed === false
+                ? 'email requested · verify inbox · saved locally'
+                : 'email sent · saved locally')
             : (((state.report.delivery.code === 'email-unavailable' ? 'email unavailable' : (state.report.delivery.error || 'email failed'))) + ' · saved locally only')
         });
       } else {

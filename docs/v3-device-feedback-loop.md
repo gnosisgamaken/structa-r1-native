@@ -27,7 +27,7 @@ RabbitOS runs only one creation at a time. R1 Anywhere and STRUCTA therefore run
 5. Tap the 44×44 **proof** control in the top-right corner, then run **check build** before testing any feature.
 6. Stop if the expected and deployed build identities do not match.
 
-The lab build adds one 44×44 `proof` control in the top-right corner. Tap it, then tap `step · B00` to advance through the phases below. At the end, use `finish + send`. `journal backup` is an explicit post-test fallback only; it deliberately creates a Rabbit Hole entry after the silence check is complete.
+The lab build adds one 44×44 `proof` control in the top-right corner. Tap it, then tap `step · B00` to advance through the phases below. At the end, use `finish + send`. Email export is incremental: each explicit tap requests one proof part, and the tester verifies that part in the inbox before requesting the next. `journal backup` is an explicit post-test fallback only; it deliberately creates a Rabbit Hole entry after the silence check is complete.
 
 The production log drawer remains intentionally hidden. The owner lab is operated entirely through the top-right **proof** panel; plain `#probe` is not the documented install route for this build.
 
@@ -119,12 +119,12 @@ The machine proof is transport evidence only: it can establish request flags, co
 
 For a passing run:
 
-- every sequential `STRUCTA proof ... [part/total]` email from **finish + send**, saved as plain-text files or pasted into separate text attachments;
+- every sequential `STRUCTA proof ... [part/total]` email requested one at a time from **finish + send**, saved as plain-text files or pasted into separate text attachments;
 - the exported `.structa.json` from the synthetic project;
 - one Rabbit Hole screenshot covering the test window and showing no automatic vision entries;
 - rabbitOS version and the visible STRUCTA build ID.
 
-STRUCTA deliberately does not request a WebView file download for the proof. It retains the sanitized proof in local storage and exports it only as the sequential emails above. If email fails, relaunch the same deployment and retry **finish + send** before using **journal backup** as the explicit fallback.
+STRUCTA deliberately does not request a WebView file download for the proof. It retains one immutable sanitized proof in local storage and requests the sequential emails above through Rabbit's creation bridge. A bridge request is not a delivery receipt: wait for part `N/total` to appear in the inbox before tapping **send next part**. Relaunching the same deployment resumes the same session, checksum, and next-part position. If a requested part does not arrive, preserve the session and investigate before using **journal backup** as the explicit fallback.
 
 For a failure, add only:
 

@@ -36,6 +36,7 @@
   let activeBuildContext = null; // { kind, nodeId, text, surface }
   let activeTriangleContext = null; // { label }
   let nativeCapture = null; // Context/state for the current R1 native STT cycle.
+  let captureRequestSequence = 0;
   let onboardingStartTimer = null;
   const COMMAND_PRIORITY = {
     'delete-project': 0,
@@ -51,6 +52,11 @@
 
   function lower(text) {
     return String(text || '').toLowerCase();
+  }
+
+  function makeCaptureRequestId(prefix) {
+    captureRequestSequence += 1;
+    return String(prefix || 'voice') + '-' + Date.now().toString(36) + '-' + captureRequestSequence.toString(36);
   }
 
   function activeProjectId() {
@@ -982,6 +988,13 @@
     var questionContext = hasOverrides ? (overrides.activeQuestion || null) : activeQuestion;
     var buildContext = hasOverrides ? (overrides.activeBuildContext || null) : activeBuildContext;
     var triangleContext = hasOverrides ? (overrides.activeTriangleContext || null) : activeTriangleContext;
+    var requestId = hasOverrides ? String(overrides.requestId || '') : '';
+    var isCaptureComment = !!(buildContext && (
+      buildContext.kind === 'capture-comment'
+      || (buildContext.kind === 'thread-comment'
+        && buildContext.surface === 'show'
+        && (buildContext.captureId || buildContext.entryId))
+    ));
 
     // Clean up STT artifacts — spoken punctuation → actual punctuation
     text = text.replace(/\bquestion mark\b/gi, '?');
@@ -992,7 +1005,10 @@
     text = text.replace(/\s+/g, ' ').trim();
 
     // === Voice commands — intercept before normal processing ===
-    var commandHandled = tryVoiceCommand(text);
+    // A selected visual establishes a concrete comment target. Command-shaped
+    // speech such as "research the roof material" is evidence about that
+    // frame, not a global navigation/research command.
+    var commandHandled = !isCaptureComment && tryVoiceCommand(text);
     if (commandHandled) return;
 
     if (triangleContext) {
@@ -1168,6 +1184,74 @@
       return;
     }
 
+    if (isCaptureComment) {
+      voiceTarget = null;
+      if (text.length < 3) return;
+      var captureProjectId = String(buildContext.projectId || buildContext.project_id || activeProjectId() || '');
+      var captureRequestId = requestId || makeCaptureRequestId('visual-comment');
+      var captureProject = projectById(captureProjectId);
+      if (!captureProject) return;
+      native?.traceEvent?.('capture.comment', 'captured', 'append-request', {
+        entryId: buildContext.captureId || buildContext.entryId || '',
+        nodeId: buildContext.nodeId || '',
+        projectId: captureProjectId,
+        surface: 'show',
+        requestId: captureRequestId
+      });
+      const appended = native?.appendCaptureComment?.(
+        buildContext.captureId || buildContext.entryId || '',
+        buildContext.nodeId || '',
+        text,
+        {
+          projectId: captureProjectId,
+          requestId: captureRequestId,
+          kind: buildContext.commentKind || 'context',
+          origin: 'ptt'
+        }
+      );
+      if (!appended || !appended.voiceEntry) return;
+      if (appended.duplicate) return;
+      window.StructaFeedback?.fire?.('resolve');
+      window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
+        detail: {
+          entryId: appended.entryId || buildContext.captureId || buildContext.entryId || '',
+          nodeId: appended.nodeId || buildContext.nodeId || '',
+          commentId: appended.comment?.id || '',
+          comment: appended.comment || null,
+          voiceEntryId: appended.voiceEntry?.node_id || '',
+          surface: 'show'
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'capture-comment' }
+      }));
+      if (appended.nodeId && appended.comment?.id) {
+        enqueueThreadRefine({
+          nodeId: appended.nodeId,
+          commentId: appended.comment.id,
+          commentText: text,
+          surface: 'show',
+          selection: {
+            kind: 'show',
+            id: appended.nodeId,
+            captureId: appended.entryId || '',
+            title: buildContext.title || 'visual reference',
+            summary: buildContext.text || '',
+            status: 'open',
+            createdAt: buildContext.createdAt || '',
+            claims: native?.getClaimsForItem?.(appended.nodeId) || []
+          },
+          projectId: captureProjectId,
+          projectName: captureProject.name || 'untitled project',
+          projectType: captureProject.type || 'general',
+          projectBrief: captureProject.brief || '',
+          topQuestions: (captureProject.open_questions || []).slice(0, 3),
+          projectSummary: buildContext.projectSummary || ''
+        });
+      }
+      return;
+    }
+
     if (buildContext && buildContext.kind === 'thread-comment') {
       voiceTarget = null;
       if (text.length < 3) return;
@@ -1308,6 +1392,7 @@
 
   function createNativeCapture() {
     return {
+      requestId: makeCaptureRequestId('native-stt'),
       activeQuestion: activeQuestion ? { ...activeQuestion } : null,
       activeBuildContext: activeBuildContext ? { ...activeBuildContext } : null,
       activeTriangleContext: activeTriangleContext ? { ...activeTriangleContext } : null,
@@ -1322,7 +1407,8 @@
     var context = {
       activeQuestion: capture.activeQuestion,
       activeBuildContext: capture.activeBuildContext,
-      activeTriangleContext: capture.activeTriangleContext
+      activeTriangleContext: capture.activeTriangleContext,
+      requestId: capture.requestId || ''
     };
     capture.transcriptHandled = true;
     capture.activeQuestion = null;
@@ -1467,7 +1553,9 @@
       commentKind: context.commentKind || 'comment',
       projectSummary: context.projectSummary || '',
       projectId: context.projectId || context.project_id || activeProjectId(),
-      decisionId: context.decisionId || context.decision_id || ''
+      decisionId: context.decisionId || context.decision_id || '',
+      captureId: context.captureId || context.entryId || context.capture_id || context.entry_id || '',
+      entryId: context.entryId || context.captureId || context.entry_id || context.capture_id || ''
     } : null;
     if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
   }
@@ -1483,6 +1571,13 @@
 
   async function startListening() {
     if (listening) return;
+    if (typeof CreationVoiceHandler !== 'undefined'
+        && window.__STRUCTA_NATIVE_STT_OWNER__
+        && window.__STRUCTA_NATIVE_STT_OWNER__ !== 'voice') {
+      setStatus('finishing previous capture');
+      native?.traceEvent?.('voice', 'idle', 'start-blocked', { reason: 'native-bridge-owned' });
+      return;
+    }
     if (typeof CreationVoiceHandler !== 'undefined' && nativeCapture && !nativeCapture.sttEnded) {
       // Rabbit's STT callback has no capture id. Never let a new hold replace
       // an unresolved capture context: a late callback could otherwise answer
@@ -1528,7 +1623,7 @@
       setStatus('answer mode');
     } else if (activeTriangleContext) {
       setStatus('triangle angle');
-    } else if (activeBuildContext && activeBuildContext.kind === 'thread-comment') {
+    } else if (activeBuildContext && (activeBuildContext.kind === 'thread-comment' || activeBuildContext.kind === 'capture-comment')) {
       setStatus('commenting');
     } else if (activeBuildContext && activeBuildContext.text) {
       setStatus('building ' + (activeBuildContext.surface || 'context'));
@@ -1540,6 +1635,7 @@
     // === R1 path: Use CreationVoiceHandler for native STT ===
     if (typeof CreationVoiceHandler !== 'undefined') {
       nativeCapture = createNativeCapture();
+      window.__STRUCTA_NATIVE_STT_OWNER__ = 'voice';
       try {
         CreationVoiceHandler.postMessage('start');
         if (activeQuestion?.onboarding) {
@@ -1554,6 +1650,7 @@
         return;
       } catch (err) {
         nativeCapture = null;
+        if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'voice') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
         native?.appendLogEntry?.({ kind: 'voice', message: 'stt err: ' + (err?.message || 'failed') });
         if (activeQuestion?.onboarding) reportOnboardingSTTFailure('bridge-error');
       }
@@ -1646,6 +1743,7 @@
     if (capture) {
       if (capture.sttEnded) return;
       capture.sttEnded = true;
+      if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'voice') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
       stopListening(false);
       if (data && data.transcript && !capture.cancelled) {
         if (transcriptEl) transcriptEl.textContent = data.transcript;
@@ -1717,6 +1815,7 @@
     setTriangleContext: setTriangleContext,
     setContextLabel: setContextLabel,
     get listening() { return listening; },
-    get activeQuestion() { return activeQuestion; }
+    get activeQuestion() { return activeQuestion; },
+    get nativeCapturePending() { return !!(nativeCapture && !nativeCapture.sttEnded); }
   });
 })();

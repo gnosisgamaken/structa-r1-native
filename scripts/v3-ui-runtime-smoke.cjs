@@ -141,7 +141,17 @@ window.StructaCamera = {
     cameraOpenPending = false;
     if (!cameraIsOpen) return;
     cameraIsOpen = false;
-    window.dispatchEvent(new window.CustomEvent('structa-camera-close'));
+    const entryId = `cap-new-${cameraCaptured}`;
+    project.captures.push({
+      entry_id: entryId,
+      node_id: `node-new-${cameraCaptured}`,
+      summary: `newly captured reference ${cameraCaptured}`,
+      preview_data: 'data:image/png;base64,aW1hZ2U=',
+      created_at: new Date(Date.now() + cameraCaptured * 1000).toISOString()
+    });
+    uiState.last_capture_entry_id = entryId;
+    window.dispatchEvent(new window.CustomEvent('structa-capture-stored', { detail: { entryId } }));
+    window.dispatchEvent(new window.CustomEvent('structa-camera-close', { detail: { reason: 'capture' } }));
   },
   flip() {},
   startVoiceStrip() {},
@@ -213,6 +223,8 @@ assert.equal(scene.querySelector('[data-hit-target="camera-activation"]'), null,
   'SHOW never renders the old camera activation interstitial');
 const capturedShowCamera = scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-lens"]');
 assert.ok(capturedShowCamera, 'SHOW with captures keeps a direct camera affordance');
+assert.ok(Number(capturedShowCamera.getAttribute('x')) + Number(capturedShowCamera.getAttribute('width')) <= 196,
+  'the populated SHOW lens remains clear of the lab proof control');
 const openedBeforeCapturedTouch = cameraOpened;
 capturedShowCamera.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
 assert.equal(cameraOpened, openedBeforeCapturedTouch + 1, 'touching the captured SHOW camera affordance requests the lens exactly once');
@@ -234,12 +246,17 @@ assert.equal(panel.getState(), states.SHOW_BROWSE, 'hardware Side subtly arms th
 assert.equal(cameraOpened, openedBeforeSideArm, 'hardware Side cannot request camera permission without a trusted touch');
 assert.equal(scene.querySelector('[data-hit-target="camera-activation"]'), null,
   'hardware arming does not restore the activation overlay');
+assert.match(textContent(), /lens ready · tap \+/, 'hardware arming exposes a clear camera cue without covering the carousel');
 scene.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
-assert.equal(cameraOpened, openedBeforeSideArm + 1, 'the next trusted SHOW touch after Side opens the lens exactly once');
+assert.equal(cameraOpened, openedBeforeSideArm, 'an unrelated SHOW touch does not unexpectedly open the armed lens');
+scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-lens"]')
+  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeSideArm + 1, 'the visibly armed lens control opens with one trusted touch');
 assert.equal(panel.getState(), states.CAMERA_OPEN, 'the armed trusted touch enters the live camera');
 window.dispatchEvent(new window.CustomEvent('sideClick'));
 assert.equal(cameraCaptured, 1, 'camera Side capture still captures exactly once');
 assert.equal(panel.getState(), states.SHOW_BROWSE, 'capture completion returns to SHOW');
+assert.match(textContent(), /newly captured reference 1/, 'SHOW selects the exact newly stored capture after returning');
 assert.equal(historyPushCalls, 0, 'capture completion leaves WebView history untouched');
 assert.equal(historyBackCalls, 0, 'capture completion never invokes WebView Back');
 
@@ -285,8 +302,12 @@ window.dispatchEvent(new window.CustomEvent('longPressStart'));
 assert.equal(panel.getState(), states.SHOW_BROWSE, 'empty SHOW PTT only arms the existing SHOW surface');
 assert.equal(cameraOpened, openedBeforeEmptyShowPtt, 'empty SHOW PTT cannot acquire the camera without touch');
 window.dispatchEvent(new window.CustomEvent('longPressEnd'));
+assert.match(textContent(), /ready · tap here/, 'empty SHOW PTT makes the camera target visibly ready');
 scene.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
-assert.equal(cameraOpened, openedBeforeEmptyShowPtt + 1, 'the next trusted touch after empty SHOW PTT opens once');
+assert.equal(cameraOpened, openedBeforeEmptyShowPtt, 'empty SHOW arming does not turn unrelated screen touches into camera input');
+scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-empty"]')
+  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeEmptyShowPtt + 1, 'the armed empty SHOW camera area opens with one trusted touch');
 assert.equal(panel.getState(), states.CAMERA_OPEN, 'PTT-armed trusted touch enters the camera');
 window.StructaCamera.close();
 project.captures.push(...savedCaptureRows);

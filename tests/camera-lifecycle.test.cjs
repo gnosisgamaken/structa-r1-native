@@ -40,6 +40,7 @@ function createHarness(getUserMedia, previewState) {
       <section id="camera-overlay" aria-hidden="true">
         <video id="camera-preview"></video>
         <canvas id="camera-canvas"></canvas>
+        <div id="camera-transition" aria-hidden="true"><span id="camera-transition-label"></span></div>
         <button id="camera-status"></button>
         <button id="camera-cancel" type="button">cancel</button>
         <div id="camera-voice-strip"><span class="strip-text"></span></div>
@@ -74,12 +75,19 @@ function createHarness(getUserMedia, previewState) {
     getActiveProjectId: function() { return 'project-1'; },
     setCameraFacing: function() {}
   };
+  window.StructaContracts = {
+    createCaptureBundle: function(input) {
+      return { entry_id: 'capture-lifecycle', ...(input || {}) };
+    }
+  };
   window.eval(CAMERA_SOURCE);
   return {
     dom,
     window,
     overlay: window.document.getElementById('camera-overlay'),
     preview,
+    transition: window.document.getElementById('camera-transition'),
+    transitionLabel: window.document.getElementById('camera-transition-label'),
     status: window.document.getElementById('camera-status'),
     cancel: window.document.getElementById('camera-cancel')
   };
@@ -167,6 +175,60 @@ test('close stops an active camera and clears the primed stream', async function
   assert.equal(harness.preview.srcObject, null);
   assert.equal(harness.overlay.classList.contains('open'), false);
   assert.equal(harness.window.StructaCamera.primed, false);
+});
+
+test('wheel flip covers camera reacquisition with a branded lens transition', async function(t) {
+  const rear = fakeStream();
+  const front = fakeStream();
+  let requests = 0;
+  const harness = createHarness(function() {
+    requests += 1;
+    return Promise.resolve(requests === 1 ? rear.stream : front.stream);
+  });
+  t.after(function() { harness.dom.window.close(); });
+
+  harness.window.StructaCamera.openFromGesture('environment');
+  await waitFor(function() { return harness.overlay.classList.contains('open'); });
+
+  const flipPromise = harness.window.StructaCamera.flip();
+  assert.equal(harness.transition.classList.contains('active'), true);
+  assert.equal(harness.transition.getAttribute('aria-hidden'), 'false');
+  assert.equal(harness.transitionLabel.textContent, 'front lens');
+  assert.equal(rear.track.stops, 1);
+
+  await flipPromise;
+  assert.equal(requests, 2);
+  assert.equal(harness.preview.srcObject, front.stream);
+  assert.equal(harness.transition.classList.contains('active'), false);
+  assert.equal(harness.transition.getAttribute('aria-hidden'), 'true');
+  assert.equal(harness.status.textContent, 'tap frame to shoot · wheel flips');
+});
+
+test('closing during a pending flip hides the transition and rejects the late lens', async function(t) {
+  const rear = fakeStream();
+  const lateFront = fakeStream();
+  const frontRequest = deferred();
+  let requests = 0;
+  const harness = createHarness(function() {
+    requests += 1;
+    return requests === 1 ? Promise.resolve(rear.stream) : frontRequest.promise;
+  });
+  t.after(function() { harness.dom.window.close(); });
+
+  harness.window.StructaCamera.openFromGesture('environment');
+  await waitFor(function() { return harness.overlay.classList.contains('open'); });
+  const flipPromise = harness.window.StructaCamera.flip();
+  assert.equal(harness.transition.classList.contains('active'), true);
+
+  harness.window.StructaCamera.close();
+  assert.equal(harness.transition.classList.contains('active'), false);
+  frontRequest.resolve(lateFront.stream);
+  await flipPromise;
+
+  assert.equal(lateFront.track.stops, 1);
+  assert.equal(harness.overlay.classList.contains('open'), false);
+  assert.equal(harness.preview.srcObject, null);
+  assert.equal(harness.transition.classList.contains('active'), false);
 });
 
 test('the visible in-camera cancel closes without capturing or mutating project memory', async function(t) {

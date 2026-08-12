@@ -18,6 +18,8 @@
   const canvas = document.getElementById('camera-canvas');
   const status = document.getElementById('camera-status');
   const cancelButton = document.getElementById('camera-cancel');
+  const cameraTransition = document.getElementById('camera-transition');
+  const cameraTransitionLabel = document.getElementById('camera-transition-label');
 
   let stream = null;
   let facingMode = 'environment';
@@ -37,6 +39,8 @@
   let voiceStripStopping = false;
   let pendingVoiceCapture = false;
   let pendingVoiceCaptureTimer = null;
+  let voiceStripSession = null;
+  let voiceStripSequence = 0;
   let analysisQueueTimer = null;
   let lastCaptureAt = 0;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -46,6 +50,16 @@
   const ANALYSIS_JPEG_QUALITY = 0.84;
   const THUMBNAIL_JPEG_QUALITY = 0.7;
   const CAMERA_READY_STATUS = 'tap frame to shoot · wheel flips';
+  const MIN_FLIP_TRANSITION_MS = 180;
+  const NATIVE_STT_TERMINAL_TIMEOUT_MS = Math.max(
+    50,
+    Number(window.__STRUCTA_CAMERA_STT_TIMEOUT_MS__ || 12000)
+  );
+
+  function nextVoiceStripRequestId() {
+    voiceStripSequence += 1;
+    return 'camera-stt-' + Date.now().toString(36) + '-' + voiceStripSequence.toString(36);
+  }
 
   function getCaps() {
     return window.__structaCaps || {};
@@ -78,6 +92,22 @@
 
   function setStatus(text) {
     if (status) status.textContent = String(text || '').toLowerCase();
+  }
+
+  function setFlipTransition(active, targetMode) {
+    if (!cameraTransition) return;
+    if (cameraTransitionLabel && targetMode) {
+      cameraTransitionLabel.textContent = targetMode === 'user' ? 'front lens' : 'rear lens';
+    }
+    cameraTransition.classList.toggle('active', !!active);
+    cameraTransition.setAttribute('aria-hidden', active ? 'false' : 'true');
+  }
+
+  function waitForFlipBeat(startedAt) {
+    const remaining = MIN_FLIP_TRANSITION_MS - (Date.now() - startedAt);
+    return remaining > 0
+      ? new Promise(function(resolve) { setTimeout(resolve, remaining); })
+      : Promise.resolve();
   }
 
   function captureEntryId(capture) {
@@ -360,17 +390,19 @@
     });
   }
 
-  function hasShowTellSemanticResult(entryId, nodeId) {
-    const project = native?.getProjectMemory?.() || {};
+  function hasShowTellSemanticResult(entryId, nodeId, projectId) {
+    const project = projectId && native?.getProjectMemoryById
+      ? (native.getProjectMemoryById(projectId) || {})
+      : (native?.getProjectMemory?.() || {});
     const refs = findCaptureRefs(project, entryId, nodeId);
     const captureDone = !!refs.capture?.meta?.show_tell_semantic_done;
     const nodeDone = !!refs.node?.meta?.show_tell_semantic_done;
     return captureDone || nodeDone;
   }
 
-  function markShowTellSemanticResult(entryId, nodeId, patch) {
+  function markShowTellSemanticResult(entryId, nodeId, patch, projectId) {
     const update = patch && typeof patch === 'object' ? patch : {};
-    native?.touchProjectMemory?.(function(project) {
+    touchOriginProject(projectId, function(project) {
       const refs = findCaptureRefs(project, entryId, nodeId);
       if (refs.capture) {
         refs.capture.meta = {
@@ -429,10 +461,11 @@
     touchOriginProject(job?.projectId, function(project) {
       const refs = findCaptureRefs(project, job.entryId, job.nodeId);
       if (refs.capture) {
+        const currentUserComment = String(refs.capture.latest_comment_text || refs.capture.meta?.latest_comment_text || '').trim();
         refs.capture.description_text = observationText;
         if (!job.annotation) refs.capture.summary = observationText;
         refs.capture.ai_analysis = observationText;
-        if (job.annotation) refs.capture.latest_comment_text = observationText;
+        if (job.annotation && !currentUserComment) refs.capture.latest_comment_text = job.annotation;
         refs.capture.prompt_text = job.annotation || refs.capture.prompt_text || '';
         refs.capture.preview_data = refs.capture.preview_data || job.previewData;
         refs.capture.meta = {
@@ -446,11 +479,12 @@
           analysis_stage: uncertainties.length ? 'review queued' : 'done',
           annotation_window_until: 0,
           description_text: observationText,
-          latest_comment_text: job.annotation ? observationText : (refs.capture.meta?.latest_comment_text || refs.capture.latest_comment_text || ''),
+          latest_comment_text: currentUserComment || job.annotation || '',
           capture_semantic_result_count: Number(refs.capture?.meta?.capture_semantic_result_count || 0) + (meta.countIncrement ? 1 : 0)
         };
       }
       if (refs.node) {
+        const currentNodeComment = String(refs.node.meta?.latest_comment_text || '').trim();
         refs.node.tags = Array.isArray(refs.node.tags) ? refs.node.tags : [];
         if (job.annotation && refs.node.tags.indexOf('show-tell') === -1) refs.node.tags.push('show-tell');
         refs.node.meta = {
@@ -464,7 +498,7 @@
           analysis_stage: uncertainties.length ? 'review queued' : 'done',
           annotation_window_until: 0,
           description_text: observationText,
-          latest_comment_text: job.annotation ? observationText : (refs.node.meta?.latest_comment_text || ''),
+          latest_comment_text: currentNodeComment || job.annotation || '',
           capture_semantic_result_count: Number(refs.node?.meta?.capture_semantic_result_count || 0) + (meta.countIncrement ? 1 : 0)
         };
       }
@@ -830,14 +864,14 @@
       ]).then(function(result) {
         if (result && result.ok && result.clean && result.envelope) {
           var appendedComment = null;
-          if (isOriginProjectActive(payload.projectId)
-              && payload.annotation && payload.nodeId && native?.appendThreadComment
-              && !hasShowTellSemanticResult(payload.entryId, payload.nodeId)) {
+          if (payload.annotation && payload.nodeId && native?.appendThreadComment
+              && !hasShowTellSemanticResult(payload.entryId, payload.nodeId, payload.projectId)) {
             appendedComment = native.appendThreadComment(
               payload.nodeId,
               result.clean,
               'capture_result',
-              'show-tell'
+              'show-tell',
+              { projectId: payload.projectId }
             );
             if (appendedComment?.comment?.id) {
               window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
@@ -850,7 +884,7 @@
               }));
               markShowTellSemanticResult(payload.entryId, payload.nodeId, {
                 show_tell_comment_id: appendedComment.comment.id
-              });
+              }, payload.projectId);
             }
           }
           applyAnalysisReady(payload, result, {
@@ -1196,46 +1230,59 @@
     if (flipLocked || !streamReady || !cameraSessionOpen) return;
     flipLocked = true;
     const epoch = cameraSessionEpoch;
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    const transitionStartedAt = Date.now();
+    setFlipTransition(true, nextMode);
+    setStatus(nextMode === 'user' ? 'opening front lens' : 'opening rear lens');
     try {
-      const nextMode = facingMode === 'user' ? 'environment' : 'user';
       releaseAllCameraStreams();
       if (!isCurrentCameraSession(epoch)) return;
       streamAcquiring = true;
       acquisitionEpoch = epoch;
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: nextMode, width: { max: 640 }, height: { max: 480 } } })
-        .then(async (mediaStream) => {
-          finishAcquisition(epoch);
-          if (!isCurrentCameraSession(epoch)) {
-            releaseMediaStream(mediaStream);
-            return;
-          }
-          stream = mediaStream;
-          facingMode = nextMode;
-          window.__STRUCTA_PRIMED_STREAM__ = stream;
-          const attached = await attachPreview(mediaStream, epoch);
-          if (!attached || !isCurrentCameraSession(epoch)) {
-            releaseMediaStream(mediaStream);
-            return;
-          }
-          streamReady = true;
-          native?.setCameraFacing?.(facingMode);
-          setStatus(CAMERA_READY_STATUS);
-        })
-        .catch(() => {
-          finishAcquisition(epoch);
-          if (!isCurrentCameraSession(epoch)) return;
-          releaseAllCameraStreams();
-          setStatus('flip failed');
-        });
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: nextMode, width: { max: 640 }, height: { max: 480 } }
+      });
+      finishAcquisition(epoch);
+      if (!isCurrentCameraSession(epoch)) {
+        releaseMediaStream(mediaStream);
+        return;
+      }
+      stream = mediaStream;
+      facingMode = nextMode;
+      window.__STRUCTA_PRIMED_STREAM__ = stream;
+      const attached = await attachPreview(mediaStream, epoch);
+      if (!attached || !isCurrentCameraSession(epoch)) {
+        releaseMediaStream(mediaStream);
+        return;
+      }
+      streamReady = true;
+      native?.setCameraFacing?.(facingMode);
+      await waitForFlipBeat(transitionStartedAt);
+      if (isCurrentCameraSession(epoch)) setStatus(CAMERA_READY_STATUS);
+    } catch (_) {
+      finishAcquisition(epoch);
+      if (!isCurrentCameraSession(epoch)) return;
+      releaseAllCameraStreams();
+      setStatus('flip failed');
     } finally {
-      setTimeout(() => { flipLocked = false; }, 200);
+      setFlipTransition(false);
+      flipLocked = false;
     }
   }
 
   // === SHOW+TELL voice strip ===
 
   function startVoiceStrip() {
-    if (voiceStripActive) return;
+    if (voiceStripActive || voiceStripStopping) return false;
+    if (typeof CreationVoiceHandler !== 'undefined'
+        && (window.__STRUCTA_NATIVE_STT_OWNER__ || window.StructaVoice?.nativeCapturePending)) {
+      setStatus('finish previous note first');
+      native?.traceEvent?.('camera.voice', 'idle', 'start-blocked', {
+        reason: 'native-callback-pending',
+        owner: window.__STRUCTA_NATIVE_STT_OWNER__ || 'voice'
+      });
+      return false;
+    }
     voiceStripActive = true;
     voiceStripStopping = false;
     pendingVoiceCapture = false;
@@ -1244,6 +1291,19 @@
       pendingVoiceCaptureTimer = null;
     }
     voiceStripTranscript = '';
+    voiceStripSession = {
+      requestId: nextVoiceStripRequestId(),
+      projectId: activeProjectId(),
+      transcript: '',
+      terminal: false,
+      released: false,
+      cancelled: false,
+      stopSent: false,
+      settled: false,
+      aborted: false,
+      timeoutId: null,
+      target: null
+    };
 
     // Mute heartbeat audio during capture
     if (window.StructaAudio) window.StructaAudio.mute();
@@ -1260,9 +1320,12 @@
     if (typeof CreationVoiceHandler !== 'undefined') {
       try {
         window.__STRUCTA_PTT_TARGET__ = 'camera';
+        window.__STRUCTA_NATIVE_STT_OWNER__ = 'camera';
         CreationVoiceHandler.postMessage('start');
-        return;
-      } catch (e) {}
+        return true;
+      } catch (e) {
+        if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'camera') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
+      }
     }
 
     // Browser fallback: SpeechRecognition
@@ -1289,12 +1352,27 @@
     if (voiceStripRecognition) {
       try { voiceStripRecognition.start(); } catch (e) {}
     }
+    return true;
   }
 
-  function stopVoiceStrip() {
-    if (!voiceStripActive && !voiceStripStopping) return;
+  function requestVoiceStripStop(session) {
+    if (!session || session.stopSent) return;
+    session.stopSent = true;
+    if (typeof CreationVoiceHandler !== 'undefined') {
+      try { CreationVoiceHandler.postMessage('stop'); } catch (e) {}
+    }
+  }
+
+  function armVoiceStripTerminalTimeout(session) {
+    if (!session || session.timeoutId || session.settled || typeof CreationVoiceHandler === 'undefined') return;
+    session.timeoutId = setTimeout(function() {
+      session.timeoutId = null;
+      releaseTimedOutVoiceSession(session);
+    }, NATIVE_STT_TERMINAL_TIMEOUT_MS);
+  }
+
+  function finishVoiceStripPresentation() {
     voiceStripActive = false;
-    voiceStripStopping = false;
     pendingVoiceCapture = false;
     if (pendingVoiceCaptureTimer) {
       clearTimeout(pendingVoiceCaptureTimer);
@@ -1309,10 +1387,6 @@
     if (voiceStripRecognition) {
       try { voiceStripRecognition.stop(); } catch (e) {}
     }
-    // Stop R1 STT
-    if (typeof CreationVoiceHandler !== 'undefined') {
-      try { CreationVoiceHandler.postMessage('stop'); } catch (e) {}
-    }
 
     // Hide voice strip UI
     var strip = document.getElementById('camera-voice-strip');
@@ -1324,57 +1398,219 @@
     setStatus(CAMERA_READY_STATUS);
   }
 
+  function stopVoiceStrip() {
+    if (!voiceStripActive && !voiceStripStopping && !voiceStripSession) return;
+    var session = voiceStripSession;
+    if (session && !session.terminal) {
+      if (!session.released) {
+        session.cancelled = true;
+        session.aborted = true;
+        session.abortReason = 'camera-cancelled-before-frame';
+      }
+      requestVoiceStripStop(session);
+      armVoiceStripTerminalTimeout(session);
+    }
+    finishVoiceStripPresentation();
+    if (!session || session.terminal) {
+      voiceStripStopping = false;
+      voiceStripSession = null;
+      if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'camera') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
+    }
+  }
+
+  function settleVoiceStripSession(session) {
+    if (!session || session.settled || !session.terminal) return false;
+    if (!session.target) {
+      if (!session.aborted) return false;
+      session.settled = true;
+      if (session.timeoutId) clearTimeout(session.timeoutId);
+      voiceStripStopping = false;
+      if (voiceStripSession === session) voiceStripSession = null;
+      if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'camera') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
+      native?.traceEvent?.('camera.voice', 'terminal', 'discarded', {
+        projectId: session.projectId,
+        reason: session.abortReason || 'capture-aborted',
+        requestId: session.requestId
+      });
+      return true;
+    }
+    session.settled = true;
+    if (session.timeoutId) clearTimeout(session.timeoutId);
+    const target = session.target;
+    const transcript = String(session.transcript || '').trim();
+    var appended = null;
+    if (!session.cancelled && transcript && native?.appendCaptureComment) {
+      appended = native.appendCaptureComment(target.entryId, target.nodeId, transcript, {
+        projectId: session.projectId,
+        requestId: session.requestId,
+        operationId: target.operationId || '',
+        kind: 'context',
+        origin: 'camera-ptt'
+      });
+      if (appended && !appended.duplicate) {
+        native?.recordOperationWrite?.(target.operationId || '', 'capture_comment', {
+          entryId: target.entryId,
+          nodeId: target.nodeId,
+          commentId: appended.comment?.id || ''
+        });
+        window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
+          detail: {
+            entryId: target.entryId,
+            nodeId: target.nodeId,
+            commentId: appended.comment?.id || '',
+            comment: appended.comment || null,
+            voiceEntryId: appended.voiceEntry?.node_id || '',
+            surface: 'show'
+          }
+        }));
+        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+          detail: { source: 'capture-comment' }
+        }));
+        const project = native?.getProjectMemoryById?.(session.projectId) || {};
+        queue?.enqueue?.({
+          kind: 'thread-refine',
+          priority: 'P2',
+          payload: {
+            nodeId: target.nodeId,
+            commentId: appended.comment?.id || '',
+            commentText: transcript,
+            surface: 'show',
+            selection: {
+              kind: 'show',
+              id: target.nodeId,
+              captureId: target.entryId,
+              title: 'visual reference',
+              summary: transcript,
+              status: 'open',
+              createdAt: '',
+              claims: []
+            },
+            projectId: session.projectId,
+            projectName: project.name || 'untitled project',
+            projectType: project.type || 'general',
+            projectBrief: project.brief || '',
+            topQuestions: (project.open_questions || []).slice(0, 3),
+            projectSummary: ''
+          },
+          origin: { screen: 'show', itemId: target.nodeId },
+          timeoutMs: 12000
+        });
+      }
+    }
+    if (!session.cancelled) {
+      markCaptureAnalysisQueued(
+        target.entryId,
+        target.nodeId,
+        target.thumbnailData,
+        target.assetId,
+        session.projectId
+      );
+      scheduleAnalysisDrain(0);
+    }
+    native?.traceEvent?.('camera.voice', 'terminal', session.cancelled ? 'discarded' : 'attached', {
+      projectId: session.projectId,
+      entryId: target.entryId,
+      nodeId: target.nodeId,
+      hasTranscript: !!transcript,
+      duplicate: !!appended?.duplicate,
+      requestId: session.requestId
+    });
+    voiceStripStopping = false;
+    if (voiceStripSession === session) voiceStripSession = null;
+    if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'camera') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return true;
+  }
+
+  function abortVoiceStripSession(session, reason) {
+    if (!session || session.settled) return;
+    session.cancelled = true;
+    session.aborted = true;
+    session.abortReason = reason || 'capture-aborted';
+    settleVoiceStripSession(session);
+  }
+
+  function releaseTimedOutVoiceSession(session) {
+    if (!session || session.settled || session.terminal) return;
+    session.settled = true;
+    session.quarantined = true;
+    if (session.target) {
+      markCaptureAnalysisQueued(
+        session.target.entryId,
+        session.target.nodeId,
+        session.target.thumbnailData,
+        session.target.assetId,
+        session.projectId
+      );
+      scheduleAnalysisDrain(0);
+    }
+    voiceStripStopping = false;
+    if (voiceStripSession === session) voiceStripSession = null;
+    // R1 supplies no callback id. Keep the bridge quarantined until this page
+    // is relaunched so a late old terminal can never attach to a new frame.
+    if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'camera') {
+      window.__STRUCTA_NATIVE_STT_OWNER__ = 'camera-timeout';
+    }
+    native?.traceEvent?.('camera.voice', 'waiting', 'timed-out', {
+      projectId: session.projectId,
+      entryId: session.target?.entryId || '',
+      requestId: session.requestId
+    });
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+  }
+
   function finalizeVoiceStripCapture() {
     if (!voiceStripActive && !voiceStripStopping) {
-      capture();
-      return;
+      return capture();
     }
+    var session = voiceStripSession;
     voiceStripStopping = true;
-    pendingVoiceCapture = true;
+    pendingVoiceCapture = false;
     window.__STRUCTA_PTT_TARGET__ = 'camera';
     setStatus('capturing...');
+    if (session) session.released = true;
 
     if (voiceStripRecognition) {
       try { voiceStripRecognition.stop(); } catch (e) {}
     }
-    if (typeof CreationVoiceHandler !== 'undefined') {
-      try { CreationVoiceHandler.postMessage('stop'); } catch (e) {}
+    if (session && typeof CreationVoiceHandler === 'undefined') {
+      session.terminal = true;
+      session.transcript = String(voiceStripTranscript || '').trim();
     }
-
-    if (pendingVoiceCaptureTimer) clearTimeout(pendingVoiceCaptureTimer);
-    pendingVoiceCaptureTimer = setTimeout(function() {
-      pendingVoiceCaptureTimer = null;
-      capture();
-    }, 420);
+    requestVoiceStripStop(session);
+    armVoiceStripTerminalTimeout(session);
+    finishVoiceStripPresentation();
+    // The frame is stored immediately. The native STT terminal owns only the
+    // exact comment attachment and analysis release, never the shutter.
+    return capture({ voiceSession: session });
   }
 
   // Listen for R1 STT results during voice strip
   window.addEventListener('structa-stt-ended', function(event) {
-    if ((voiceStripActive || voiceStripStopping) && event && event.detail && event.detail.transcript) {
-      voiceStripTranscript = event.detail.transcript;
+    var session = voiceStripSession;
+    if (session && !session.terminal) {
+      session.terminal = true;
+      session.transcript = String(event?.detail?.transcript || '').trim();
+      voiceStripTranscript = session.transcript;
       var strip = document.getElementById('camera-voice-strip');
       if (strip) {
         var textEl = strip.querySelector('.strip-text');
         if (textEl) textEl.textContent = voiceStripTranscript.slice(-40);
       }
-      if (pendingVoiceCapture) {
-        if (pendingVoiceCaptureTimer) {
-          clearTimeout(pendingVoiceCaptureTimer);
-          pendingVoiceCaptureTimer = null;
-        }
-        capture();
-      }
+      settleVoiceStripSession(session);
     }
   });
 
-  async function capture() {
+  async function capture(options = {}) {
     if (Date.now() - lastCaptureAt < CAPTURE_COOLDOWN_MS) {
+      abortVoiceStripSession(options?.voiceSession || null, 'shutter-cooldown');
       setStatus('shutter settling');
       window.StructaFeedback?.fire?.('blocked');
       return null;
     }
     lastCaptureAt = Date.now();
-    const captureProjectId = activeProjectId();
+    const voiceSession = options?.voiceSession || null;
+    const captureProjectId = String(voiceSession?.projectId || activeProjectId());
     let dataUrl = '';
     let thumbnailData = '';
     let w = preview?.videoWidth || 720;
@@ -1410,12 +1646,14 @@
       }
     }
     if (!dataUrl) {
+      abortVoiceStripSession(voiceSession, 'frame-capture-failed');
       native?.appendLogEntry?.({ kind: 'camera', message: 'frame capture failed — try again' });
       window.StructaFeedback?.fire?.('blocked');
       window.dispatchEvent(new CustomEvent('structa-capture-failed'));
       return null;
     }
     if (!isOriginProjectActive(captureProjectId)) {
+      abortVoiceStripSession(voiceSession, 'project-changed-before-store');
       native?.traceEvent?.('image', 'captured', 'stale-project', {
         projectId: captureProjectId,
         activeProjectId: activeProjectId()
@@ -1430,9 +1668,11 @@
       pendingVoiceCaptureTimer = null;
     }
 
-    // Grab voice annotation before stopping strip
-    var annotation = voiceStripTranscript || '';
-    stopVoiceStrip();
+    // A terminal may arrive before storage finishes. Snapshot its exact text;
+    // otherwise keep analysis gated until the same session receives terminal.
+    var annotation = String(voiceSession?.transcript || voiceStripTranscript || '').trim();
+    var awaitingVoiceTerminal = !!(voiceSession && !voiceSession.terminal);
+    finishVoiceStripPresentation();
 
     // Play capture sound
     if (window.StructaAudio) {
@@ -1472,10 +1712,11 @@
     const analysisQueuedAt = new Date().toISOString();
     const annotationWindowUntil = 0;
     const operationId = native?.beginOperation?.({
-      kind: annotation ? 'show+tell' : 'show',
-      allowed: annotation ? { capture: 1, capture_comment: 1, capture_description: 1 } : { capture: 1, capture_description: 1 }
+      kind: voiceSession ? 'show+tell' : 'show',
+      allowed: voiceSession ? { capture: 1, capture_comment: 1, capture_description: 1 } : { capture: 1, capture_description: 1 }
     }) || '';
-    const bundle = window.StructaCaptureBundles?.createCaptureBundle?.({
+    const bundleInput = {
+      project_code: captureProjectId,
       source_type: 'camera',
       input_type: annotation ? 'image+voice' : 'image',
       image_asset: captureAsset,
@@ -1492,8 +1733,8 @@
         image_asset_id: resolvedAsset.entry_id || '',
         image_asset_name: resolvedAsset.name || '',
         preview_data: thumbnailData,
-        analysis_status: 'pending',
-        analysis_stage: 'queued',
+        analysis_status: awaitingVoiceTerminal ? 'awaiting-comment' : 'pending',
+        analysis_stage: awaitingVoiceTerminal ? 'awaiting comment' : 'queued',
         analysis_enqueued_at: analysisQueuedAt,
         analysis_width: w,
         thumbnail_width: Math.min(w, THUMBNAIL_WIDTH),
@@ -1501,7 +1742,14 @@
         annotation_window_until: annotationWindowUntil,
         operation_id: operationId
       }
-    });
+    };
+    const bundle = window.StructaCaptureBundles?.createCaptureBundle?.(bundleInput)
+      || window.StructaContracts?.createCaptureBundle?.(bundleInput);
+    if (!bundle?.entry_id) {
+      abortVoiceStripSession(voiceSession, 'capture-bundle-unavailable');
+      native?.traceEvent?.('image', 'captured', 'bundle-unavailable', { projectId: captureProjectId });
+      return null;
+    }
 
     lastBundle = bundle;
     native?.storeCaptureBundle?.(bundle);
@@ -1542,8 +1790,8 @@
           bundle_id: bundle?.entry_id || null,
           project_id: captureProjectId,
           facingMode: facingMode,
-          analysis_status: 'pending',
-          analysis_stage: 'queued',
+          analysis_status: awaitingVoiceTerminal ? 'awaiting-comment' : 'pending',
+          analysis_stage: awaitingVoiceTerminal ? 'awaiting comment' : 'queued',
           analysis_enqueued_at: analysisQueuedAt,
           preview_data: thumbnailData,
           image_asset_id: resolvedAsset.entry_id || '',
@@ -1578,14 +1826,37 @@
       nodeId: captureNode?.node_id || ''
     });
 
-    markCaptureAnalysisQueued(
-      bundle?.entry_id || '',
-      captureNode?.node_id || '',
-      thumbnailData,
-      resolvedAsset.entry_id || '',
-      captureProjectId
-    );
-    scheduleAnalysisDrain(120);
+    const captureTarget = {
+      entryId: bundle?.entry_id || '',
+      nodeId: captureNode?.node_id || '',
+      thumbnailData: thumbnailData,
+      assetId: resolvedAsset.entry_id || '',
+      operationId: operationId
+    };
+    if (voiceSession) {
+      voiceSession.target = captureTarget;
+      if (voiceSession.quarantined || (voiceSession.settled && !voiceSession.terminal)) {
+        markCaptureAnalysisQueued(
+          captureTarget.entryId,
+          captureTarget.nodeId,
+          captureTarget.thumbnailData,
+          captureTarget.assetId,
+          captureProjectId
+        );
+        scheduleAnalysisDrain(0);
+      } else {
+        settleVoiceStripSession(voiceSession);
+      }
+    } else {
+      markCaptureAnalysisQueued(
+        captureTarget.entryId,
+        captureTarget.nodeId,
+        captureTarget.thumbnailData,
+        captureTarget.assetId,
+        captureProjectId
+      );
+      scheduleAnalysisDrain(120);
+    }
     if (!thumbnailData) {
       void createThumbnailDataUrl(dataUrl).then(function(resolvedThumbnail) {
         if (!resolvedThumbnail) return;
@@ -1608,6 +1879,8 @@
     pendingVoiceCapture = false;
     clearTimeout(pendingVoiceCaptureTimer);
     pendingVoiceCaptureTimer = null;
+    setFlipTransition(false);
+    flipLocked = false;
     invalidateCameraSession();
     releaseAllCameraStreams();
     setStatus('camera closed');

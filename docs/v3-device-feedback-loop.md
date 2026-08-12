@@ -58,7 +58,7 @@ Run these phases in order. Set the active device-lab step before each phase when
 | `B00` | Build truth | Cold launch, open **proof**, run **check build** | Correct UI/assets/server; no boot error |
 | `B01` | Hardware | Touch; 10 wheel detents each way; Side; PTT; shake; system Back last | One intended action per input; system Back exits; relaunch resumes without mutation |
 | `B02` | Voice | Known phrase; empty release; cancel; answer question; custom decision | One transcript to the correct project; empty input creates nothing |
-| `B03` | Camera | Direct SHOW touch; hardware cue; rear/front; flip; in-app cancel; capture; SHOW+TELL; host exit/relaunch | An intentional SHOW touch opens the lens immediately; hardware-only entry waits for the next touch; cancel returns SHOW; originals survive relaunch |
+| `B03` | Camera | Direct SHOW touch; hardware cue; rear/front; flip; in-app cancel; capture; SHOW+TELL; host exit/relaunch | An intentional camera-target touch opens the lens immediately; hardware-only entry visibly arms that target; cancel returns SHOW; originals survive relaunch |
 | `B04` | Vision | Run the 20-capture matrix in `v3-r1-release-lab.md` | At least 18 valid; zero speech, journal writes, mismatches, or lost originals |
 | `B05` | Product | TELL → SHOW → KNOW → NOW; approve; reverse; review uncertainty | Clear map; stable human-gated decisions; batched uncertainty works |
 | `B06` | Recovery | Offline; force-close; denied camera; timeout; malformed/wrong ID; project switch | Graceful degradation, correct project binding, queue recovery |
@@ -68,17 +68,18 @@ For the visual relay, any unsolicited speech, Rabbit Hole entry, cross-project/c
 
 ### B03 exact camera sequence
 
-RabbitOS does not deliver system Back to this web creation. Back exits STRUCTA; that is the verified host contract, not a failed in-app cancel. Camera permission also requires a direct touch. A touch whose clear intent is to enter SHOW or open its lens should open the preview in that same gesture. Side or empty-SHOW PTT cannot grant camera access; they leave SHOW visible with only a subtle touch cue, and the next intentional SHOW touch opens the lens. User activation is per gesture, not a permission that an earlier arbitrary touch can bank for later.
+RabbitOS does not deliver system Back to this web creation. Back exits STRUCTA; that is the verified host contract, not a failed in-app cancel. Camera permission also requires a direct touch. A touch whose clear intent is to enter empty SHOW or open its lens should open the preview in that same gesture. Side or empty-SHOW PTT cannot grant camera access; they leave SHOW visible and clearly arm its camera area or `+` lens control. One touch on that highlighted target opens the lens, while unrelated SHOW touches remain safe. User activation is per gesture, not a permission that an earlier arbitrary touch can bank for later.
 
 1. Set the proof step to `B03`, close the proof panel, and enter SHOW.
 2. On empty SHOW, tap the empty capture area once. The rear preview must appear directly, without a full-page activation card or a second tap.
 3. Tap the visible top `cancel` button. It must close the lens, return to SHOW, and store no capture.
-4. On empty SHOW, press Side once. SHOW must stay usable and show no more than a subtle `touch to open lens` cue. Tap an appropriate part of SHOW once; the rear preview must open on that touch.
+4. On empty SHOW, press Side once. SHOW must stay usable and visibly highlight its camera area. Tap that area once; the rear preview must open on that touch. With stored references, the same action highlights the existing `+` lens control instead of covering the thumbnail carousel.
 5. Use Wheel to flip rear/front and back. Confirm both previews, then capture one plain frame with Side or by tapping the preview.
 6. Confirm the original appears in SHOW immediately, while its reading may still say that it is processing.
-7. Reopen with one intentional SHOW touch. Hold PTT, say `this sketch shows the studio entrance circulation`, then release. It must capture one SHOW+TELL frame and return to SHOW.
-8. Confirm the second original appears immediately and the spoken context stays attached to that frame. Wait until both B03 captures show either a project reading or an explicit degraded state. The device must not speak and STRUCTA must not create a Rabbit Hole entry.
-9. Only after both captures have settled, press RabbitOS Back. STRUCTA should exit. Relaunch and confirm the project and both originals persist.
+7. Select the first stored frame in SHOW. Hold PTT, say `the blue route is the visitor entrance`, and release. The exact phrase must appear as **your context** on that frame and as the newest TELL note—once, not as a generic `visual note`.
+8. Reopen the lens with one intentional SHOW touch. While the preview is live, hold PTT, say `this sketch shows the studio entrance circulation`, then release. One frame must store immediately; **saving your context…** may appear briefly while native transcription finishes.
+9. Confirm the second frame is selected and the exact live-camera phrase appears both as **your context** and as the newest TELL note. Wait for both visual readings: analysis must not replace either spoken phrase. The device must not speak and STRUCTA must not create a Rabbit Hole entry.
+10. Press RabbitOS Back. STRUCTA should exit. Relaunch and confirm the project, both originals, and both exact comments persist.
 
 The proof requires one camera-open event whose last relevant physical input was direct touch, plus one open→close interval containing no stored capture. A repeated full-page activation interstitial, a second required touch after an intentional SHOW touch, or a system-Back exit cannot satisfy this contract.
 
@@ -86,7 +87,7 @@ The proof requires one camera-open event whose last relevant physical input was 
 
 Finish all of `B03`, including its pending analyses and relaunch check, before advancing the proof panel once to `B04`. Use plain image captures in this phase; SHOW+TELL was already proved in `B03`. Keep exactly one analysis in flight. Note the latest Rabbit Hole entry and count before the first capture.
 
-Prepare these 20 synthetic targets and run them in order:
+Open [`b04-target-pack.html`](b04-target-pack.html) on a laptop/tablet (or print it) for the seven original sketch/diagram targets and the exact household shot list. Prepare these 20 synthetic targets and run them in order:
 
 - `S1–S7` sketches/diagrams: bold hand sketch; annotated plan; flow diagram; low-contrast pencil; rotated page; dense notes; deliberately ambiguous sketch.
 - `P1–P7` spaces: room overview; doorway/circulation; exterior; low light; reflective surface; partial obstruction; deliberately unresolvable scale.

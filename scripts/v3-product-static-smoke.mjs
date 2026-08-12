@@ -61,8 +61,10 @@ has(cascadeSource, /data-hit-key["']:\s*["']show-empty["']/,
   'empty SHOW must expose a direct full-panel camera action');
 lacks(cascadeSource, /SHOW_PRIMED|show_primed|camera-activation|touch required by r1/,
   'the removed camera activation interstitial must have no stale cascade path');
-has(cascadeSource, /function\s+consumeArmedCameraTouch\s*\([\s\S]{0,700}?openCameraFromShow\(["']touch["']\)/,
-  'an armed SHOW must consume the next trusted touch without an interstitial');
+lacks(cascadeSource, /consumeArmedCameraTouch/,
+  'hardware arming must not turn unrelated SHOW touches into camera input');
+has(cascadeSource, /cameraTouchArmed\s*\?\s*["']lens ready · tap \+["']/,
+  'populated SHOW must visibly point to its existing lens control when armed');
 has(cascadeSource, /stateExitHandlers\[STATES\.SHOW_BROWSE\][\s\S]{0,500}?cameraRequestPending[\s\S]{0,300}?StructaCamera\?\.close/,
   'leaving SHOW must cancel a pending camera acquisition');
 lacks(cascadeSource, /__structaCameraGuard|cameraHistoryGuard|history\.pushState|addEventListener\(["']popstate["']/,
@@ -71,6 +73,12 @@ has(indexSource, /#camera-cancel\s*\{[\s\S]{0,320}?min-height:\s*44px/,
   'the live camera must expose a 44px-high visible cancel control');
 has(indexSource, /<button\s+id=["']camera-cancel["'][^>]*>cancel<\/button>/,
   'the live camera cancel control must be a real labeled button');
+has(indexSource, /#camera-transition\s*\{[\s\S]{0,320}?inset:\s*0[\s\S]{0,500}?background:\s*var\(--show\)/,
+  'lens flips must be covered by a full camera-sized STRUCTA transition');
+has(indexSource, /<div\s+id=["']camera-transition["'][\s\S]{0,300}?camera-transition-brand["']>structa<\/div>/,
+  'the flip transition must reuse the STRUCTA wordmark');
+has(cameraSource, /setFlipTransition\(true,\s*nextMode\)[\s\S]{0,1400}?setFlipTransition\(false\)/,
+  'camera flip must bracket device reacquisition with the branded transition');
 has(cameraSource, /cancelButton\?\.addEventListener\(["']pointerup["'][\s\S]{0,280}?stopPropagation\(\)[\s\S]{0,100}?close\(\)/,
   'the live camera cancel must stop the capture tap and close the lens');
 has(cascadeSource, /case\s+STATES\.SHOW_BROWSE:[\s\S]{0,420}?getCaptureList\(\)[\s\S]{0,420}?showCaptureIndex/,

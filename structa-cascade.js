@@ -710,6 +710,7 @@
     const meta = capture?.meta || {};
     if (Number(meta.annotation_window_until || 0) > Date.now()) return 'speak to tag, or wait';
     const stage = lower(meta.analysis_stage || '');
+    if (stage === 'awaiting comment' || lower(meta.analysis_status || '') === 'awaiting-comment') return 'saving your context…';
     if (stage === 'capturing') return 'capturing';
     if (stage === 'queued' || stage === 'analyzing') return 'describing image...';
     if (stage === 'extracting claims') return 'extracting claims';
@@ -1762,17 +1763,6 @@
     window.StructaCamera?.openFromGesture?.(options.facingMode || 'environment');
     scheduleRender();
     return true;
-  }
-
-  function consumeArmedCameraTouch(event) {
-    if (currentState !== STATES.SHOW_BROWSE || !stateData.cameraTouchArmed || stateData.cameraRequestPending) {
-      return false;
-    }
-    event?.preventDefault?.();
-    event?.stopImmediatePropagation?.();
-    fireFeedback('touch-commit');
-    stateData.cameraTouchArmed = false;
-    return openCameraFromShow('touch');
   }
 
   function openTellSurface(extra = {}) {
@@ -3807,15 +3797,15 @@
 
     const lensTap = mk('g', { style: 'cursor: pointer;' });
     mk('rect', {
-      x: 182, y: 6, width: 46, height: MIN_DIRECT_TOUCH, rx: 10, ry: 10,
-      fill: 'rgba(8,8,8,0.001)',
+      x: 142, y: 6, width: 46, height: MIN_DIRECT_TOUCH, rx: 10, ry: 10,
+      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.001)',
       'data-hit-target': 'camera-open',
       'data-hit-key': 'show-lens'
     }, lensTap);
-    mk('rect', { x: 184, y: 15, width: 43, height: 27, rx: 9, ry: 9, fill: 'rgba(8,8,8,0.14)' }, lensTap);
-    mk('circle', { cx: 197, cy: 28.5, r: 5, fill: 'none', stroke: 'rgba(8,8,8,0.90)', 'stroke-width': 1.5 }, lensTap);
-    mk('circle', { cx: 197, cy: 28.5, r: 1.5, fill: 'rgba(8,8,8,0.90)' }, lensTap);
-    text(220, 32, '+', {
+    mk('rect', { x: 144, y: 15, width: 43, height: 27, rx: 9, ry: 9, fill: stateData.cameraTouchArmed ? 'rgba(119,213,255,0.96)' : 'rgba(8,8,8,0.14)' }, lensTap);
+    mk('circle', { cx: 157, cy: 28.5, r: 5, fill: 'none', stroke: 'rgba(8,8,8,0.90)', 'stroke-width': 1.5 }, lensTap);
+    mk('circle', { cx: 157, cy: 28.5, r: 1.5, fill: 'rgba(8,8,8,0.90)' }, lensTap);
+    text(180, 32, '+', {
       fill: 'rgba(8,8,8,0.88)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '16',
@@ -3832,20 +3822,22 @@
       const emptyTap = mk('g', { style: 'cursor: pointer;' });
       mk('rect', {
         x: 12, y: 72, width: 216, height: 166, rx: 14, ry: 14,
-        fill: 'rgba(8,8,8,0.12)',
+        fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.12)',
+        stroke: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.88)' : 'none',
+        'stroke-width': stateData.cameraTouchArmed ? 2 : 0,
         'data-hit-target': 'camera-open',
         'data-hit-key': 'show-empty'
       }, emptyTap);
       mk('circle', { cx: 120, cy: 126, r: 24, fill: 'rgba(8,8,8,0.10)' }, emptyTap);
       mk('rect', { x: 109, y: 119, width: 22, height: 15, rx: 4, ry: 4, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.8 }, emptyTap);
       mk('circle', { cx: 120, cy: 126.5, r: 4.5, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.5 }, emptyTap);
-      text(120, 175, 'tap to open lens', {
+      text(120, 175, stateData.cameraTouchArmed ? 'ready · tap here' : 'tap to open lens', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17',
         'text-anchor': 'middle'
       }, emptyTap);
-      wrapTextBlock(emptyTap, 'sketch · space · material · object', 35, 198, 170, 13, 'rgba(8,8,8,0.56)', '11', 2);
+      wrapTextBlock(emptyTap, stateData.cameraTouchArmed ? 'structa lens · touch to open' : 'sketch · space · material · object', 35, 198, 170, 13, 'rgba(8,8,8,0.56)', '11', 2);
       emptyTap.addEventListener('pointerup', function(event) {
         event.preventDefault();
         event.stopPropagation();
@@ -3857,10 +3849,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      if (stateData.cameraTouchArmed) {
-        mk('circle', { cx: 138, cy: 267.5, r: 3, fill: 'rgba(8,8,8,0.82)' });
-      }
-      text(226, 271, stateData.cameraTouchArmed ? 'touch · open lens' : 'side · prepare lens', {
+      text(226, 271, stateData.cameraTouchArmed ? 'camera area · open' : 'side · prepare lens', {
         fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.84)' : 'rgba(8,8,8,0.44)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -3912,12 +3901,16 @@
       }, imageFrame);
     }
 
+    const awaitingUserContext = model.analysisState === 'awaiting-comment';
+    const hasUserContext = !!String(model.latestCommentText || '').trim();
     const observation = lower(String(
-      reference?.observations?.[0]?.text ||
-      reference?.relevance?.[0]?.text ||
-      model.descriptionText || model.summary || 'reference captured'
+      awaitingUserContext ? 'saving your context…' : (hasUserContext ? model.latestCommentText : (
+        reference?.observations?.[0]?.text ||
+        reference?.relevance?.[0]?.text ||
+        model.descriptionText || model.summary || 'reference captured'
+      ))
     ));
-    text(14, 198, reference ? 'project reading' : (model.analysisReady ? 'visual note' : 'processing quietly'), {
+    text(14, 198, awaitingUserContext ? 'show + tell' : (hasUserContext ? 'your context' : (reference ? 'project reading' : (model.analysisReady ? 'visual note' : 'processing quietly'))), {
       fill: 'rgba(8,8,8,0.46)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '9'
@@ -3954,11 +3947,8 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    if (stateData.cameraTouchArmed) {
-      mk('circle', { cx: 138, cy: 270.5, r: 3, fill: 'rgba(8,8,8,0.82)' });
-    }
-    text(226, 274, stateData.cameraTouchArmed ? 'touch · open lens' : 'side · prepare lens', {
-      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.84)' : 'rgba(8,8,8,0.44)',
+    text(226, 274, stateData.cameraTouchArmed ? 'lens ready · tap +' : 'side · prepare lens', {
+      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
@@ -4056,13 +4046,17 @@
     const model = buildShowSummary();
     const capture = model.current;
     if (!capture) return null;
-    const nodeId = capture?.node_id || captureIdentity(capture);
+    const captureId = captureIdentity(capture);
+    const nodeId = capture?.node_id || '';
     return {
-      kind: capture?.node_id ? 'thread-comment' : 'capture-reference',
+      kind: 'capture-comment',
+      captureId,
+      entryId: captureId,
       nodeId,
       title: 'visual reference',
       text: getCaptureSummary(capture),
       surface: 'show',
+      projectId: getProjectMemory()?.project_id || '',
       createdAt: model.createdAt || '',
       commentKind: 'context',
       projectSummary: getNowV3View().text || ''
@@ -5449,7 +5443,6 @@
         // PTT released = finalize voice strip and capture with annotation
         if (window.StructaCamera?.voiceStripActive) {
           window.StructaCamera?.finalizeVoiceStripCapture?.();
-          transition(STATES.CAMERA_CAPTURE);
         }
         break;
 
@@ -5641,10 +5634,6 @@
   }
 
   svg.addEventListener('wheel', onWheel, { passive: false });
-  // Side/PTT can express camera intent but cannot satisfy getUserMedia's
-  // browser gesture requirement on R1. Consume the very next SHOW touch at
-  // capture phase so that same gesture opens the lens without an interstitial.
-  svg.addEventListener('pointerup', consumeArmedCameraTouch, { capture: true, passive: false });
   svg.addEventListener('pointerdown', onTutorialSkipPointerDown, { passive: true });
   svg.addEventListener('pointermove', onTutorialSkipPointerMove, { passive: true });
   svg.addEventListener('pointerdown', onTouchDebugPointerDown, { passive: true });
@@ -5678,6 +5667,24 @@
   });
 
   // Camera events — transition state machine
+  function selectShowCaptureEntry(entryId) {
+    const preferredId = String(entryId || '').trim();
+    // storeCaptureBundle mutates native memory before emitting capture-stored,
+    // so the SHOW cache must be retired before resolving the new stable ID.
+    invalidateDataCaches();
+    const captures = getCaptureList();
+    const index = preferredId
+      ? captures.findIndex(function(capture) {
+          return [captureIdentity(capture), capture?.entry_id || '', capture?.id || '', capture?.node_id || '', capture?.meta?.bundle_id || '']
+            .filter(Boolean)
+            .includes(preferredId);
+        })
+      : -1;
+    stateData.showCaptureEntryId = preferredId || (captures[captures.length - 1] ? captureIdentity(captures[captures.length - 1]) : '');
+    stateData.showCaptureIndex = index >= 0 ? index : Math.max(0, captures.length - 1);
+    return index >= 0;
+  }
+
   window.addEventListener('structa-camera-open', () => {
     if (currentState === STATES.SHOW_BROWSE) {
       stateData.cameraRequestPending = false;
@@ -5691,11 +5698,8 @@
       const captured = currentState === STATES.CAMERA_CAPTURE || event?.detail?.reason === 'capture';
       const returnState = cameraReturnState;
       cameraReturnState = STATES.HOME;
-      const captures = getCaptureList();
-      if (captures.length) {
-        const lastCapture = captures[captures.length - 1];
-        stateData.showCaptureIndex = captures.length - 1;
-        stateData.showCaptureEntryId = lastCapture?.entry_id || lastCapture?.id || '';
+      if (captured) {
+        selectShowCaptureEntry(stateData.showCaptureEntryId || getUIState().last_capture_entry_id || '');
       }
       transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, returnState === STATES.SHOW_BROWSE ? {
         showStatus: captured ? 'capture ready' : 'camera cancelled'
@@ -5706,15 +5710,7 @@
 
   window.addEventListener('structa-capture-stored', event => {
     const entryId = event && event.detail ? event.detail.entryId : '';
-    const captures = getCaptureList();
-    const index = entryId ? captures.findIndex(capture => (capture?.entry_id || capture?.id || '') === entryId) : -1;
-    if (index >= 0) {
-      stateData.showCaptureIndex = index;
-      stateData.showCaptureEntryId = entryId;
-    } else if (captures.length) {
-      stateData.showCaptureIndex = captures.length - 1;
-      stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
-    }
+    selectShowCaptureEntry(entryId || getUIState().last_capture_entry_id || '');
     if (currentState === STATES.SHOW_BROWSE) render();
     native?.updateUIState?.({ tutorial_step4_camera_denied: false });
     if (onboardingActive() && getOnboardingStep() === 4) {

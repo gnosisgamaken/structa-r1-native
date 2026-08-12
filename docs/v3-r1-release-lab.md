@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.6`
+- UI build: `ui-20260812-structa-v3.7`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
@@ -37,14 +37,15 @@ For every capture record:
 ## Camera entry and cancel contract
 
 - A touch whose clear intent is to enter SHOW or open its lens must open the preview in that same gesture; it must not show a full-page activation card or require a second tap.
-- Side or empty-SHOW PTT cannot satisfy R1 WebView activation. They may show a subtle touch cue on normal SHOW; the next intentional SHOW touch opens the preview.
+- Side or empty-SHOW PTT cannot satisfy R1 WebView activation. They visibly arm the normal SHOW camera area/control; one touch on that highlighted target opens the preview. Unrelated SHOW touches remain normal browsing input.
 - With the preview open, tap the visible top `cancel` button. It must return to SHOW without storing a frame.
 - RabbitOS system Back exits the whole creation and is not an in-app cancel. Test it only after saving an original, then relaunch and verify persistence.
 - The B03 proof is incomplete without both a same-gesture touch-activated camera-open event and an open→in-app-close interval containing no capture.
+- B03 must prove both comment paths: PTT on a selected stored frame, and PTT while the live preview is open. In each case the exact trimmed transcript must appear on that SHOW frame and as one linked TELL note, survive relaunch, and remain unchanged when visual analysis completes.
 
 ## Twenty-capture run order
 
-Advance the proof panel to `B04` only after `B03` and its pending analyses are complete. Note the latest Rabbit Hole entry and count, then capture `S1–S7`, `P1–P7`, and `M1–M6` in the table above. Use a plain capture, wait for its reading or explicit degraded state, record the outcome, and only then open the lens for the next target. Exactly 20 stored captures belong in this phase; a shutter failure that stores no original may be retried.
+Open [`b04-target-pack.html`](b04-target-pack.html) on a laptop/tablet (or print it) for the original S1–S7 targets and practical household P1–P7/M1–M6 shot list. Advance the proof panel to `B04` only after `B03` and its pending analyses are complete. Note the latest Rabbit Hole entry and count, then capture `S1–S7`, `P1–P7`, and `M1–M6` in the table above. Use a plain capture, wait for its reading or explicit degraded state, record the outcome, and only then open the lens for the next target. Exactly 20 stored captures belong in this phase; a shutter failure that stores no original may be retried.
 
 Treat an appropriately uncertain/insufficient reading of an ambiguous target as matched. Degraded means explicitly unavailable; wrong means unrelated, confidently false, or attached to another frame. A shutter or feedback tone is allowed, but spoken words are not. Check Rabbit Hole after captures 5, 10, 15, and 20.
 

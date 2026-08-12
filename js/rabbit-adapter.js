@@ -1151,6 +1151,7 @@
         return entry && (entry.node_id === nodeId || entry.capture_image === entryId || entry.meta?.bundle_id === entryId);
       }) || null;
       if (capture) {
+        capture.input_type = 'image+voice';
         capture.voice_annotation = bodyText || capture.voice_annotation || '';
         capture.prompt_text = bodyText || capture.prompt_text || '';
         capture.meta = {
@@ -1394,7 +1395,10 @@
         origin: entry.origin || 'ptt',
         claim_ids: Array.isArray(entry.claim_ids) ? entry.claim_ids.filter(Boolean) : [],
         clarifies: entry.clarifies || '',
-        contradicts: entry.contradicts || ''
+        contradicts: entry.contradicts || '',
+        request_id: entry.request_id || '',
+        capture_id: entry.capture_id || '',
+        voice_entry_id: entry.voice_entry_id || ''
       };
     }) : [];
   }
@@ -1409,11 +1413,13 @@
     return seen.size;
   }
 
-  function appendThreadComment(nodeId, text, kind, origin) {
+  function appendThreadComment(nodeId, text, kind, origin, options) {
     var bodyText = String(text || '').trim();
     if (!nodeId || bodyText.length < 3) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var targetProjectId = String(opts.projectId || opts.project_id || memory.active_project_id || '').trim();
     var created = null;
-    touchProjectMemory(function(project) {
+    touchProjectMemoryById(targetProjectId, function(project) {
       var node = (project.nodes || []).find(function(entry) {
         return entry.node_id === nodeId && entry.status !== 'archived';
       });
@@ -1442,15 +1448,195 @@
     });
     if (created) {
       traceEvent('thread', 'append-request', 'comment-added', {
+        projectId: targetProjectId,
         nodeId: created.nodeId,
         commentId: created.comment.id,
         depth: created.depth,
         kind: created.comment.kind,
         origin: created.comment.origin
       });
-      emitModelChange({ scope: 'item', itemId: created.nodeId, commentId: created.comment.id });
+      if (targetProjectId === memory.active_project_id) {
+        emitModelChange({ scope: 'item', itemId: created.nodeId, commentId: created.comment.id });
+      }
     }
     return created;
+  }
+
+  /**
+   * Persist the user's exact spoken comment as one atomic, project-bound
+   * visual-comment record. The capture/node thread is the SHOW projection;
+   * the linked voice-entry is the TELL projection. requestId makes a repeated
+   * native STT terminal idempotent without collapsing intentional later
+   * comments that happen to use the same words.
+   */
+  function appendCaptureComment(entryId, nodeId, text, options) {
+    var bodyText = String(text || '').trim();
+    var opts = options && typeof options === 'object' ? options : {};
+    var targetProjectId = String(opts.projectId || opts.project_id || memory.active_project_id || '').trim();
+    var requestId = String(opts.requestId || opts.request_id || '').trim();
+    if ((!entryId && !nodeId) || bodyText.length < 3 || !targetProjectId) return null;
+    var created = null;
+    touchProjectMemoryById(targetProjectId, function(project) {
+      var capture = (project.captures || []).find(function(entry) {
+        return captureRefMatches(entry, entryId, nodeId);
+      }) || null;
+      var node = (project.nodes || []).find(function(entry) {
+        return entry && entry.type === 'capture' && captureRefMatches(entry, entryId, nodeId);
+      }) || null;
+      if (!capture && !node) return;
+
+      var priorVoice = requestId ? (project.nodes || []).find(function(entry) {
+        return entry && entry.type === 'voice-entry' && entry.meta?.entry_mode === 'visual-comment'
+          && entry.meta?.comment_request_id === requestId;
+      }) : null;
+      if (priorVoice) {
+        var priorThread = cloneThread(node?.meta?.thread || capture?.thread || capture?.meta?.thread);
+        var priorComment = priorThread.find(function(entry) {
+          return entry.request_id === requestId || entry.voice_entry_id === priorVoice.node_id;
+        }) || null;
+        created = {
+          projectId: project.project_id,
+          entryId: entryId || capture?.entry_id || capture?.id || node?.capture_image || '',
+          nodeId: node?.node_id || nodeId || capture?.node_id || '',
+          comment: priorComment ? { ...priorComment } : null,
+          voiceEntry: cloneValue(priorVoice),
+          duplicate: true
+        };
+        return;
+      }
+
+      var resolvedEntryId = entryId || capture?.entry_id || capture?.id || node?.capture_image || node?.meta?.bundle_id || '';
+      var resolvedNodeId = node?.node_id || nodeId || capture?.node_id || '';
+      var commentId = contracts.makeEntryId('thread');
+      var at = new Date().toISOString();
+      var voiceEntry = contracts.createNode({
+        project_id: project.project_id,
+        type: 'voice-entry',
+        status: 'open',
+        title: bodyText.slice(0, 42) || 'visual comment',
+        body: bodyText,
+        source: 'show-comment',
+        links: resolvedNodeId ? [resolvedNodeId] : [],
+        meta: {
+          entry_mode: 'visual-comment',
+          created_via: opts.origin || 'show',
+          build_surface: 'show',
+          capture_id: resolvedEntryId,
+          capture_node_id: resolvedNodeId,
+          thread_entry_id: commentId,
+          comment_request_id: requestId,
+          operation_id: opts.operationId || opts.operation_id || ''
+        }
+      });
+      project.nodes.unshift(voiceEntry);
+      if (project.nodes.length > MAX_NODES) project.nodes = project.nodes.slice(0, MAX_NODES);
+
+      var thread = cloneThread(node?.meta?.thread || capture?.thread || capture?.meta?.thread);
+      var comment = {
+        id: commentId,
+        kind: opts.kind || 'context',
+        body: bodyText,
+        summary: compact(bodyText, 72),
+        at: at,
+        origin: opts.origin || 'ptt',
+        request_id: requestId,
+        capture_id: resolvedEntryId,
+        voice_entry_id: voiceEntry.node_id,
+        claim_ids: [],
+        clarifies: '',
+        contradicts: ''
+      };
+      thread.push(comment);
+
+      if (capture) {
+        capture.input_type = 'image+voice';
+        capture.voice_annotation = bodyText;
+        capture.prompt_text = bodyText;
+        capture.latest_comment_text = bodyText;
+        capture.thread = cloneThread(thread);
+        capture.thread_summary = compact(bodyText, 72);
+        capture.meta = {
+          ...(capture.meta || {}),
+          voiceAnnotation: bodyText,
+          annotation_text: bodyText,
+          annotation_updated_at: at,
+          annotation_window_until: 0,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          visual_comment_count: Number(capture.meta?.visual_comment_count || 0) + 1
+        };
+      }
+      if (node) {
+        node.voice_annotation = bodyText;
+        node.tags = Array.isArray(node.tags) ? node.tags : [];
+        if (node.tags.indexOf('show-tell') === -1) node.tags.push('show-tell');
+        node.links = Array.isArray(node.links) ? node.links : [];
+        if (voiceEntry.node_id && node.links.indexOf(voiceEntry.node_id) === -1) node.links.push(voiceEntry.node_id);
+        node.meta = {
+          ...(node.meta || {}),
+          annotation_text: bodyText,
+          annotation_updated_at: at,
+          annotation_window_until: 0,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          thread_updated_at: at,
+          visual_comment_count: Number(node.meta?.visual_comment_count || 0) + 1
+        };
+      }
+      memory.captures = (memory.captures || []).map(function(rawCapture) {
+        if (!captureRefMatches(rawCapture, resolvedEntryId, resolvedNodeId)) return rawCapture;
+        if (rawCapture.project_id && rawCapture.project_id !== project.project_id) return rawCapture;
+        return {
+          ...rawCapture,
+          input_type: 'image+voice',
+          node_id: rawCapture.node_id || resolvedNodeId,
+          voice_annotation: bodyText,
+          prompt_text: bodyText,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          meta: {
+            ...(rawCapture.meta || {}),
+            voiceAnnotation: bodyText,
+            annotation_text: bodyText,
+            annotation_updated_at: at,
+            annotation_window_until: 0,
+            latest_comment_text: bodyText,
+            thread: cloneThread(thread),
+            thread_summary: compact(bodyText, 72),
+            visual_comment_count: Number(rawCapture.meta?.visual_comment_count || 0) + 1
+          }
+        };
+      });
+      created = {
+        projectId: project.project_id,
+        entryId: resolvedEntryId,
+        nodeId: resolvedNodeId,
+        comment: { ...comment },
+        voiceEntry: cloneValue(voiceEntry),
+        duplicate: false
+      };
+    });
+    if (created) {
+      traceEvent('capture.comment', created.duplicate ? 'duplicate' : 'captured', 'stored', {
+        projectId: created.projectId,
+        entryId: created.entryId,
+        nodeId: created.nodeId,
+        commentId: created.comment?.id || '',
+        voiceEntryId: created.voiceEntry?.node_id || '',
+        requestId: requestId
+      });
+      if (created.projectId === memory.active_project_id) {
+        emitModelChange({
+          scope: 'item',
+          itemId: created.nodeId || created.entryId,
+          commentId: created.comment?.id || ''
+        });
+      }
+    }
+    return created ? cloneValue(created) : null;
   }
 
   function findClaimById(project, claimId) {
@@ -1882,7 +2068,8 @@
         return {
           id: n.node_id,
           entry_id: meta.bundle_id || n.capture_image || n.node_id,
-          type: n.capture_image ? 'image' : 'voice',
+          type: n.capture_image ? (n.voice_annotation ? 'image+voice' : 'image') : 'voice',
+          input_type: n.capture_image ? (n.voice_annotation ? 'image+voice' : 'image') : 'voice',
           summary: n.body || n.title,
           description_text: meta.description_text || '',
           latest_comment_text: meta.latest_comment_text || '',
@@ -4006,6 +4193,7 @@
     recordOperationWrite,
     finishOperation,
     appendThreadComment,
+    appendCaptureComment,
     setThreadCommentSummary,
     applyThreadExtraction,
     getNodeThread,

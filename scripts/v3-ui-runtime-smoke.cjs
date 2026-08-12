@@ -169,6 +169,19 @@ panel.transition(states.KNOW_BROWSE);
 assert.match(textContent(), /branches/, 'KNOW renders the project map');
 assert.match(textContent(), /outcome/, 'KNOW includes the outcome branch');
 
+const savedJournals = memory.journals;
+memory.journals = [];
+window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
+panel.transition(states.HOME);
+panel.transition(states.TELL_BROWSE);
+assert.match(textContent(), /ready for voice/, 'empty TELL renders its voice-first action');
+window.dispatchEvent(new window.CustomEvent('longPressStart'));
+assert.equal(panel.getState(), states.VOICE_OPEN, 'empty TELL PTT opens listening mode');
+assert.equal(voiceStarted, 1, 'empty TELL starts native listening');
+panel.transition(states.HOME);
+voiceStarted = 0;
+memory.journals = savedJournals;
+window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
 panel.transition(states.TELL_BROWSE);
 assertHitTargets('tell-row', 2);
 
@@ -224,4 +237,4 @@ assert.equal(oversized.length, 0, 'rendered SVG stays within the 282px surface')
 assert.equal(window.document.getElementById('log-drawer').style.display, 'none', 'production log drawer stays hidden');
 assert.equal(errors.length, 0, errors.map(error => error.message).join('\n'));
 
-console.log('v3 ui runtime smoke · 33 assertions passed');
+console.log('v3 ui runtime smoke · 36 assertions passed');

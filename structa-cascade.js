@@ -5280,16 +5280,17 @@
         break;
       }
 
-      case STATES.TELL_BROWSE:
-        if (!buildTellCommentContext()) break;
+      case STATES.TELL_BROWSE: {
+        const tellContext = buildTellCommentContext() || buildTellVoiceContext();
         voiceReturnState = STATES.TELL_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'commenting',
+          tellStatus: tellContext.nodeId ? 'commenting' : 'listening',
           inlinePTTSurface: 'tell',
-          buildContext: buildTellCommentContext()
+          buildContext: tellContext
         });
         break;
+      }
 
       case STATES.SHOW_BROWSE:
         if (!buildShowSummary().current) break;

@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260811-structa-v3.1`
+- UI build: `ui-20260812-structa-v3.2`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:

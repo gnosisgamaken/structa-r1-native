@@ -1034,7 +1034,8 @@
         ok: !!(response && response.ok && deployShaAvailable),
         current: buildStatus === 'current' && deployShaAvailable
       });
-      updateStatus('ui ' + uiBuild + ' · server ' + serverSha + ' · ' + buildStatus);
+      var serverLabel = deployShaAvailable ? serverSha.slice(0, 12) : serverSha;
+      updateStatus(uiBuild + ' · server ' + serverLabel + ' · ' + buildStatus);
       buildCheck.disabled = false;
     });
     send.addEventListener('click', async function(event) {

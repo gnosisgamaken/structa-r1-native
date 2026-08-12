@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const indexSource = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const cascadeSource = fs.readFileSync(new URL('../structa-cascade.js', import.meta.url), 'utf8');
+const cameraSource = fs.readFileSync(new URL('../js/camera-capture.js', import.meta.url), 'utf8');
 const r1Source = fs.readFileSync(new URL('../js/r1-llm.js', import.meta.url), 'utf8');
 const visionSource = fs.readFileSync(new URL('../js/vision-protocol.js', import.meta.url), 'utf8');
 
@@ -44,10 +45,26 @@ lacks(cascadeSource, /show is off|show is coming later|coming later/i,
   'SHOW must not expose disabled or placeholder copy');
 has(cascadeSource, /function\s+openCameraFromShow\s*\(/,
   'SHOW must provide a camera entry point');
+has(cascadeSource, /function\s+primeCameraFromHardware\s*\(/,
+  'SHOW must expose an explicit hardware-to-touch activation gate');
+has(cascadeSource, /if\s*\(source\s*!==\s*["']touch["']\)\s*return\s+primeCameraFromHardware\(source\)/,
+  'hardware camera requests must stop at the touch activation gate');
 has(cascadeSource, /StructaCamera\?\.openFromGesture\?\.\(options\.facingMode\s*\|\|\s*["']environment["']\)/,
-  'SHOW camera entry must invoke the native camera surface');
+  'the trusted touch path must invoke the native camera surface');
 has(cascadeSource, /case\s+STATES\.SHOW_BROWSE:[\s\S]{0,180}?openCameraFromShow\(["']side["']\)/,
-  'SHOW side click must open the lens');
+  'SHOW side click must route through the camera activation gate');
+has(cascadeSource, /["']data-hit-target["']:\s*["']camera-activation["'][\s\S]{0,900}?openCameraFromShow\(["']touch["']\)/,
+  'the activation gate must expose a direct-touch camera action');
+has(cascadeSource, /width:\s*192,\s*height:\s*54[\s\S]{0,220}?["']data-hit-target["']:\s*["']camera-activation["']/,
+  'the camera activation action must exceed the 44px touch minimum');
+lacks(cascadeSource, /__structaCameraGuard|cameraHistoryGuard|history\.pushState|addEventListener\(["']popstate["']/,
+  'camera navigation must not mutate WebView history or claim system Back');
+has(indexSource, /#camera-cancel\s*\{[\s\S]{0,320}?min-height:\s*44px/,
+  'the live camera must expose a 44px-high visible cancel control');
+has(indexSource, /<button\s+id=["']camera-cancel["'][^>]*>cancel<\/button>/,
+  'the live camera cancel control must be a real labeled button');
+has(cameraSource, /cancelButton\?\.addEventListener\(["']pointerup["'][\s\S]{0,280}?stopPropagation\(\)[\s\S]{0,100}?close\(\)/,
+  'the live camera cancel must stop the capture tap and close the lens');
 has(cascadeSource, /case\s+STATES\.SHOW_BROWSE:[\s\S]{0,420}?getCaptureList\(\)[\s\S]{0,420}?showCaptureIndex/,
   'SHOW wheel path must browse stored references');
 

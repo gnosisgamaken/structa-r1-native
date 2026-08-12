@@ -17,6 +17,7 @@
   const preview = document.getElementById('camera-preview');
   const canvas = document.getElementById('camera-canvas');
   const status = document.getElementById('camera-status');
+  const cancelButton = document.getElementById('camera-cancel');
 
   let stream = null;
   let facingMode = 'environment';
@@ -44,7 +45,7 @@
   const THUMBNAIL_WIDTH = 256;
   const ANALYSIS_JPEG_QUALITY = 0.84;
   const THUMBNAIL_JPEG_QUALITY = 0.7;
-  const CAMERA_READY_STATUS = 'click shoots · tap status cancels';
+  const CAMERA_READY_STATUS = 'tap frame to shoot · wheel flips';
 
   function getCaps() {
     return window.__structaCaps || {};
@@ -1083,14 +1084,16 @@
     window.dispatchEvent(new CustomEvent('structa-camera-open'));
   }
 
-  function hideOverlay() {
+  function hideOverlay(detail = {}) {
     if (!overlayVisible) return;
     overlayVisible = false;
     stopVoiceStrip();
     overlay?.classList.remove('open');
     overlay?.setAttribute('aria-hidden', 'true');
     document.getElementById('app')?.classList.remove('overlay-active');
-    window.dispatchEvent(new CustomEvent('structa-camera-close'));
+    window.dispatchEvent(new CustomEvent('structa-camera-close', {
+      detail: { reason: detail.reason || 'capture' }
+    }));
   }
 
   function killStream() {
@@ -1598,7 +1601,7 @@
     return bundle;
   }
 
-  function close() {
+  function close(options = {}) {
     voiceStripActive = false;
     voiceStripTranscript = '';
     voiceStripStopping = false;
@@ -1608,7 +1611,7 @@
     invalidateCameraSession();
     releaseAllCameraStreams();
     setStatus('camera closed');
-    hideOverlay();
+    hideOverlay({ reason: options.reason || 'cancel' });
   }
 
   // Overlay interactions — scroll=flip, tap=capture
@@ -1620,14 +1623,14 @@
 
   overlay?.addEventListener('pointerup', event => {
     if (!overlay.classList.contains('open')) return;
-    // Don't capture if tapping inside voice strip
-    if (event.target.closest && event.target.closest('#camera-voice-strip')) return;
+    // Don't capture from either explicit camera control.
+    if (event.target.closest && event.target.closest('#camera-voice-strip, #camera-cancel')) return;
     event.preventDefault();
     event.stopPropagation();
     capture();
   });
 
-  status?.addEventListener('pointerup', function(event) {
+  cancelButton?.addEventListener('pointerup', function(event) {
     if (!overlay.classList.contains('open')) return;
     event.preventDefault();
     event.stopPropagation();

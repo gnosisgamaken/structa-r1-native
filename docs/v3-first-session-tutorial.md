@@ -21,14 +21,15 @@ At the end, the user has a small but genuine project map, one classified referen
    - Success: the user focuses at least one branch.
 
 3. **SHOW · add a reference**
-   - Prompt: `Capture a sketch, space, material, object, or reference.`
+   - Prompt: `Tap the camera control, then capture a sketch, space, material, object, or reference.`
+   - Side may focus or prime the empty-SHOW camera control, but the tutorial waits for a direct touch before requesting the lens.
    - After save-first capture, ask for the truth role only when classification is uncertain: existing condition, working artifact, or external inspiration.
    - Success: the original is stored before analysis and the reference is linked to a branch.
 
 4. **NOW · make one decision**
    - Present the highest-leverage decision produced from the real map.
    - Prompt: `Choose an option, or hold PTT for your own answer.`
-   - Success: only an explicit user action locks the decision; Back changes nothing.
+   - Success: only an explicit user action locks the decision; leaving without choosing changes nothing.
 
 5. **Receipt**
    - Show exactly three lines: `changed`, `needs you`, and `next`.
@@ -48,7 +49,8 @@ At the end, the user has a small but genuine project map, one classified referen
 - Ten first-time users complete the flow without facilitator intervention.
 - At least eight reach a correctable map and understand that NOW requires human approval.
 - Median completion time is under 90 seconds.
-- Empty PTT, Back, offline capture, and delayed vision responses do not trap the tutorial.
+- Empty PTT, in-app camera cancel, offline capture, and delayed vision responses do not trap the tutorial.
+- RabbitOS system Back exits the creation. Relaunch resumes the tutorial and preserves every completed step; the tutorial never claims to intercept Back.
 - The same release build passes the physical device proof and 20-capture visual matrix.
 
 ## Minimal analytics

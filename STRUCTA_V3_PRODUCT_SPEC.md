@@ -16,7 +16,7 @@ STRUCTA is not a chatbot, task list, or passive notebook. Conversation is an inp
 |---|---|
 | Reversible structure, branch organization, research leads, source linking, summaries, proposed options, validation plans, next-intervention ranking | Approving or reversing consequential decisions, confirming uncertain observations, changing original user statements, treating an inference as fact, safety/code conclusions |
 
-Model-derived perception, research, and candidate envelopes are schema-validated before a project-bound writer may store them. Consequential state changes are schema-valid proposed operations applied by a deterministic reducer and recorded as events. Decisions are addressed by stable ID and may be approved exactly once. Back never dismisses, skips, or approves.
+Model-derived perception, research, and candidate envelopes are schema-validated before a project-bound writer may store them. Consequential state changes are schema-valid proposed operations applied by a deterministic reducer and recorded as events. Decisions are addressed by stable ID and may be approved exactly once. In-app return/cancel actions never dismiss, skip, or approve. RabbitOS owns the system Back control; it exits the creation and is not an in-app navigation event.
 
 ## Product architecture
 
@@ -73,7 +73,7 @@ Every capture also has one truth role:
 | Working artifact | Represents a sketch, diagram, proposal, or current build—not an accepted fact |
 | External reference | Contributes attributes to adapt or avoid; never becomes project evidence by itself |
 
-Vision proves sketches/diagrams, spaces, and materials/objects first. Uncertainties queue quietly. Review is offered when three items accumulate or when an unresolved item gates a dependent decision/export. Confirm, correct, and dismiss are explicit human operations; Back pauses without changing anything.
+Vision proves sketches/diagrams, spaces, and materials/objects first. Uncertainties queue quietly. Review is offered when three items accumulate or when an unresolved item gates a dependent decision/export. Confirm, correct, and dismiss are explicit human operations; leaving review without choosing changes nothing.
 
 ## Device surfaces
 
@@ -94,9 +94,9 @@ The selected plane expands; the others compress as structural rails. NOW is sele
 
 ### SHOW
 
-SHOW is a capture library, not merely a camera button. A new image appears selected before analysis finishes. Wheel browses. Side opens the camera. PTT records why the selected reference matters. Sketches use `contain`; spaces/materials may use `cover`.
+SHOW is a capture library, not merely a camera button. A new image appears selected before analysis finishes. Wheel browses. A direct touch on the camera affordance supplies the user activation that the R1 WebView requires before `getUserMedia`. On an empty SHOW surface, Side may focus/prime that affordance, but must not be described as opening a cold lens by itself. Once a reference exists, PTT records why it matters. Sketches use `contain`; spaces/materials may use `cover`.
 
-The camera plane appears black immediately, then reveals the feed. There is no wrapper or instructional panel: only a raw reticle and readiness rail. Tap or Side captures, Wheel flips the lens, PTT may annotate, and native Back returns to SHOW.
+After direct-touch activation, the camera plane appears black immediately and then reveals the feed. There is no instructional wrapper: only the live plane, a raw reticle, readiness copy, and one visible top `cancel` button. Tap or Side captures, Wheel flips the lens, and PTT may annotate. The `cancel` button closes the lens and returns to SHOW without storing a frame. RabbitOS system Back exits the creation; after relaunch, saved originals and project state must still be present.
 
 ### TELL
 
@@ -104,7 +104,7 @@ Voice capture always uses the full-screen green plane. A raw recording dot and r
 
 ### KNOW
 
-KNOW is a compressed branch map, not a node graph or four-lane feed. Three to seven branches remain legible without a scrolling dashboard. The focused branch expands to show its outcome or highest-value gap. Wheel selects, Side opens detail, PTT adds/corrects focused context, and Back returns home.
+KNOW is a compressed branch map, not a node graph or four-lane feed. Three to seven branches remain legible without a scrolling dashboard. The focused branch expands to show its outcome or highest-value gap. Wheel selects, Side opens detail, and PTT adds/corrects focused context. In-app navigation returns home; RabbitOS system Back exits the creation.
 
 ### NOW
 
@@ -136,7 +136,7 @@ Run the moderated workflow in `docs/v3-product-pilot.md` and the hardware workfl
 - In blind handoff testing, a collaborator or coding agent can continue from export without re-interviewing the user.
 - Every factual claim and reference has provenance and a truth role.
 - Decisions work with two, three, and four options and cannot be double-approved.
-- Back changes no decision or uncertainty.
+- In-app navigation changes no decision or uncertainty; RabbitOS Back exits without mutating either.
 - Capture receipt appears before analysis and survives offline/timeout/invalid response.
 - No unsolicited speech, journal entry, remote asset request, heartbeat, or navigation tick.
 - All golden surfaces fit 240×282, remain readable, and expose 44×44 direct-touch targets.

@@ -31,7 +31,7 @@ Record timestamps for first saved input, first usable map, first decision-ready 
 - Original statements remain recognizable and are not silently rewritten as facts.
 - Every visual reference has a truth role; uncertain roles or observations are batched for review.
 - No decision locks without explicit Side/touch approval or a spoken custom answer.
-- Back changes no decision or uncertainty.
+- In-app navigation changes no decision or uncertainty; RabbitOS Back exits the creation without mutating either.
 - The project remains navigable after an injected offline/LLM failure.
 
 ## Blind handoff

@@ -182,8 +182,10 @@ function deriveExpectedInvariants(proof, provider, storagePass) {
   const requiredSteps = ['B00', 'B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07'];
   const observedStepCount = requiredSteps.filter(stepObserved).length;
   const b02 = stepObserved('B02');
+  const b03 = stepObserved('B03');
   const b04 = stepObserved('B04');
   const b06 = stepObserved('B06');
+  const b03Events = events.filter(event => event.step_id === 'B03');
   const b04Events = events.filter(event => event.step_id === 'B04');
   const finishEvent = [...events].reverse().find(event => event.type === 'session.finish') || null;
   const finishSeq = finishEvent ? finishEvent.seq : Infinity;
@@ -277,6 +279,42 @@ function deriveExpectedInvariants(proof, provider, storagePass) {
       else pressViolations += 1;
     }
   }
+  const b03CameraOpens = b03Events.filter(event =>
+    event.type === 'camera.event' && eventId(event, 'event_id') === 'structa-camera-open');
+  const isRelevantCameraInput = event =>
+    event.type === 'hardware.input' ||
+    event.type === 'hardware.pointer' ||
+    event.type === 'hardware.touch' ||
+    event.type === 'proof.control';
+  const isDirectTouch = event => !!event && (
+    event.type === 'hardware.touch' ||
+    (event.type === 'hardware.pointer' && eventFlag(event, 'touch'))
+  );
+  const touchActivatedCameraOpen = b03CameraOpens.some(openEvent => {
+    const preceding = b03Events.filter(event => event.seq < openEvent.seq && isRelevantCameraInput(event));
+    return isDirectTouch(preceding.at(-1));
+  });
+  const b03TouchOpenPass = !b03
+    ? true
+    : (!b03CameraOpens.length ? null : touchActivatedCameraOpen);
+  const cancelWithoutCapture = b03CameraOpens.some((openEvent, index) => {
+    const nextOpen = b03CameraOpens[index + 1];
+    const endSeq = nextOpen ? nextOpen.seq : Infinity;
+    const closeEvent = b03Events.find(event =>
+      event.seq > openEvent.seq &&
+      event.seq < endSeq &&
+      event.type === 'camera.event' &&
+      eventId(event, 'event_id') === 'structa-camera-close');
+    if (!closeEvent) return false;
+    return !b03Events.some(event =>
+      event.seq > openEvent.seq &&
+      event.seq < closeEvent.seq &&
+      event.type === 'camera.event' &&
+      eventId(event, 'event_id') === 'structa-capture-stored');
+  });
+  const b03CancelPass = !b03
+    ? true
+    : (!b03CameraOpens.length || !cancelWithoutCapture ? null : true);
   const queueObserved = !!(finishEvent && eventFlag(finishEvent, 'queue_observed'));
   const queueRunning = finishEvent ? eventMetric(finishEvent, 'queue_running') : 0;
   const queuePending = finishEvent ? eventMetric(finishEvent, 'queue_pending') : 0;
@@ -298,6 +336,8 @@ function deriveExpectedInvariants(proof, provider, storagePass) {
     { id: 'vision.id_chain_matches', pass: idChainPass, observed: requestIds.length },
     { id: 'vision.b04_matrix', pass: matrixPass, captures: uniqueCaptureIds.length, success: matrixSuccess, degraded: matrixDegraded, invalid: matrixInvalid, open: matrixOpen },
     { id: 'input.b02_press_pairs', pass: b02 && !pressEvents.length ? null : (pressViolations === 0 && pressStack.length === 0), observed: pressStarts, violations: pressViolations + pressStack.length },
+    { id: 'input.b03_touch_camera_open', pass: b03TouchOpenPass, camera_opens: b03CameraOpens.length, touch_activated_opens: touchActivatedCameraOpen ? 1 : 0 },
+    { id: 'camera.b03_cancel_without_capture', pass: b03CancelPass, camera_opens: b03CameraOpens.length, observed: cancelWithoutCapture ? 1 : 0 },
     { id: 'queue.settled_at_finish', pass: queueObserved ? queueRunning === 0 && queuePending === 0 && queueBlocked === 0 : (b06 || finished ? null : true), running: queueRunning, pending: queuePending, blocked: queueBlocked },
     { id: 'telemetry.content_free', pass: true }
   ];
@@ -305,7 +345,7 @@ function deriveExpectedInvariants(proof, provider, storagePass) {
 
 function invariantComparable(value) {
   const result = {};
-  for (const key of ['id', 'pass', 'observed', 'violations', 'outstanding', 'abandoned', 'required', 'running', 'pending', 'blocked', 'captures', 'success', 'degraded', 'invalid', 'open']) {
+  for (const key of ['id', 'pass', 'observed', 'violations', 'outstanding', 'abandoned', 'required', 'running', 'pending', 'blocked', 'captures', 'success', 'degraded', 'invalid', 'open', 'camera_opens', 'touch_activated_opens']) {
     if (Object.prototype.hasOwnProperty.call(value || {}, key)) result[key] = value[key];
   }
   return result;

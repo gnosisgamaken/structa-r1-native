@@ -25,7 +25,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     return true;
   };
   window.StructaBuild = Object.freeze({
-    uiBuildId: 'ui-20260812-structa-v3.4',
+    uiBuildId: 'ui-20260812-structa-v3.5',
     expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
     assetEpoch: 'test'
   });
@@ -45,7 +45,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     handleAction: actionId => Promise.resolve({
       ok: actionId === 'diagnostics-build-check',
       result: {
-        uiBuildId: 'ui-20260812-structa-v3.4',
+        uiBuildId: 'ui-20260812-structa-v3.5',
         serverBuildSha,
         status: 'current'
       }
@@ -75,6 +75,16 @@ function emitTrace(window, flow, from, to, ctx = {}) {
 
 function invariant(proof, id) {
   return proof.summary.invariants.find(entry => entry.id === id);
+}
+
+function emitDirectTouch(window, pointerId = 1) {
+  const pointer = new window.Event('pointerdown');
+  Object.defineProperties(pointer, {
+    pointerId: { value: pointerId },
+    pointerType: { value: 'touch' },
+    isPrimary: { value: true }
+  });
+  window.dispatchEvent(pointer);
 }
 
 async function waitFor(predicate, timeoutMs = 1000) {
@@ -108,7 +118,7 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.enabled, true, url);
     assert.equal(proof.schema, 'structa.device-proof.v1');
     assert.match(proof.session_id, /^ST-\d{8}-[A-Za-z0-9]{8}$/);
-    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.4');
+    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.5');
     assert.equal(proof.step_id, 'B00');
     assert.equal(proof.events[0].type, 'session.start');
     assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 2 * 60 * 60 * 1000);
@@ -127,6 +137,7 @@ test('all supported device lab routes activate a persistent proof session', () =
     const steppedProof = runtime.window.StructaDeviceLab.getProof();
     assert.equal(steppedProof.step_id, 'B01');
     assert.equal(step.textContent, 'step · B01');
+    assert.match(runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, /system back exits/);
     assert.ok(steppedProof.events.some(event => event.type === 'step.change' && event.step_id === 'B01'));
     for (let index = 0; index < 7; index += 1) step.click();
     assert.equal(runtime.window.StructaDeviceLab.getProof().step_id, 'B00', 'step control wraps after B07');
@@ -164,6 +175,10 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   window.dispatchEvent(new window.CustomEvent('pttEnd'));
 
   lab.setStep('B03');
+  emitDirectTouch(window, 8);
+  window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
+  window.dispatchEvent(new window.CustomEvent('structa-camera-close'));
+  emitDirectTouch(window, 9);
   window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
   for (let index = 1; index <= 20; index += 1) {
     window.dispatchEvent(new window.CustomEvent('structa-capture-stored', {
@@ -249,12 +264,14 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   assert.equal(invariant(proof, 'vision.b04_matrix').pass, true);
   assert.equal(invariant(proof, 'vision.b04_matrix').success, 20);
   assert.equal(invariant(proof, 'input.b02_press_pairs').pass, true);
+  assert.equal(invariant(proof, 'input.b03_touch_camera_open').pass, true);
+  assert.equal(invariant(proof, 'camera.b03_cancel_without_capture').pass, true);
   assert.equal(invariant(proof, 'queue.settled_at_finish').pass, true);
   assert.ok(proof.events.some(event => event.type === 'hardware.pointer'));
   assert.ok(proof.events.some(event => event.type === 'hardware.touch'));
   assert.ok(proof.events.some(event => event.type === 'hardware.motion' && event.flags.shake_detected === true));
   assert.ok(proof.events.every(event => event.session_id === proof.session_id));
-  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.4'));
+  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.5'));
   assert.ok(proof.events.every((event, index) => event.seq === index + 1));
 
   const { validateDeviceProof, decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
@@ -394,7 +411,7 @@ test('build control reports workspace as mismatch and records the safe result', 
   button.click();
   await waitFor(() => button.disabled === false);
   const status = runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent;
-  assert.match(status, /ui-20260812-structa-v3\.4 · server workspace · mismatch/);
+  assert.match(status, /ui-20260812-structa-v3\.5 · server workspace · mismatch/);
   const event = runtime.window.StructaDeviceLab.getProof().events.filter(entry => entry.type === 'proof.control').at(-1);
   assert.equal(event.flags.current, false);
   assert.equal(event.flags.ok, false);
@@ -485,6 +502,8 @@ test('staged phase evidence stays incomplete instead of being reported as a fail
   const proof = lab.getProof();
   assert.equal(invariant(proof, 'coverage.phase_sequence').pass, null);
   assert.equal(invariant(proof, 'input.b02_press_pairs').pass, null);
+  assert.equal(invariant(proof, 'input.b03_touch_camera_open').pass, null);
+  assert.equal(invariant(proof, 'camera.b03_cancel_without_capture').pass, null);
   assert.equal(invariant(proof, 'transport.no_speaker_request').pass, null);
   assert.equal(invariant(proof, 'transport.no_journal_request').pass, null);
 
@@ -494,6 +513,39 @@ test('staged phase evidence stays incomplete instead of being reported as a fail
   assert.equal(result.verdict, 'incomplete');
   assert.ok(result.incomplete_invariants.includes('coverage.phase_sequence'));
   runtime.dom.window.close();
+});
+
+test('B03 distinguishes touch activation and in-app no-capture cancel from host or capture paths', async () => {
+  const sideOnly = boot('https://structa.test/?lab=1');
+  sideOnly.window.StructaDeviceLab.setStep('B03');
+  sideOnly.window.dispatchEvent(new sideOnly.window.CustomEvent('sideClick'));
+  sideOnly.window.dispatchEvent(new sideOnly.window.CustomEvent('structa-camera-open'));
+  let proof = sideOnly.window.StructaDeviceLab.getProof();
+  assert.equal(invariant(proof, 'input.b03_touch_camera_open').pass, false);
+  assert.equal(invariant(proof, 'camera.b03_cancel_without_capture').pass, null);
+  sideOnly.dom.window.close();
+
+  const capturedThenClosed = boot('https://structa.test/?lab=1');
+  capturedThenClosed.window.StructaDeviceLab.setStep('B03');
+  emitDirectTouch(capturedThenClosed.window, 31);
+  capturedThenClosed.window.dispatchEvent(new capturedThenClosed.window.CustomEvent('structa-camera-open'));
+  capturedThenClosed.window.dispatchEvent(new capturedThenClosed.window.CustomEvent('structa-capture-stored', {
+    detail: { entryId: 'capture-before-close' }
+  }));
+  capturedThenClosed.window.dispatchEvent(new capturedThenClosed.window.CustomEvent('structa-camera-close'));
+  proof = capturedThenClosed.window.StructaDeviceLab.getProof();
+  assert.equal(invariant(proof, 'input.b03_touch_camera_open').pass, true);
+  assert.equal(invariant(proof, 'camera.b03_cancel_without_capture').pass, null);
+
+  emitDirectTouch(capturedThenClosed.window, 32);
+  capturedThenClosed.window.dispatchEvent(new capturedThenClosed.window.CustomEvent('structa-camera-open'));
+  capturedThenClosed.window.dispatchEvent(new capturedThenClosed.window.CustomEvent('structa-camera-close'));
+  proof = capturedThenClosed.window.StructaDeviceLab.getProof();
+  assert.equal(invariant(proof, 'camera.b03_cancel_without_capture').pass, true);
+
+  const { validateDeviceProof } = await import('../scripts/validate-device-proof.mjs');
+  assert.deepEqual(validateDeviceProof(proof).errors, []);
+  capturedThenClosed.dom.window.close();
 });
 
 test('observed transport, correlation, press-pair, and blocked-queue violations fail honestly', async () => {

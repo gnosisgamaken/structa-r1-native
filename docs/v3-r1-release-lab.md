@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.4`
+- UI build: `ui-20260812-structa-v3.5`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
@@ -25,7 +25,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 For every capture record:
 
 - Capture appears in SHOW before analysis completes.
-- Original remains available after Back, force close, and offline transition.
+- Original remains available after RabbitOS Back exit/relaunch, force close, and offline transition.
 - No Rabbit speech.
 - No Rabbit Hole journal entry.
 - Response contains the exact outstanding `vision_id` and valid schema.
@@ -34,6 +34,14 @@ For every capture record:
 - Sketch is not treated as accepted fact; external reference is not treated as project evidence.
 - Timeout, invalid JSON, and mismatch remain degraded/non-blocking.
 
+## Camera entry and cancel contract
+
+- Side on empty SHOW may prime the camera affordance but does not prove lens access.
+- Directly touch the SHOW camera affordance; only that touch is expected to satisfy R1 WebView activation and open the preview.
+- With the preview open, tap the visible top `cancel` button. It must return to SHOW without storing a frame.
+- RabbitOS system Back exits the whole creation and is not an in-app cancel. Test it only after saving an original, then relaunch and verify persistence.
+- The B03 proof is incomplete without both a touch-activated camera-open event and an open→in-app-close interval containing no capture.
+
 ## Fault injections
 
 1. Switch projects while one image is analyzing. The result must stay with its originating project or be rejected as stale.
@@ -41,7 +49,7 @@ For every capture record:
 3. Disable connectivity after capture. The image must remain usable and the queue must recover without user intervention.
 4. Return prose before JSON and unrelated bridge text. Only the matching validated envelope may resolve the request.
 5. Force `status: insufficient`. STRUCTA must queue uncertainty and withhold dependent decisions without blocking other branches.
-6. Resolve one uncertainty by each action: confirm, correct, dismiss. Back must resolve none.
+6. Resolve one uncertainty by each action: confirm, correct, dismiss. Then use RabbitOS Back on a fourth item, relaunch, and confirm it remains unresolved.
 
 ## Release threshold
 

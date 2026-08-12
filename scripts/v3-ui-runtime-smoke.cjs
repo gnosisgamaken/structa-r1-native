@@ -18,6 +18,12 @@ const dom = new JSDOM(fs.readFileSync(path.join(repo, 'index.html'), 'utf8'), {
 const { window } = dom;
 let historyBackCalls = 0;
 window.history.back = () => { historyBackCalls += 1; };
+let historyPushCalls = 0;
+const nativeHistoryPushState = window.history.pushState.bind(window.history);
+window.history.pushState = (...args) => {
+  historyPushCalls += 1;
+  return nativeHistoryPushState(...args);
+};
 
 window.HTMLCanvasElement.prototype.getContext = function() {
   return {
@@ -185,59 +191,71 @@ function assertHitTargets(kind, expectedCount) {
 panel.transition(states.SHOW_BROWSE);
 assert.match(textContent(), /project reading|visual note/, 'SHOW renders the selected reference');
 window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(cameraOpened, 1, 'SHOW side click opens the camera');
-assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera ready event enters the camera state');
-assert.ok(window.history.state?.__structaCameraGuard, 'camera open arms one same-page Back guard');
-const captureCountBeforeCameraBack = project.captures.length;
-window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'system Back from camera returns to SHOW');
-assert.equal(cameraClosed, 1, 'system Back closes the live camera once');
-assert.equal(cameraCaptured, 0, 'system Back does not capture a frame');
-assert.equal(project.captures.length, captureCountBeforeCameraBack, 'system Back does not mutate project captures');
-window.history.replaceState({}, '', window.location.href);
+assert.equal(cameraOpened, 0, 'SHOW hardware Side does not request camera permission without a screen touch');
+assert.equal(panel.getState(), states.SHOW_PRIMED, 'SHOW hardware Side enters the explicit touch-activation gate');
+assert.match(textContent(), /touch required by r1.*tap to open lens/, 'the activation gate explains the required device touch');
+const activationTarget = scene.querySelector('rect[data-hit-target="camera-activation"]');
+assert.ok(activationTarget, 'the camera activation gate exposes one direct-touch target');
+assert.ok(Number(activationTarget.getAttribute('width')) >= 44 && Number(activationTarget.getAttribute('height')) >= 44,
+  'the camera activation target is at least 44x44');
+const activationCancel = scene.querySelector('rect[data-hit-target="camera-activation-cancel"]');
+assert.ok(activationCancel, 'the activation gate exposes an explicit cancel target');
+assert.ok(Number(activationCancel.getAttribute('width')) >= 44 && Number(activationCancel.getAttribute('height')) >= 44,
+  'the activation cancel target is at least 44x44');
+activationCancel.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'activation cancel returns to SHOW without requesting a camera');
+assert.equal(cameraOpened, 0, 'activation cancel cannot acquire the lens');
 
 window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera can reopen after a Back cancellation');
+assert.equal(panel.getState(), states.SHOW_PRIMED, 'hardware Side can re-arm the activation gate after cancel');
+const trustedActivationTarget = scene.querySelector('rect[data-hit-target="camera-activation"]');
+const captureCountBeforeCameraOpen = project.captures.length;
+trustedActivationTarget.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, 1, 'a direct screen touch requests the camera exactly once');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera ready after the touch enters the camera state');
+assert.equal(historyPushCalls, 0, 'camera activation never mutates WebView history');
+assert.equal(historyBackCalls, 0, 'camera activation never drives WebView Back');
+
 window.StructaCamera.close();
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'in-camera cancel returns to SHOW');
-assert.equal(historyBackCalls, 1, 'in-camera cancel removes its temporary history guard');
-const openedBeforeCleanup = cameraOpened;
-window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(cameraOpened, openedBeforeCleanup, 'a fast reopen waits for the prior guard cleanup');
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'guard cleanup keeps the queued reopen out of the old camera session');
-window.history.replaceState({}, '', window.location.href);
-window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
-assert.equal(panel.getState(), states.CAMERA_OPEN, 'the queued reopen begins only after its exact cleanup pop settles');
-assert.equal(cameraOpened, openedBeforeCleanup + 1, 'the queued reopen runs exactly once');
-assert.ok(window.history.state?.__structaCameraGuard, 'the reopened camera owns a new Back guard');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'visible in-camera cancel returns to SHOW');
+assert.equal(cameraClosed, 1, 'visible in-camera cancel closes the lens exactly once');
+assert.equal(cameraCaptured, 0, 'visible in-camera cancel never captures a frame');
+assert.equal(project.captures.length, captureCountBeforeCameraOpen, 'activation and cancel do not mutate project captures');
+assert.equal(historyPushCalls, 0, 'camera cancel leaves WebView history untouched');
+assert.equal(historyBackCalls, 0, 'camera cancel does not impersonate system Back');
 
+window.dispatchEvent(new window.CustomEvent('sideClick'));
+assert.equal(panel.getState(), states.SHOW_PRIMED, 'camera can be armed again after cancellation');
+scene.querySelector('rect[data-hit-target="camera-activation"]')
+  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'a new direct touch can reopen the camera');
 window.dispatchEvent(new window.CustomEvent('sideClick'));
 assert.equal(cameraCaptured, 1, 'camera Side capture still captures exactly once');
 assert.equal(panel.getState(), states.SHOW_BROWSE, 'capture completion returns to SHOW');
-assert.equal(historyBackCalls, 2, 'capture completion removes its temporary history guard');
-window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'a post-capture reopen also waits for cleanup');
-window.history.replaceState({}, '', window.location.href);
-window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
-assert.equal(panel.getState(), states.CAMERA_OPEN, 'capture cleanup opens only the newly requested camera');
-window.StructaCamera.close();
-assert.equal(historyBackCalls, 3, 'final camera cancel starts one cleanup');
-window.history.replaceState({}, '', window.location.href);
-window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'a delayed cleanup with no reopen stays on SHOW');
+assert.equal(historyPushCalls, 0, 'capture completion leaves WebView history untouched');
+assert.equal(historyBackCalls, 0, 'capture completion never invokes WebView Back');
 
-const readyOpenFromGesture = window.StructaCamera.openFromGesture;
-window.StructaCamera.openFromGesture = function() { cameraOpened += 1; };
 window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'camera acquisition stays on SHOW until preview is ready');
-assert.ok(window.history.state?.__structaCameraGuard, 'camera acquisition is guarded before preview readiness');
+assert.equal(panel.getState(), states.SHOW_PRIMED, 'post-capture hardware Side still waits for touch');
+const openedBeforeLeavingGate = cameraOpened;
 panel.goHome();
-assert.equal(panel.getState(), states.HOME, 'leaving SHOW cancels a still-opening lens');
-window.history.replaceState({}, '', window.location.href);
-window.dispatchEvent(new window.PopStateEvent('popstate', { state: null }));
-window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
-assert.equal(panel.getState(), states.HOME, 'a late camera-ready event cannot reopen over Home');
-window.StructaCamera.openFromGesture = readyOpenFromGesture;
+assert.equal(panel.getState(), states.HOME, 'leaving the activation gate returns Home');
+assert.equal(cameraOpened, openedBeforeLeavingGate, 'leaving the activation gate never acquires a lens');
+assert.equal(project.captures.length, captureCountBeforeCameraOpen, 'leaving the activation gate cannot mutate the project');
+
+const savedCaptureRows = project.captures.slice();
+project.captures.splice(0, project.captures.length);
+window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
+panel.transition(states.SHOW_BROWSE);
+const openedBeforeEmptyShowPtt = cameraOpened;
+window.dispatchEvent(new window.CustomEvent('longPressStart'));
+assert.equal(panel.getState(), states.SHOW_PRIMED, 'empty SHOW PTT also enters the explicit touch-activation gate');
+assert.equal(cameraOpened, openedBeforeEmptyShowPtt, 'empty SHOW PTT cannot acquire the camera without touch');
+window.dispatchEvent(new window.CustomEvent('longPressEnd'));
+scene.querySelector('rect[data-hit-target="camera-activation-cancel"]')
+  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+project.captures.push(...savedCaptureRows);
+window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
 
 panel.transition(states.KNOW_BROWSE);
 assert.match(textContent(), /branches/, 'KNOW renders the project map');

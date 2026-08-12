@@ -41,6 +41,7 @@ function createHarness(getUserMedia, previewState) {
         <video id="camera-preview"></video>
         <canvas id="camera-canvas"></canvas>
         <button id="camera-status"></button>
+        <button id="camera-cancel" type="button">cancel</button>
         <div id="camera-voice-strip"><span class="strip-text"></span></div>
       </section>
     </div>`, {
@@ -79,7 +80,8 @@ function createHarness(getUserMedia, previewState) {
     window,
     overlay: window.document.getElementById('camera-overlay'),
     preview,
-    status: window.document.getElementById('camera-status')
+    status: window.document.getElementById('camera-status'),
+    cancel: window.document.getElementById('camera-cancel')
   };
 }
 
@@ -137,6 +139,31 @@ test('close stops an active camera and clears the primed stream', async function
   assert.equal(harness.preview.srcObject, null);
   assert.equal(harness.overlay.classList.contains('open'), false);
   assert.equal(harness.window.StructaCamera.primed, false);
+});
+
+test('the visible in-camera cancel closes without capturing or mutating project memory', async function(t) {
+  const media = fakeStream();
+  const harness = createHarness(function() { return Promise.resolve(media.stream); });
+  t.after(function() { harness.dom.window.close(); });
+  let closes = 0;
+  let stored = 0;
+  let projectMutations = 0;
+  harness.window.addEventListener('structa-camera-close', function() { closes += 1; });
+  harness.window.addEventListener('structa-capture-stored', function() { stored += 1; });
+  harness.window.StructaNative.touchProjectMemory = function() { projectMutations += 1; };
+
+  harness.window.StructaCamera.openFromGesture('environment');
+  await waitFor(function() { return harness.overlay.classList.contains('open'); });
+  const cancelPointer = new harness.window.Event('pointerup', { bubbles: true });
+  Object.defineProperty(cancelPointer, 'pointerType', { value: 'touch' });
+  harness.cancel.dispatchEvent(cancelPointer);
+
+  assert.equal(closes, 1);
+  assert.equal(stored, 0);
+  assert.equal(projectMutations, 0);
+  assert.equal(media.track.stops, 1);
+  assert.equal(harness.overlay.classList.contains('open'), false);
+  assert.equal(harness.preview.srcObject, null);
 });
 
 test('close during preview attachment cannot reopen the overlay', async function(t) {

@@ -56,15 +56,30 @@ Run these phases in order. Set the active device-lab step before each phase when
 | Step ID | Phase | Required actions | Pass condition |
 |---|---|---|---|
 | `B00` | Build truth | Cold launch, open **proof**, run **check build** | Correct UI/assets/server; no boot error |
-| `B01` | Hardware | Touch; 10 wheel detents each way; Side; Back; PTT; shake | One intended action per input; no accidental mutation |
+| `B01` | Hardware | Touch; 10 wheel detents each way; Side; PTT; shake; system Back last | One intended action per input; system Back exits; relaunch resumes without mutation |
 | `B02` | Voice | Known phrase; empty release; cancel; answer question; custom decision | One transcript to the correct project; empty input creates nothing |
-| `B03` | Camera | Rear; front; flip; cancel; capture; SHOW+TELL | Original saves before analysis and survives Back/restart |
+| `B03` | Camera | Side prime; direct-touch activation; rear/front; flip; in-app cancel; capture; SHOW+TELL; host exit/relaunch | Touch opens the lens; cancel returns SHOW; original saves before analysis and survives host exit/relaunch |
 | `B04` | Vision | Run the 20-capture matrix in `v3-r1-release-lab.md` | At least 18 valid; zero speech, journal writes, mismatches, or lost originals |
 | `B05` | Product | TELL → SHOW → KNOW → NOW; approve; reverse; review uncertainty | Clear map; stable human-gated decisions; batched uncertainty works |
 | `B06` | Recovery | Offline; force-close; denied camera; timeout; malformed/wrong ID; project switch | Graceful degradation, correct project binding, queue recovery |
 | `B07` | Export | Finish lab session; export proof; export project corpus | Proof and corpus reopen and validate |
 
 For the visual relay, any unsolicited speech, Rabbit Hole entry, cross-project/cross-capture callback, or lost original is an automatic blocker even if 18 of 20 captures otherwise pass.
+
+### B03 exact camera sequence
+
+RabbitOS does not deliver system Back to this web creation. Back exits STRUCTA; that is the verified host contract, not a failed in-app cancel. Camera permission also requires a direct touch: Side may prime the empty-SHOW affordance, but cannot open a cold lens alone.
+
+1. Set the proof step to `B03`, close the proof panel, and enter SHOW.
+2. On empty SHOW, press Side once. It should reveal/focus the lens affordance; do not expect a live preview yet.
+3. Tap the SHOW camera affordance once. The rear preview must appear from that direct touch.
+4. Use Wheel to flip rear/front and back. Confirm both previews.
+5. Tap the visible top `cancel` button. It must close the lens, return to SHOW, and store no capture.
+6. Reopen with the direct-touch affordance. Capture once with tap or Side, then repeat once with PTT annotation for SHOW+TELL.
+7. Confirm both originals appear in SHOW before analysis finishes.
+8. Only after the saved-original check, press RabbitOS Back. STRUCTA should exit. Relaunch and confirm the project and originals persist.
+
+The proof requires one camera-open event whose last relevant physical input was direct touch, plus one open→close interval containing no stored capture. A system-Back exit cannot satisfy the cancel check because it produces no in-app camera-close event.
 
 The machine proof can establish that STRUCTA never requested speaker output or an automatic journal entry through the intercepted bridge. It cannot hear the device or inspect Rabbit Hole itself. The tester's direct observation and the Rabbit Hole screenshot are therefore separate required evidence; a green validator result alone is not the physical release verdict.
 

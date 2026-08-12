@@ -16,6 +16,16 @@
   var MAX_EVENTS = 1600;
   var MAX_TRANSPORT_BODY = 2700;
   var MAX_TRANSPORT_PARTS = 48;
+  var STEP_GUIDANCE = Object.freeze({
+    B00: 'B00 · check build before testing',
+    B01: 'B01 · controls · system back exits',
+    B02: 'B02 · voice · empty input saves nothing',
+    B03: 'B03 · side primes · touch opens · cancel button returns',
+    B04: 'B04 · 20 silent vision captures',
+    B05: 'B05 · map · decisions · uncertainty',
+    B06: 'B06 · offline · errors · recovery',
+    B07: 'B07 · export proof and project'
+  });
   var DANGEROUS_KEY = /(?:token|secret|auth|credential|cookie|key)/i;
   var SEMANTIC_ID_KEYS = Object.freeze({
     action_id: true,
@@ -316,8 +326,10 @@
     var requiredSteps = ['B00', 'B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07'];
     var observedStepCount = requiredSteps.filter(stepObserved).length;
     var b02 = stepObserved('B02');
+    var b03 = stepObserved('B03');
     var b04 = stepObserved('B04');
     var b06 = stepObserved('B06');
+    var b03Events = events.filter(function(event) { return event.step_id === 'B03'; });
     var b04Events = events.filter(function(event) { return event.step_id === 'B04'; });
     var finishEvent = events.slice().reverse().find(function(event) { return event.type === 'session.finish'; }) || null;
     var finishSeq = finishEvent ? finishEvent.seq : Infinity;
@@ -440,6 +452,51 @@
       }
     });
 
+    var b03CameraOpens = b03Events.filter(function(event) {
+      return event.type === 'camera.event' && eventId(event, 'event_id') === 'structa-camera-open';
+    });
+    var isRelevantCameraInput = function(event) {
+      return event.type === 'hardware.input'
+        || event.type === 'hardware.pointer'
+        || event.type === 'hardware.touch'
+        || event.type === 'proof.control';
+    };
+    var isDirectTouch = function(event) {
+      return !!event && (
+        event.type === 'hardware.touch'
+        || (event.type === 'hardware.pointer' && eventFlag(event, 'touch'))
+      );
+    };
+    var touchActivatedCameraOpen = b03CameraOpens.some(function(openEvent) {
+      var preceding = b03Events.filter(function(event) {
+        return event.seq < openEvent.seq && isRelevantCameraInput(event);
+      });
+      return isDirectTouch(preceding[preceding.length - 1]);
+    });
+    var b03TouchOpenPass = !b03
+      ? true
+      : (!b03CameraOpens.length ? null : touchActivatedCameraOpen);
+    var cancelWithoutCapture = b03CameraOpens.some(function(openEvent, index) {
+      var nextOpen = b03CameraOpens[index + 1];
+      var endSeq = nextOpen ? nextOpen.seq : Infinity;
+      var closeEvent = b03Events.find(function(event) {
+        return event.seq > openEvent.seq
+          && event.seq < endSeq
+          && event.type === 'camera.event'
+          && eventId(event, 'event_id') === 'structa-camera-close';
+      });
+      if (!closeEvent) return false;
+      return !b03Events.some(function(event) {
+        return event.seq > openEvent.seq
+          && event.seq < closeEvent.seq
+          && event.type === 'camera.event'
+          && eventId(event, 'event_id') === 'structa-capture-stored';
+      });
+    });
+    var b03CancelPass = !b03
+      ? true
+      : (!b03CameraOpens.length || !cancelWithoutCapture ? null : true);
+
     var queueObserved = !!(finishEvent && eventFlag(finishEvent, 'queue_observed'));
     var queueRunning = finishEvent ? eventMetric(finishEvent, 'queue_running') : 0;
     var queuePending = finishEvent ? eventMetric(finishEvent, 'queue_pending') : 0;
@@ -511,6 +568,18 @@
         pass: b02 && !pressEvents.length ? null : (pressViolations === 0 && pressStack.length === 0),
         observed: pressStarts,
         violations: pressViolations + pressStack.length
+      },
+      {
+        id: 'input.b03_touch_camera_open',
+        pass: b03TouchOpenPass,
+        camera_opens: b03CameraOpens.length,
+        touch_activated_opens: touchActivatedCameraOpen ? 1 : 0
+      },
+      {
+        id: 'camera.b03_cancel_without_capture',
+        pass: b03CancelPass,
+        camera_opens: b03CameraOpens.length,
+        observed: cancelWithoutCapture ? 1 : 0
       },
       {
         id: 'queue.settled_at_finish',
@@ -966,7 +1035,7 @@
       var eventCount = current && current.summary ? current.summary.event_count : 0;
       var currentStep = current ? safeStep(current.step_id) : 'B00';
       step.textContent = 'step · ' + currentStep;
-      status.textContent = label || ((current ? current.session_id : 'no session') + ' · ' + currentStep + ' · ' + eventCount + ' events');
+      status.textContent = label || STEP_GUIDANCE[currentStep] || ((current ? current.session_id : 'no session') + ' · ' + currentStep + ' · ' + eventCount + ' events');
     }
 
     function stop(event) {
@@ -999,7 +1068,7 @@
       var index = match ? Number(match[1]) : 0;
       var next = 'B0' + ((index + 1) % 8);
       setStep(next);
-      updateStatus('proof step set to ' + next);
+      updateStatus(STEP_GUIDANCE[next] || ('proof step set to ' + next));
     });
     buildCheck.addEventListener('click', async function(event) {
       stop(event);

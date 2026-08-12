@@ -11,7 +11,7 @@ STRUCTA is a Rabbit R1-native project instrument, not a chatbot, feed, dashboard
 - **know** — inspect the governed project map
 - **now** — handle one highest-leverage intervention
 
-The fixed device surface is 240×282. Use PowerGrotesk Regular only; do not synthesize bold weights. The four colored planes, lowercase copy, full-screen camera/voice, native Back, wheel selection, Side action, and PTT context are product invariants.
+The fixed device surface is 240×282. Use PowerGrotesk Regular only; do not synthesize bold weights. The four colored planes, lowercase copy, full-screen camera/voice, wheel selection, Side action, and PTT context are product invariants. RabbitOS owns system Back and exits the creation; app-local return and cancel must use visible in-app controls.
 
 ## Authority and truth
 
@@ -41,7 +41,8 @@ All asynchronous work must retain its originating `projectId`. Switching project
 
 - Capture is visible and durable before enrichment begins.
 - AI failure never loses an original or blocks navigation.
-- Back changes no decision or uncertainty.
+- In-app navigation changes no decision or uncertainty; RabbitOS Back exits without mutating either.
+- A cold camera requires direct-touch user activation on R1. Side may prime the empty-SHOW camera affordance, but must never be the only `getUserMedia` trigger.
 - NOW decisions use stable identity, two to four real options, and explicit human approval.
 - Three queued uncertainties—or one high-impact uncertainty gating a decision—outrank the decision card.
 - Direct-touch targets are at least 44×44 and must not overlap.

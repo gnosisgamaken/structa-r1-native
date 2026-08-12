@@ -85,10 +85,6 @@
   let voiceReturnState = STATES.HOME;
   let pttInputActive = false;
   let transitionTargetState = null;
-  let cameraHistoryGuardArmed = false;
-  let cameraHistoryGuardToken = '';
-  let cameraHistoryCleanupPending = null;
-  let pendingCameraOpenRequest = null;
   let sideClickTimer = null;
   let touchLogPressTimer = null;
   let touchLogPressPointerId = null;
@@ -192,106 +188,6 @@
 
   function recordingActive() {
     return currentState === STATES.VOICE_OPEN && !!window.StructaVoice?.listening;
-  }
-
-  function cameraGuardStateToken() {
-    const value = window.history?.state;
-    return value && typeof value === 'object'
-      ? String(value.__structaCameraGuard || '')
-      : '';
-  }
-
-  // Rabbit creations do not receive the system toolbar Back as a hardware
-  // event. A single same-page entry lets the WebView consume Back while the
-  // lens is active; every other close removes it immediately.
-  function armCameraHistoryGuard() {
-    if (cameraHistoryGuardArmed) return true;
-    if (cameraHistoryCleanupPending) return false;
-    try {
-      if (!window.history || typeof window.history.pushState !== 'function') {
-        throw new Error('history unavailable');
-      }
-      const existingToken = cameraGuardStateToken();
-      cameraHistoryGuardToken = existingToken || ('camera-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
-      if (!existingToken) {
-        const previousState = window.history?.state;
-        const nextState = previousState && typeof previousState === 'object'
-          ? { ...previousState }
-          : {};
-        nextState.__structaCameraGuard = cameraHistoryGuardToken;
-        window.history.pushState(nextState, '', window.location.href);
-      }
-      cameraHistoryGuardArmed = true;
-      native?.traceEvent?.('camera.navigation', 'idle', 'guarded', {
-        guardId: cameraHistoryGuardToken
-      });
-      return true;
-    } catch (error) {
-      cameraHistoryGuardArmed = false;
-      cameraHistoryGuardToken = '';
-      native?.traceEvent?.('camera.navigation', 'idle', 'guard-unavailable', {
-        reason: error?.message || 'history unavailable'
-      });
-      return false;
-    }
-  }
-
-  function markCameraHistoryGuardConsumed(reason = 'back') {
-    if (!cameraHistoryGuardArmed) return false;
-    const guardId = cameraHistoryGuardToken;
-    cameraHistoryGuardArmed = false;
-    cameraHistoryGuardToken = '';
-    native?.traceEvent?.('camera.navigation', 'guarded', 'consumed', {
-      guardId: guardId,
-      reason: reason
-    });
-    return true;
-  }
-
-  function disarmCameraHistoryGuard(reason = 'close') {
-    if (!cameraHistoryGuardArmed) return false;
-    const guardId = cameraHistoryGuardToken;
-    const ownsCurrentEntry = cameraGuardStateToken() === guardId;
-    cameraHistoryGuardArmed = false;
-    cameraHistoryGuardToken = '';
-    if (ownsCurrentEntry && typeof window.history?.back === 'function') {
-      cameraHistoryCleanupPending = {
-        guardId: guardId,
-        reason: reason,
-        requestedAt: Date.now()
-      };
-      try {
-        window.history.back();
-      } catch (_) {
-        cameraHistoryCleanupPending = null;
-      }
-    }
-    native?.traceEvent?.('camera.navigation', 'guarded', 'disarmed', {
-      guardId: guardId,
-      reason: reason,
-      historyBack: ownsCurrentEntry
-    });
-    return true;
-  }
-
-  function settleCameraHistoryCleanup() {
-    if (!cameraHistoryCleanupPending) return false;
-    const cleanup = cameraHistoryCleanupPending;
-    cameraHistoryCleanupPending = null;
-    native?.traceEvent?.('camera.navigation', 'cleanup', 'settled', {
-      guardId: cleanup.guardId,
-      reason: cleanup.reason,
-      durationMs: Math.max(0, Date.now() - Number(cleanup.requestedAt || Date.now()))
-    });
-    const request = pendingCameraOpenRequest;
-    pendingCameraOpenRequest = null;
-    if (request) {
-      onNextFrame(function() {
-        if (cameraHistoryCleanupPending || currentState !== STATES.SHOW_BROWSE) return;
-        openCameraFromShow(request.source, request.options);
-      });
-    }
-    return true;
   }
 
   function recordingDot(x, y, r, parent = svg, fill = '#b51212') {
@@ -827,7 +723,7 @@
   }
 
   function getShowFooter(model) {
-    return model?.current ? 'side · new capture' : 'side · open lens';
+    return 'side · prepare lens';
   }
 
   function buildUISnapshot() {
@@ -1007,8 +903,6 @@
   }
 
   function fullUIRuntimeReset(options = {}) {
-    pendingCameraOpenRequest = null;
-    disarmCameraHistoryGuard('runtime-reset');
     clearPendingSideClick();
     clearTouchLogPress();
     clearTutorialSkipTouch();
@@ -1547,17 +1441,21 @@
     }
   };
 
-  // --- SHOW_PRIMED (legacy invisible warm state) ---
+  // --- SHOW_PRIMED ---
+  // R1 does not count the hardware button as a browser activation gesture.
+  // This explicit state explains the required touch before requesting camera
+  // access, so the first trusted screen tap opens the lens reliably.
   stateEnterHandlers[STATES.SHOW_PRIMED] = function(data) {
     document.title = 'show';
     native?.setActiveNode?.('show');
-    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
+    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'show' });
     window.StructaVoice?.close?.();
+    stateData.showStatus = data?.showStatus || 'touch required';
+    stateData.cameraActivationSource = data?.cameraActivationSource || 'hardware';
   };
 
   stateExitHandlers[STATES.SHOW_PRIMED] = function(data) {
-    if (currentState !== STATES.CAMERA_OPEN) {
-      // User cancelled priming — close camera
+    if (transitionTargetState !== STATES.CAMERA_OPEN) {
       window.StructaCamera?.close?.();
       window.__STRUCTA_PTT_TARGET__ = null;
     }
@@ -1825,22 +1723,33 @@
     }
   }
 
+  function primeCameraFromHardware(source = 'hardware') {
+    cameraReturnState = STATES.SHOW_BROWSE;
+    transition(STATES.SHOW_PRIMED, {
+      showStatus: 'touch required',
+      cameraActivationSource: source
+    });
+    native?.traceEvent?.('camera.activation', 'hardware', 'touch-required', {
+      source: source
+    });
+    return true;
+  }
+
   function openCameraFromShow(source = 'touch', options = {}) {
-    if (cameraHistoryCleanupPending) {
-      pendingCameraOpenRequest = { source: source, options: { ...options } };
-      stateData.showStatus = 'resetting lens';
-      scheduleRender();
-      return true;
-    }
-    stateData.showStatus = 'opening lens';
+    if (source !== 'touch') return primeCameraFromHardware(source);
     stateData.pendingShowNarration = false;
-    if (currentState !== STATES.SHOW_BROWSE) {
-      transition(STATES.SHOW_BROWSE, {
-        showStatus: 'opening lens'
+    if (currentState !== STATES.SHOW_PRIMED) {
+      transition(STATES.SHOW_PRIMED, {
+        showStatus: 'opening lens',
+        cameraActivationSource: 'touch'
       });
+    } else {
+      stateData.showStatus = 'opening lens';
     }
     cameraReturnState = STATES.SHOW_BROWSE;
-    armCameraHistoryGuard();
+    native?.traceEvent?.('camera.activation', 'touch-required', 'requesting', {
+      source: source
+    });
     window.StructaCamera?.openFromGesture?.(options.facingMode || 'environment');
     scheduleRender();
     return true;
@@ -2267,6 +2176,7 @@
       case STATES.SHOW_BROWSE:
         return 'show';
       case STATES.SHOW_PRIMED:
+        return 'show';
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
         return 'camera';
@@ -2288,7 +2198,7 @@
   }
 
   function surfaceMode() {
-    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE || currentState === STATES.SHOW_PRIMED) {
+    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       return 'camera';
     }
     if (currentState === STATES.VOICE_OPEN) return 'recording';
@@ -3877,6 +3787,73 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: showCard.color });
     drawSurfaceHeader(showCard);
 
+    if (currentState === STATES.SHOW_PRIMED) {
+      mk('rect', { x: 12, y: 66, width: 216, height: 188, rx: 14, ry: 14, fill: 'rgba(8,8,8,0.12)' });
+      mk('rect', { x: 101, y: 83, width: 38, height: 27, rx: 7, ry: 7, fill: 'none', stroke: 'rgba(8,8,8,0.92)', 'stroke-width': 2 });
+      mk('circle', { cx: 120, cy: 96.5, r: 6.5, fill: 'none', stroke: 'rgba(8,8,8,0.92)', 'stroke-width': 2 });
+      text(120, 129, 'open the lens', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '19',
+        'text-anchor': 'middle'
+      });
+      text(120, 146, 'touch required by r1', {
+        fill: 'rgba(8,8,8,0.56)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      });
+
+      const openTarget = mk('g', { style: 'cursor: pointer;', role: 'button', tabindex: '0', 'aria-label': 'tap to open lens' });
+      mk('rect', {
+        x: 24, y: 158, width: 192, height: 54, rx: 12, ry: 12,
+        fill: 'rgba(8,8,8,0.90)',
+        'data-hit-target': 'camera-activation',
+        'data-hit-key': 'camera-activation-open'
+      }, openTarget);
+      text(120, 191, stateData.showStatus === 'opening lens' ? 'opening lens…' : 'tap to open lens', {
+        fill: 'rgba(244,239,228,0.98)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '16',
+        'text-anchor': 'middle'
+      }, openTarget);
+      openTarget.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        openCameraFromShow('touch');
+      });
+
+      const cancelTarget = mk('g', { style: 'cursor: pointer;', role: 'button', tabindex: '0', 'aria-label': 'stay in show' });
+      mk('rect', {
+        x: 72, y: 215, width: 96, height: 44, rx: 10, ry: 10,
+        fill: 'rgba(8,8,8,0.06)',
+        stroke: 'rgba(8,8,8,0.24)',
+        'stroke-width': 1,
+        'data-hit-target': 'camera-activation-cancel',
+        'data-hit-key': 'camera-activation-cancel'
+      }, cancelTarget);
+      text(120, 242, 'cancel', {
+        fill: 'rgba(8,8,8,0.72)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '13',
+        'text-anchor': 'middle'
+      }, cancelTarget);
+      cancelTarget.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        transition(STATES.SHOW_BROWSE, { showStatus: 'ready' });
+      });
+      text(120, 273, 'hardware prepared · screen touch grants access', {
+        fill: 'rgba(8,8,8,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9',
+        'text-anchor': 'middle'
+      });
+      return;
+    }
+
     const lensTap = mk('g', { style: 'cursor: pointer;' });
     mk('rect', { x: 184, y: 15, width: 43, height: 27, rx: 9, ry: 9, fill: 'rgba(8,8,8,0.14)' }, lensTap);
     mk('circle', { cx: 197, cy: 28.5, r: 5, fill: 'none', stroke: 'rgba(8,8,8,0.90)', 'stroke-width': 1.5 }, lensTap);
@@ -3900,7 +3877,7 @@
       mk('circle', { cx: 120, cy: 126, r: 24, fill: 'rgba(8,8,8,0.10)' }, emptyTap);
       mk('rect', { x: 109, y: 119, width: 22, height: 15, rx: 4, ry: 4, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.8 }, emptyTap);
       mk('circle', { cx: 120, cy: 126.5, r: 4.5, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.5 }, emptyTap);
-      text(120, 175, 'capture a reference', {
+      text(120, 175, 'tap to open lens', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '17',
@@ -3918,7 +3895,7 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      text(226, 271, 'side · open lens', {
+      text(226, 271, 'side · prepare lens', {
         fill: 'rgba(8,8,8,0.44)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4012,7 +3989,7 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, 274, 'side · new capture', {
+    text(226, 274, 'side · prepare lens', {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -5379,7 +5356,7 @@
         if (onboardingActive()) break;
         const card = currentCard();
         if (card.id === 'show' && !buildShowSummary().current) {
-          transition(STATES.SHOW_BROWSE, { showStatus: 'ready' });
+          primeCameraFromHardware('ptt');
           break;
         }
         if (card.id === 'now') {
@@ -5414,7 +5391,10 @@
       }
 
       case STATES.SHOW_BROWSE:
-        if (!buildShowSummary().current) break;
+        if (!buildShowSummary().current) {
+          primeCameraFromHardware('ptt');
+          break;
+        }
         voiceReturnState = STATES.SHOW_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
@@ -5499,7 +5479,7 @@
     switch (currentState) {
       case STATES.SHOW_PRIMED:
         stateData.pendingShowNarration = false;
-        transition(STATES.SHOW_BROWSE, { showStatus: 'ready' });
+        scheduleRender();
         break;
 
       case STATES.SHOW_BROWSE:
@@ -5547,16 +5527,6 @@
     if (stateData.flushRequestSource) {
       clearFlushRequest();
     }
-    pendingCameraOpenRequest = null;
-    if (cameraHistoryGuardArmed || cameraHistoryCleanupPending) {
-      cameraReturnState = STATES.HOME;
-      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
-      disarmCameraHistoryGuard('navigation');
-      if (currentState !== STATES.HOME && currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE) {
-        transition(STATES.HOME);
-      }
-      return;
-    }
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       cameraReturnState = STATES.HOME;
       window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
@@ -5568,21 +5538,6 @@
   function handleNativeBack(event) {
     clearPendingSideClick();
     pttInputActive = false;
-    if (event?.type === 'popstate' && cameraHistoryCleanupPending) {
-      if (event) event.preventDefault?.();
-      settleCameraHistoryCleanup();
-      return;
-    }
-    if (cameraHistoryGuardArmed && (event?.type === 'popstate' || event?.type === 'backbutton')) {
-      if (event) event.preventDefault?.();
-      if (event?.type === 'popstate') markCameraHistoryGuardConsumed('system-back');
-      cameraReturnState = STATES.SHOW_BROWSE;
-      window.StructaCamera?.close?.({ reason: 'back', teardown: true });
-      if (currentState !== STATES.CAMERA_OPEN && currentState !== STATES.CAMERA_CAPTURE && currentState !== STATES.SHOW_BROWSE) {
-        transition(STATES.SHOW_BROWSE, { showStatus: 'camera cancelled' });
-      }
-      return;
-    }
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       if (event) event.preventDefault?.();
       native?.updateUIState?.({ flush_undo_available_until: 0 });
@@ -5767,15 +5722,14 @@
   // Camera events — transition state machine
   window.addEventListener('structa-camera-open', () => {
     if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
-      armCameraHistoryGuard();
       transition(STATES.CAMERA_OPEN);
     }
     stateData.pendingShowNarration = false;
   });
 
-  window.addEventListener('structa-camera-close', () => {
-    disarmCameraHistoryGuard('camera-close');
+  window.addEventListener('structa-camera-close', (event) => {
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
+      const captured = currentState === STATES.CAMERA_CAPTURE || event?.detail?.reason === 'capture';
       const returnState = cameraReturnState;
       cameraReturnState = STATES.HOME;
       const captures = getCaptureList();
@@ -5785,7 +5739,7 @@
         stateData.showCaptureEntryId = lastCapture?.entry_id || lastCapture?.id || '';
       }
       transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, returnState === STATES.SHOW_BROWSE ? {
-        showStatus: 'capture ready'
+        showStatus: captured ? 'capture ready' : 'camera cancelled'
       } : {});
     }
     scheduleLogRefresh({ forceFollow: true });
@@ -5839,7 +5793,9 @@
   });
 
   window.addEventListener('structa-camera-denied', function(event) {
-    disarmCameraHistoryGuard('camera-denied');
+    if (currentState === STATES.SHOW_PRIMED) {
+      transition(STATES.SHOW_BROWSE, { showStatus: 'camera blocked · tap lens to retry' });
+    }
     if (!onboardingActive() || getOnboardingStep() !== 4) return;
     native?.updateUIState?.({ tutorial_step4_camera_denied: true });
     traceTutorial('tutorial.step', 'camera_denied', '4', { step: 4 });
@@ -6058,7 +6014,6 @@
   window.addEventListener('pttStart', handlePTTInputStart);
   window.addEventListener('pttEnd', handlePTTInputEnd);
   window.addEventListener('backbutton', handleNativeBack);
-  window.addEventListener('popstate', handleNativeBack);
   window.addEventListener('pagehide', function() { pttInputActive = false; });
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) pttInputActive = false;

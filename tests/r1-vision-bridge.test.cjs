@@ -40,6 +40,7 @@ function validEnvelope(visionId) {
 
 function createRuntime() {
   const posted = [];
+  const dispatched = [];
   const native = {
     deviceId: 'test-device',
     probeMode: false,
@@ -68,12 +69,18 @@ function createRuntime() {
     __structaCaps: { hasBridge: true, hasVoiceBridge: false, hasNativeCamera: false, hasTone: false },
     addEventListener() {},
     removeEventListener() {},
-    dispatchEvent() {},
+    dispatchEvent(event) { dispatched.push(event); },
     r1: {}
   };
   const context = vm.createContext({
     window,
     document: { createElement() { return {}; } },
+    CustomEvent: class CustomEvent {
+      constructor(type, init = {}) {
+        this.type = type;
+        this.detail = init.detail;
+      }
+    },
     PluginMessageHandler: {
       postMessage(payload) { posted.push(JSON.parse(payload)); }
     },
@@ -83,7 +90,7 @@ function createRuntime() {
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'js', 'r1-llm.js'), 'utf8');
   vm.runInContext(source, context, { filename: 'r1-llm.js' });
-  return { window, posted };
+  return { window, posted, dispatched };
 }
 
 async function waitUntil(predicate, timeoutMs = 1000) {
@@ -137,4 +144,15 @@ test('r1 image bridge posts exact payload and resolves only exact schema/id resp
   assert.equal(result.interpretations.length, 1);
   assert.equal(result.implications.length, 1);
   assert.equal(result.uncertainties.length, 1);
+});
+
+test('r1 bridge forwards an empty sttEnded as a terminal capture event', () => {
+  const runtime = createRuntime();
+
+  runtime.window.onPluginMessage({ type: 'sttEnded', transcript: '' });
+
+  assert.equal(runtime.dispatched.length, 1);
+  assert.equal(runtime.dispatched[0].type, 'structa-stt-ended');
+  assert.equal(runtime.dispatched[0].detail.transcript, '');
+  assert.equal(runtime.posted.length, 0);
 });

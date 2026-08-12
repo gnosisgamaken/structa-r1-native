@@ -669,13 +669,15 @@
       });
     }
 
-    // STT handling — match exact R1 format: { type: 'sttEnded', transcript: '...' }
-    if (data && data.type === 'sttEnded' && data.transcript) {
+    // STT handling — an empty sttEnded is still a terminal native capture.
+    // Dispatch it so voice-capture can release the saved per-capture context
+    // before another PTT session starts.
+    if (data && data.type === 'sttEnded') {
       if (previousHandler) {
         try { previousHandler(data); } catch (e) {}
       }
       window.dispatchEvent(new CustomEvent('structa-stt-ended', {
-        detail: { transcript: data.transcript }
+        detail: { transcript: typeof data.transcript === 'string' ? data.transcript : '' }
       }));
       return;
     }

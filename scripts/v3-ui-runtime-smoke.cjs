@@ -108,14 +108,17 @@ window.StructaCamera = {
 };
 
 let voiceStarted = 0;
+let voiceStopped = 0;
+const questionContexts = [];
+const buildContexts = [];
 window.StructaVoice = {
   listening: false,
   open() {},
-  close() {},
-  startListening() { voiceStarted += 1; },
-  stopListening() {},
-  setQuestionContext() {},
-  setBuildContext() {},
+  close() { this.listening = false; },
+  startListening() { this.listening = true; voiceStarted += 1; },
+  stopListening() { this.listening = false; voiceStopped += 1; },
+  setQuestionContext(context) { questionContexts.push({ ...context }); },
+  setBuildContext(context) { buildContexts.push({ ...context }); },
   setTriangleContext() {},
   setContextLabel() {}
 };
@@ -178,8 +181,14 @@ assert.match(textContent(), /ready for voice/, 'empty TELL renders its voice-fir
 window.dispatchEvent(new window.CustomEvent('longPressStart'));
 assert.equal(panel.getState(), states.VOICE_OPEN, 'empty TELL PTT opens listening mode');
 assert.equal(voiceStarted, 1, 'empty TELL starts native listening');
+window.dispatchEvent(new window.CustomEvent('pttStart'));
+assert.equal(voiceStarted, 1, 'duplicate PTT start aliases produce one capture');
+window.dispatchEvent(new window.CustomEvent('longPressEnd'));
+window.dispatchEvent(new window.CustomEvent('pttEnd'));
+assert.equal(voiceStopped, 1, 'duplicate PTT end aliases produce one stop');
 panel.transition(states.HOME);
 voiceStarted = 0;
+voiceStopped = 0;
 memory.journals = savedJournals;
 window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
 panel.transition(states.TELL_BROWSE);
@@ -203,6 +212,37 @@ panel.transition(states.NOW_BROWSE);
 window.dispatchEvent(new window.CustomEvent('sideClick'));
 assert.equal(project.pending_decisions.length, 0, 'NOW side click approves by stable ID');
 assert.equal(project.decisions.length, 1, 'approved decision is durable');
+
+panel.transition(states.HOME);
+panel.transition(states.NOW_BROWSE);
+assert.match(textContent(), /who must this work for/, 'NOW exposes the canonical audience map gap');
+window.dispatchEvent(new window.CustomEvent('longPressStart'));
+window.dispatchEvent(new window.CustomEvent('pttStart'));
+assert.equal(panel.getState(), states.VOICE_OPEN, 'map-gap PTT opens listening mode');
+assert.equal(voiceStarted, 1, 'map-gap aliases start one capture');
+assert.equal(questionContexts.length, 1, 'map gap is routed as an answer context');
+assert.equal(questionContexts[0].mapGap, true);
+assert.equal(questionContexts[0].branchId, 'audience');
+assert.equal(questionContexts[0].projectId, 'p1');
+assert.equal(questionContexts[0].text, 'who must this work for?');
+assert.equal(buildContexts.some((context) => context.kind === 'project-intervention'), false,
+  'map gap cannot fall through to generic project intervention');
+window.dispatchEvent(new window.CustomEvent('longPressEnd'));
+window.dispatchEvent(new window.CustomEvent('pttEnd'));
+assert.equal(voiceStopped, 1, 'map-gap release stops one capture');
+
+voiceStarted = 0;
+voiceStopped = 0;
+panel.transition(states.NOW_BROWSE);
+window.dispatchEvent(new window.CustomEvent('longPressStart'));
+window.dispatchEvent(new window.CustomEvent('backbutton'));
+assert.equal(voiceStopped, 1, 'Back cancels an active capture');
+panel.transition(states.NOW_BROWSE);
+window.dispatchEvent(new window.CustomEvent('pttStart'));
+assert.equal(voiceStarted, 2, 'Back clears the PTT latch so the next hold starts');
+window.dispatchEvent(new window.CustomEvent('pttEnd'));
+voiceStarted = 0;
+voiceStopped = 0;
 
 window.StructaProjectEngine.ensure(project);
 project.structa_v3.references.push({
@@ -237,4 +277,4 @@ assert.equal(oversized.length, 0, 'rendered SVG stays within the 282px surface')
 assert.equal(window.document.getElementById('log-drawer').style.display, 'none', 'production log drawer stays hidden');
 assert.equal(errors.length, 0, errors.map(error => error.message).join('\n'));
 
-console.log('v3 ui runtime smoke · 36 assertions passed');
+console.log('v3 ui runtime smoke · 49 assertions passed');

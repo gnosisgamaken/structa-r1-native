@@ -83,6 +83,7 @@
   let logReturnState = STATES.HOME;
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
+  let pttInputActive = false;
   let transitionTargetState = null;
   let sideClickTimer = null;
   let touchLogPressTimer = null;
@@ -921,6 +922,7 @@
     wheelDeltaAccumulator = 0;
     lastNativeScrollAt = 0;
     lastNativeScrollDirection = 0;
+    pttInputActive = false;
     resetTutorialSurfaceState();
     resetVoiceChrome();
     invalidateDataCaches();
@@ -1195,7 +1197,10 @@
     stateExitHandlers[prev]?.(prevStateData);
 
     currentState = newState;
-    stateData = { ...stateData, ...data };
+    const voiceReset = newState === STATES.VOICE_OPEN
+      ? { answeringQuestion: null, buildContext: null, triangleMode: false, fromPTT: false }
+      : {};
+    stateData = { ...stateData, ...voiceReset, ...data };
     transitionTargetState = null;
 
     // Enter new state
@@ -1744,18 +1749,22 @@
       return true;
     }
     voiceReturnState = returnState || STATES.NOW_BROWSE;
-    if (intervention.type === 'question') {
-      const questions = getProjectMemory()?.open_question_nodes || getProjectMemory()?.open_questions || [];
-      const questionIndex = Math.max(0, questions.findIndex(function(item, index) {
+    if (intervention.type === 'question' || intervention.type === 'map_gap') {
+      const isMapGap = intervention.type === 'map_gap';
+      const questions = isMapGap ? [] : (getProjectMemory()?.open_question_nodes || getProjectMemory()?.open_questions || []);
+      const questionIndex = isMapGap ? -1 : Math.max(0, questions.findIndex(function(item, index) {
         const raw = typeof item === 'string' ? {} : item;
         return (raw.node_id || raw.id || 'question-' + index) === intervention.id;
       }));
       transition(STATES.VOICE_OPEN, {
         answeringQuestion: {
           index: questionIndex,
-          nodeId: intervention.id || '',
+          nodeId: isMapGap ? '' : (intervention.id || ''),
           text: intervention.text || '',
-          source: 'question'
+          source: isMapGap ? 'map-gap' : 'question',
+          projectId: getProjectMemory()?.project_id || '',
+          mapGap: isMapGap,
+          branchId: intervention.branch_id || (isMapGap ? intervention.id : '') || ''
         },
         fromPTT: fromPTT !== false,
         inlinePTTSurface: inlineSurface || 'project'
@@ -5227,23 +5236,22 @@
     }
     switch (currentState) {
       case STATES.CAMERA_OPEN:
-        if (event) event.preventDefault?.();
-        window.StructaCamera?.close?.();
-        return;
+        // PTT while camera is open = SHOW+TELL voice strip.
+        window.StructaCamera?.startVoiceStrip?.();
+        break;
 
       case STATES.CAMERA_CAPTURE:
-        if (event) event.preventDefault?.();
         return;
 
       case STATES.VOICE_OPEN:
-        if (event) event.preventDefault?.();
-        stateData.uncertaintyCorrectionId = '';
-        if (window.StructaVoice?.listening) window.StructaVoice.stopListening(false);
-        else window.StructaVoice?.close?.();
+        // A tapped voice affordance opens this state before the physical hold.
+        // Start the capture here; duplicate native aliases are filtered by the
+        // logical PTT gate before they reach the state machine.
+        document.body.classList.add('input-locked');
+        if (!window.StructaVoice?.listening) window.StructaVoice?.startListening?.();
         return;
 
       case STATES.VOICE_PROCESSING: {
-        if (event) event.preventDefault?.();
         const returnState = voiceReturnState || STATES.HOME;
         voiceReturnState = STATES.HOME;
         stateData.inlinePTTSurface = '';
@@ -5303,11 +5311,6 @@
         });
         break;
 
-      case STATES.CAMERA_OPEN:
-        // PTT while camera is open = SHOW+TELL voice strip
-        window.StructaCamera?.startVoiceStrip?.();
-        break;
-
       case STATES.NOW_BROWSE: {
         beginNowInterventionVoice(STATES.NOW_BROWSE, true, 'project');
         break;
@@ -5318,12 +5321,6 @@
         if (item) beginUncertaintyCorrection(item);
         break;
       }
-
-      case STATES.VOICE_OPEN:
-        // PTT while voice is already open — no-op
-        document.body.classList.add('input-locked');
-        window.StructaVoice?.startListening?.();
-        break;
 
       case STATES.LOG_OPEN:
         voiceReturnState = STATES.LOG_OPEN;
@@ -5447,6 +5444,7 @@
 
   function handleNativeBack(event) {
     clearPendingSideClick();
+    pttInputActive = false;
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       if (event) event.preventDefault?.();
       native?.updateUIState?.({ flush_undo_available_until: 0 });
@@ -5463,6 +5461,13 @@
       case STATES.PROJECT_SWITCHER:
         if (event) event.preventDefault?.();
         transition(STATES.HOME);
+        return;
+
+      case STATES.VOICE_OPEN:
+        if (event) event.preventDefault?.();
+        stateData.uncertaintyCorrectionId = '';
+        if (window.StructaVoice?.listening) window.StructaVoice.stopListening(false);
+        else window.StructaVoice?.close?.();
         return;
 
       case STATES.SHOW_BROWSE:
@@ -5732,6 +5737,7 @@
   });
 
   window.addEventListener('structa-voice-close', () => {
+    pttInputActive = false;
     if (currentState === STATES.VOICE_OPEN || currentState === STATES.VOICE_PROCESSING || currentState === STATES.KNOW_ANSWER) {
       // Clean up answer mode styling
       var voiceOverlay = document.getElementById('voice-overlay');
@@ -5885,12 +5891,30 @@
   window.addEventListener('scrollUp', event => { event.preventDefault?.(); dispatchScrollStep(1, 'native'); });
   window.addEventListener('scrollDown', event => { event.preventDefault?.(); dispatchScrollStep(-1, 'native'); });
   window.addEventListener('sideClick', event => { event.preventDefault?.(); triggerSideClick(); });
-  window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
-  window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
-  window.addEventListener('pttStart', event => { event.preventDefault?.(); handleLongPressStart(); });
-  window.addEventListener('pttEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
+  function handlePTTInputStart(event) {
+    event.preventDefault?.();
+    if (pttInputActive) return;
+    pttInputActive = true;
+    handleLongPressStart();
+  }
+
+  function handlePTTInputEnd(event) {
+    event.preventDefault?.();
+    if (!pttInputActive) return;
+    pttInputActive = false;
+    handleLongPressEnd();
+  }
+
+  window.addEventListener('longPressStart', handlePTTInputStart);
+  window.addEventListener('longPressEnd', handlePTTInputEnd);
+  window.addEventListener('pttStart', handlePTTInputStart);
+  window.addEventListener('pttEnd', handlePTTInputEnd);
   window.addEventListener('backbutton', handleNativeBack);
   window.addEventListener('popstate', handleNativeBack);
+  window.addEventListener('pagehide', function() { pttInputActive = false; });
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) pttInputActive = false;
+  });
 
   // Keyboard fallback
   document.addEventListener('keydown', event => {

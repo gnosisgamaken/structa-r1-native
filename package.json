@@ -9,7 +9,7 @@
     "start": "python3 server.py",
     "smoke:r1a": "node scripts/r1a-serial-smoke.mjs",
     "test": "npm run check:v3 && npm run check:harness && npm run check:ux-harness && npm run check:voice-doctrine",
-    "check:v3": "node scripts/v3-engine-smoke.mjs && node scripts/v3-orchestrator-smoke.mjs && node --test tests/vision-protocol.test.cjs tests/r1-vision-bridge.test.cjs tests/research-provenance.test.cjs tests/project-isolation.test.cjs && npm run check:device-proof && npm run check:r1a-smoke && node scripts/v3-adapter-runtime-smoke.cjs && node scripts/v3-product-static-smoke.mjs && node scripts/v3-ui-runtime-smoke.cjs",
+    "check:v3": "node scripts/v3-engine-smoke.mjs && node scripts/v3-orchestrator-smoke.mjs && node --test tests/vision-protocol.test.cjs tests/r1-vision-bridge.test.cjs tests/research-provenance.test.cjs tests/project-isolation.test.cjs tests/voice-capture.test.cjs tests/now-voice-integration.test.cjs && npm run check:device-proof && npm run check:r1a-smoke && node scripts/v3-adapter-runtime-smoke.cjs && node scripts/v3-product-static-smoke.mjs && node scripts/v3-ui-runtime-smoke.cjs",
     "check:device-proof": "node --test tests/device-lab.test.cjs",
     "check:r1a-smoke": "node --test tests/r1a-serial-smoke.test.mjs",
     "validate:device-proof": "node scripts/validate-device-proof.mjs",

@@ -13,6 +13,8 @@
   const MAX_EVENTS = 1000;
   const MAX_REFERENCES = 200;
   const MAX_UNCERTAINTIES = 300;
+  const MAX_PROJECT_ANSWERS = 120;
+  const MAX_PROJECT_NODES = 240;
   const VALID_BRANCH_STATES = ['seed', 'open', 'blocked', 'decision_ready', 'decided', 'validate', 'closed'];
   const OPERATION_TYPES = Object.freeze([
     'branch.update', 'branch.open', 'branch.close',
@@ -515,6 +517,176 @@
     return { ok: true, added: clone(added), count: added.length };
   }
 
+  function answerMapGap(branchId, answer, options) {
+    const targetBranchId = compact(branchId || '', 64);
+    const answerText = compact(answer || '', 320);
+    const details = options && typeof options === 'object' ? options : {};
+    const projectId = compact(details.projectId || details.project_id || '', 80);
+    if (!targetBranchId) return { ok: false, error: 'branch_id required', code: 'map-gap-shape' };
+    if (answerText.length < 3) return { ok: false, error: 'answer required', code: 'map-gap-shape' };
+
+    let response = { ok: false, error: 'branch not found', code: 'branch-not-found', branch_id: targetBranchId };
+    const mutation = mutateActive(function(project) {
+      let state = project.structa_v3;
+      let branch = state.branches.find(function(entry) { return entry.id === targetBranchId; });
+      if (!branch) return project;
+
+      let constitutionField = '';
+      let constitutionValue = null;
+      if (branch.id === 'audience') {
+        constitutionField = 'audience';
+        constitutionValue = compact(answerText, 180);
+      } else if (branch.id === 'outcome') {
+        constitutionField = 'outcome';
+        constitutionValue = compact(answerText, 320);
+      } else if (branch.id === 'validation') {
+        constitutionField = 'success';
+        constitutionValue = compact(answerText, 220);
+      } else if (branch.id === 'constraints') {
+        constitutionField = 'constraints';
+        constitutionValue = uniqueStrings((state.constitution.constraints || []).concat([answerText]), 20);
+      }
+      const summaryValue = compact(answerText, 180);
+      const sameValue = function(left, right) { return JSON.stringify(left) === JSON.stringify(right); };
+      const existingVoice = (project.nodes || []).find(function(node) {
+        return node?.type === 'voice-entry'
+          && node?.status !== 'archived'
+          && node?.meta?.entry_mode === 'map-gap-answer'
+          && node?.meta?.branch_id === branch.id
+          && node?.body === answerText;
+      }) || null;
+      const existingAnswer = existingVoice
+        ? (project.answers || []).find(function(item) { return item?.id === existingVoice.meta?.answer_node_id; }) || null
+        : null;
+      const currentConstitutionValue = constitutionField ? state.constitution[constitutionField] : null;
+      if (existingVoice && existingAnswer && branch.summary === summaryValue && sameValue(currentConstitutionValue, constitutionValue)) {
+        response = {
+          ok: true,
+          replayed: true,
+          branch_id: branch.id,
+          branch: clone(branch),
+          answerNode: clone(existingAnswer),
+          voiceEntry: clone(existingVoice)
+        };
+        return project;
+      }
+
+      const currentIntervention = getNowView(project);
+      if (currentIntervention.type !== 'map_gap' || currentIntervention.branch_id !== branch.id) {
+        response = {
+          ok: false,
+          stale: true,
+          error: 'map gap is no longer current',
+          code: 'stale-intervention',
+          branch_id: branch.id,
+          current_type: currentIntervention.type,
+          current_branch_id: currentIntervention.branch_id || ''
+        };
+        return project;
+      }
+
+      const at = nowIso();
+      const before = {
+        branch: clone(branch),
+        constitution_value: clone(currentConstitutionValue)
+      };
+      if (constitutionField) state.constitution[constitutionField] = clone(constitutionValue);
+      branch.summary = summaryValue;
+      branch.updated_at = at;
+      state.constitution.updated_at = at;
+      state.last_advanced_at = at;
+
+      // Reconcile before capturing the event's after-state so the audit trail
+      // exactly matches the normalized durable map (including completeness).
+      reconcile(project);
+      state = project.structa_v3;
+      branch = state.branches.find(function(entry) { return entry.id === targetBranchId; });
+
+      project.answers = Array.isArray(project.answers) ? project.answers : [];
+      project.nodes = Array.isArray(project.nodes) ? project.nodes : [];
+      const answerNode = {
+        id: makeId('answer'),
+        questionId: 'map-gap:' + branch.id,
+        branchId: branch.id,
+        body: answerText,
+        claims: [],
+        sttConfidence: null,
+        at: at,
+        meta: {
+          entry_mode: 'map-gap-answer',
+          question_text: compact(details.questionText || branch.driving_question || '', 180),
+          human_answer: true
+        }
+      };
+      project.answers.unshift(answerNode);
+      const evictedAnswers = project.answers.splice(MAX_PROJECT_ANSWERS);
+
+      const voiceEntry = {
+        node_id: makeId('voice'),
+        project_id: projectIdOf(project),
+        type: 'voice-entry',
+        status: 'open',
+        title: compact('answered: ' + (details.questionText || branch.driving_question || branch.title), 72),
+        body: answerText,
+        source: 'voice-answer',
+        links: [],
+        tags: ['now', 'map-gap', branch.id],
+        confidence: 'high',
+        created_at: at,
+        resolved_at: null,
+        meta: {
+          entry_mode: 'map-gap-answer',
+          created_via: 'now',
+          branch_id: branch.id,
+          answer_node_id: answerNode.id,
+          question_text: compact(details.questionText || branch.driving_question || '', 180),
+          constitution_field: constitutionField,
+          human_answer: true
+        }
+      };
+      project.nodes.unshift(voiceEntry);
+      const evictedNodes = project.nodes.splice(MAX_PROJECT_NODES);
+
+      recordEvent(project, 'map_gap.answered', {
+        branch_id: branch.id,
+        answer_id: answerNode.id,
+        voice_entry_id: voiceEntry.node_id,
+        evicted_answers: clone(evictedAnswers),
+        evicted_nodes: clone(evictedNodes),
+        constitution_field: constitutionField,
+        before: before,
+        after: {
+          branch: clone(branch),
+          constitution_value: constitutionField ? clone(state.constitution[constitutionField]) : null
+        }
+      }, 'human');
+      response = {
+        ok: true,
+        branch_id: branch.id,
+        branch: branch,
+        answerNode: answerNode,
+        voiceEntry: voiceEntry
+      };
+      return project;
+    }, projectId);
+    if (mutation?.stale) return mutation;
+    if (!response.ok) return response;
+
+    const current = projectId && window.StructaNative?.getProjectMemoryById
+      ? window.StructaNative.getProjectMemoryById(projectId)
+      : window.StructaNative?.getProjectMemory?.();
+    const currentBranch = current?.structa_v3?.branches?.find(function(entry) { return entry.id === targetBranchId; });
+    response.branch = clone(currentBranch || response.branch);
+    response.project = clone(current || mutation || null);
+    if (!response.replayed) {
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'map-gap-answer', branchId: targetBranchId }
+      }));
+      window.StructaNative?.emitModelChange?.({ scope: 'now', itemId: targetBranchId });
+    }
+    return clone(response);
+  }
+
   function normalizeObservation(raw, index) {
     if (typeof raw === 'string') {
       return { id: 'obs-' + (index + 1), text: compact(raw, 180), confidence: 0.65 };
@@ -873,7 +1045,54 @@
     let response = { ok: false, error: 'reversible event not found' };
     mutateActive(function(project) {
       const event = project.structa_v3.events.find(function(item) { return item.id === eventId; });
-      if (!event || event.type.indexOf('branch.') !== 0 || !event.payload?.before || !event.payload?.after) return project;
+      if (!event || !event.payload?.before || !event.payload?.after) return project;
+      if (project.structa_v3.events.some(function(item) {
+        return item.type === 'event.reverted' && item.payload?.reverted_event_id === eventId;
+      })) {
+        response = { ok: false, error: 'event already reverted', code: 'already-reverted', event_id: eventId };
+        return project;
+      }
+
+      if (event.type === 'map_gap.answered') {
+        const payload = event.payload;
+        const branch = project.structa_v3.branches.find(function(item) { return item.id === payload.branch_id; });
+        if (!branch) return project;
+        const field = compact(payload.constitution_field || '', 32);
+        const sameValue = function(left, right) { return JSON.stringify(left) === JSON.stringify(right); };
+        const currentValue = field ? project.structa_v3.constitution[field] : null;
+        if (branch.summary !== payload.after?.branch?.summary || !sameValue(currentValue, payload.after?.constitution_value)) {
+          response = { ok: false, error: 'map gap changed after this answer', code: 'revert-conflict', event_id: eventId };
+          return project;
+        }
+        project.answers = (project.answers || []).filter(function(item) { return item?.id !== payload.answer_id; });
+        project.nodes = (project.nodes || []).filter(function(item) { return item?.node_id !== payload.voice_entry_id; });
+        project.answers = project.answers.concat(Array.isArray(payload.evicted_answers) ? clone(payload.evicted_answers) : []).slice(0, MAX_PROJECT_ANSWERS);
+        project.nodes = project.nodes.concat(Array.isArray(payload.evicted_nodes) ? clone(payload.evicted_nodes) : []).slice(0, MAX_PROJECT_NODES);
+        const beforeBranch = payload.before?.branch || {};
+        branch.summary = compact(beforeBranch.summary || '', 180);
+        branch.completeness = Math.max(0, Math.min(100, Number(beforeBranch.completeness || 0)));
+        branch.confidence = Math.max(0, Math.min(1, Number(beforeBranch.confidence || 0)));
+        branch.status = VALID_BRANCH_STATES.indexOf(beforeBranch.status) !== -1 ? beforeBranch.status : 'seed';
+        branch.closed_at = beforeBranch.closed_at || null;
+        branch.updated_at = nowIso();
+        if (field) project.structa_v3.constitution[field] = clone(payload.before?.constitution_value);
+        project.structa_v3.constitution.updated_at = nowIso();
+        recordEvent(project, 'event.reverted', {
+          reverted_event_id: eventId,
+          branch_id: branch.id,
+          removed_answer_id: payload.answer_id || '',
+          removed_voice_entry_id: payload.voice_entry_id || '',
+          restored: {
+            summary: branch.summary,
+            constitution_field: field,
+            constitution_value: field ? clone(project.structa_v3.constitution[field]) : null
+          }
+        }, 'human');
+        response = { ok: true, event_id: eventId, branch: clone(branch) };
+        return project;
+      }
+
+      if (event.type.indexOf('branch.') !== 0) return project;
       const branch = project.structa_v3.branches.find(function(item) { return item.id === event.payload.branch_id; });
       if (!branch) return project;
       const after = event.payload.after;
@@ -1209,6 +1428,7 @@
     getNowView: getNowView,
     seedFromBrief: seedFromBrief,
     ingestDecisionCandidates: ingestDecisionCandidates,
+    answerMapGap: answerMapGap,
     ingestVisualEnvelope: ingestVisualEnvelope,
     reviewUncertainty: reviewUncertainty,
     requestUncertaintyReview: requestUncertaintyReview,

@@ -35,6 +35,7 @@
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
   let activeTriangleContext = null; // { label }
+  let nativeCapture = null; // Context/state for the current R1 native STT cycle.
   let onboardingStartTimer = null;
   const COMMAND_PRIORITY = {
     'delete-project': 0,
@@ -977,9 +978,10 @@
   function handleTranscript(text, overrides) {
     if (!text || !text.trim()) return;
     text = text.trim();
-    var questionContext = overrides && overrides.activeQuestion ? overrides.activeQuestion : activeQuestion;
-    var buildContext = overrides && overrides.activeBuildContext ? overrides.activeBuildContext : activeBuildContext;
-    var triangleContext = overrides && overrides.activeTriangleContext ? overrides.activeTriangleContext : activeTriangleContext;
+    var hasOverrides = !!(overrides && typeof overrides === 'object');
+    var questionContext = hasOverrides ? (overrides.activeQuestion || null) : activeQuestion;
+    var buildContext = hasOverrides ? (overrides.activeBuildContext || null) : activeBuildContext;
+    var triangleContext = hasOverrides ? (overrides.activeTriangleContext || null) : activeTriangleContext;
 
     // Clean up STT artifacts — spoken punctuation → actual punctuation
     text = text.replace(/\bquestion mark\b/gi, '?');
@@ -1052,12 +1054,33 @@
           }
         }));
       } else {
-        resolution = native?.resolveQuestion?.({
-          index: question.index,
-          nodeId: question.nodeId || '',
-          text: question.text || '',
-          source: question.source || 'question'
-        }, text);
+        if (question.mapGap) {
+          resolution = window.StructaProjectEngine?.answerMapGap?.(
+            question.branchId || '',
+            text,
+            {
+              projectId: question.projectId || activeProjectId(),
+              questionText: question.text || ''
+            }
+          );
+        } else {
+          resolution = native?.resolveQuestion?.({
+            index: question.index,
+            nodeId: question.nodeId || '',
+            text: question.text || '',
+            source: question.source || 'question'
+          }, text);
+        }
+      }
+      if (question.mapGap && (!resolution || resolution.ok !== true)) {
+        native?.traceEvent?.('voice', 'processing', 'map-gap-rejected', {
+          branchId: question.branchId || '',
+          projectId: question.projectId || ''
+        });
+        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+          detail: { source: 'map-gap-answer-failed' }
+        }));
+        return;
       }
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-answer' }
@@ -1078,7 +1101,17 @@
         projectId: question.projectId || activeProjectId(),
         questionText: question.text || '',
         questionNodeId: question.nodeId || '',
-        answerNodeId: resolution?.answerNode?.id || ''
+        answerNodeId: resolution?.answerNode?.node_id
+          || resolution?.answerNode?.id
+          || resolution?.voiceEntry?.node_id
+          || resolution?.voiceEntry?.id
+          || resolution?.node?.node_id
+          || resolution?.node?.id
+          || resolution?.answerNodeId
+          || resolution?.voiceEntryId
+          || resolution?.nodeId
+          || resolution?.node_id
+          || ''
       });
       return;
     }
@@ -1273,6 +1306,32 @@
     });
   }
 
+  function createNativeCapture() {
+    return {
+      activeQuestion: activeQuestion ? { ...activeQuestion } : null,
+      activeBuildContext: activeBuildContext ? { ...activeBuildContext } : null,
+      activeTriangleContext: activeTriangleContext ? { ...activeTriangleContext } : null,
+      transcriptHandled: false,
+      sttEnded: false,
+      cancelled: false
+    };
+  }
+
+  function consumeNativeTranscript(capture, text) {
+    if (!capture || capture.cancelled || capture.transcriptHandled || !String(text || '').trim()) return false;
+    var context = {
+      activeQuestion: capture.activeQuestion,
+      activeBuildContext: capture.activeBuildContext,
+      activeTriangleContext: capture.activeTriangleContext
+    };
+    capture.transcriptHandled = true;
+    capture.activeQuestion = null;
+    capture.activeBuildContext = null;
+    capture.activeTriangleContext = null;
+    handleTranscript(text, context);
+    return true;
+  }
+
   function stopListening(emit) {
     emit = emit !== false;
     var pendingQuestion = activeQuestion;
@@ -1312,12 +1371,16 @@
       native?.stopPTT?.(text || '');
       // Process the transcript
       if (text) {
-        handleTranscript(text, {
-          activeQuestion: pendingQuestion,
-          activeBuildContext: pendingBuildContext,
-          activeTriangleContext: pendingTriangleContext
-        });
-      } else if (pendingQuestion?.onboarding) {
+        if (nativeCapture) {
+          consumeNativeTranscript(nativeCapture, text);
+        } else {
+          handleTranscript(text, {
+            activeQuestion: pendingQuestion,
+            activeBuildContext: pendingBuildContext,
+            activeTriangleContext: pendingTriangleContext
+          });
+        }
+      } else if (pendingQuestion?.onboarding && typeof CreationVoiceHandler === 'undefined') {
         reportOnboardingSTTFailure('empty-transcript', pendingQuestion);
       } else if (pendingAudioAsset) {
         native?.addVoiceEntry?.({
@@ -1327,6 +1390,17 @@
           entry_mode: 'audio-fallback'
         });
       }
+    } else if (nativeCapture && !nativeCapture.sttEnded) {
+      // A non-emitting stop is cancellation. Retain only a tombstone so a
+      // delayed native callback cannot turn the cancelled capture into input.
+      nativeCapture.cancelled = true;
+      nativeCapture.activeQuestion = null;
+      nativeCapture.activeBuildContext = null;
+      nativeCapture.activeTriangleContext = null;
+      if (typeof CreationVoiceHandler !== 'undefined') {
+        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
+      }
+      native?.stopPTT?.('');
     }
 
     // Unmute heartbeat after capture
@@ -1341,6 +1415,8 @@
    * Stores the question so handleTranscript knows to route it as an answer.
    */
   function setQuestionContext(index, questionText, meta) {
+    activeBuildContext = null;
+    activeTriangleContext = null;
     if (typeof index === 'object' && index) {
       activeQuestion = {
         index: typeof index.index === 'number' ? index.index : -1,
@@ -1348,7 +1424,9 @@
         onboarding: !!index.onboarding,
         nodeId: index.nodeId || '',
         source: index.source || 'question',
-        projectId: index.projectId || index.project_id || activeProjectId()
+        projectId: index.projectId || index.project_id || activeProjectId(),
+        mapGap: !!index.mapGap,
+        branchId: index.branchId || index.branch_id || ''
       };
       native?.traceEvent?.('voice', 'idle', 'question-context', {
         nodeId: activeQuestion.nodeId || '',
@@ -1364,7 +1442,9 @@
       onboarding: !!(meta && meta.onboarding),
       nodeId: meta && meta.nodeId ? meta.nodeId : '',
       source: meta && meta.source ? meta.source : 'question',
-      projectId: meta && (meta.projectId || meta.project_id) ? (meta.projectId || meta.project_id) : activeProjectId()
+      projectId: meta && (meta.projectId || meta.project_id) ? (meta.projectId || meta.project_id) : activeProjectId(),
+      mapGap: !!(meta && meta.mapGap),
+      branchId: meta && (meta.branchId || meta.branch_id) ? (meta.branchId || meta.branch_id) : ''
     };
     native?.traceEvent?.('voice', 'idle', 'question-context', {
       nodeId: activeQuestion.nodeId || '',
@@ -1375,6 +1455,8 @@
   }
 
   function setBuildContext(context) {
+    activeQuestion = null;
+    activeTriangleContext = null;
     activeBuildContext = context ? {
       kind: context.kind || 'context',
       nodeId: context.nodeId || '',
@@ -1391,6 +1473,8 @@
   }
 
   function setTriangleContext(context) {
+    activeQuestion = null;
+    activeBuildContext = null;
     activeTriangleContext = context ? {
       label: String(context.label || 'your angle')
     } : null;
@@ -1399,6 +1483,14 @@
 
   async function startListening() {
     if (listening) return;
+    if (typeof CreationVoiceHandler !== 'undefined' && nativeCapture && !nativeCapture.sttEnded) {
+      // Rabbit's STT callback has no capture id. Never let a new hold replace
+      // an unresolved capture context: a late callback could otherwise answer
+      // the next question or even the next project.
+      setStatus('finishing previous capture');
+      native?.traceEvent?.('voice', 'idle', 'start-blocked', { reason: 'native-callback-pending' });
+      return;
+    }
 
     // Don't interfere with camera PTT
     if (window.__STRUCTA_PTT_TARGET__ === 'camera') {
@@ -1447,6 +1539,7 @@
 
     // === R1 path: Use CreationVoiceHandler for native STT ===
     if (typeof CreationVoiceHandler !== 'undefined') {
+      nativeCapture = createNativeCapture();
       try {
         CreationVoiceHandler.postMessage('start');
         if (activeQuestion?.onboarding) {
@@ -1460,6 +1553,7 @@
         }
         return;
       } catch (err) {
+        nativeCapture = null;
         native?.appendLogEntry?.({ kind: 'voice', message: 'stt err: ' + (err?.message || 'failed') });
         if (activeQuestion?.onboarding) reportOnboardingSTTFailure('bridge-error');
       }
@@ -1548,13 +1642,32 @@
   window.addEventListener('structa-stt-ended', function(event) {
     var data = event && event.detail;
     clearOnboardingStartTimer();
-    if (data && data.transcript) {
-      if (transcriptEl) transcriptEl.textContent = data.transcript;
+    var capture = nativeCapture;
+    if (capture) {
+      if (capture.sttEnded) return;
+      capture.sttEnded = true;
+      stopListening(false);
+      if (data && data.transcript && !capture.cancelled) {
+        if (transcriptEl) transcriptEl.textContent = data.transcript;
+        consumeNativeTranscript(capture, data.transcript);
+      } else if (!capture.cancelled && capture.activeQuestion?.onboarding) {
+        reportOnboardingSTTFailure('empty-transcript', capture.activeQuestion);
+      }
+      return;
+    }
+    if (typeof CreationVoiceHandler === 'undefined' && data?.transcript
+        && (activeQuestion || activeBuildContext || activeTriangleContext)) {
+      // Browser/test fallback has no native capture cycle; it may still route
+      // an explicitly focused transcript through the active local context.
       handleTranscript(data.transcript);
       stopListening(false);
-    } else if (activeQuestion?.onboarding) {
-      reportOnboardingSTTFailure('empty-transcript');
+      return;
     }
+    // A native callback without a live capture is stale/orphaned. It must not
+    // inherit whatever question or project context happens to be active now.
+    native?.traceEvent?.('voice', 'idle', 'orphan-stt-ignored', {
+      hasTranscript: !!(data && data.transcript)
+    });
   });
 
   function open() {
@@ -1586,6 +1699,9 @@
 
   var cleanupOnHide = function() {
     if (document.hidden || overlay?.classList.contains('open')) close();
+    // Keep an unresolved native capture as a tombstone for the lifetime of
+    // this WebView. Only a new page context may reset it safely: visibility
+    // alone does not prove that Rabbit cannot still deliver the old callback.
   };
 
   window.addEventListener('pagehide', cleanupOnHide);

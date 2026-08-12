@@ -32,8 +32,24 @@ const projectB = {
   backlog: [],
   insights: []
 };
-const projects = [project, projectB];
+const mapGapProject = {
+  project_id: 'project-map-gap',
+  name: 'Early Tester Campaign',
+  brief: 'Plan an early tester campaign for STRUCTA.',
+  type: 'general creative',
+  nodes: [],
+  claims: [],
+  decisions: [],
+  pending_decisions: [],
+  open_question_nodes: [],
+  derived_candidates: { decisions: [], asks: [], blockers: [], themes: [] },
+  backlog: [],
+  insights: []
+};
+const projects = [project, projectB, mapGapProject];
 let activeProject = project;
+const modelChanges = [];
+const fastFeedback = [];
 
 const native = {
   getProjectMemory: () => activeProject,
@@ -69,7 +85,8 @@ const native = {
     const [decision] = activeProject.decisions.splice(index, 1);
     activeProject.pending_decisions.unshift({ ...decision, selected_option: null, selected_option_index: null });
     return { ok: true, decision };
-  }
+  },
+  emitModelChange(detail) { modelChanges.push(detail); }
 };
 
 const context = {
@@ -80,7 +97,13 @@ const context = {
   setTimeout(fn) { fn(); return 1; },
   clearTimeout() {},
   document: { createElement: () => ({ style: {}, click() {}, remove() {} }), body: { appendChild() {} } },
-  window: { StructaNative: native }
+  CustomEvent: class CustomEvent {
+    constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
+  },
+  window: {
+    StructaNative: native,
+    dispatchEvent(event) { fastFeedback.push(event); }
+  }
 };
 context.window.window = context.window;
 vm.createContext(context);
@@ -163,6 +186,97 @@ assert.equal(engine.approveDecision('decision-four-options', 3, 'Campaign test')
 assert.equal(projectB.decisions[0].selected_option, 'Campaign test');
 assert.equal(engine.reopenDecision('decision-four-options', 'Compare all proofs again.').ok, true);
 assert.equal(engine.getNowView(projectB).options.length, 4);
+
+activeProject = mapGapProject;
+engine.ensure(mapGapProject);
+mapGapProject.answers = Array.from({ length: 120 }, (_, index) => ({
+  id: 'old-answer-' + index,
+  questionId: 'old-question-' + index,
+  body: 'older answer ' + index
+}));
+mapGapProject.nodes = Array.from({ length: 240 }, (_, index) => ({
+  node_id: 'old-node-' + index,
+  project_id: 'project-map-gap',
+  type: 'note',
+  status: 'open',
+  body: 'older node ' + index
+}));
+const audienceGap = engine.getNowView(mapGapProject);
+assert.equal(audienceGap.type, 'map_gap');
+assert.equal(audienceGap.branch_id, 'audience');
+assert.equal(audienceGap.text, 'who must this work for?');
+assert.equal(mapGapProject.structa_v3.branches.find((branch) => branch.id === 'audience').completeness, 0);
+const audienceAnswer = 'Creative professionals building real projects with AI.';
+const answeredGap = engine.answerMapGap('audience', audienceAnswer, {
+  projectId: 'project-map-gap',
+  questionText: audienceGap.text
+});
+assert.equal(answeredGap.ok, true);
+assert.equal(mapGapProject.structa_v3.constitution.audience, audienceAnswer);
+assert.ok(mapGapProject.structa_v3.branches.find((branch) => branch.id === 'audience').completeness > 0);
+assert.equal(mapGapProject.answers.length, 120);
+assert.equal(mapGapProject.answers[0].body, audienceAnswer);
+const mapGapVoiceEntries = mapGapProject.nodes.filter((node) => node.meta?.entry_mode === 'map-gap-answer');
+assert.equal(mapGapVoiceEntries.length, 1);
+assert.equal(mapGapVoiceEntries[0].meta.branch_id, 'audience');
+assert.equal(mapGapVoiceEntries[0].body, audienceAnswer);
+assert.equal(mapGapProject.nodes.length, 240);
+assert.notEqual(engine.getNowView(mapGapProject).branch_id, 'audience');
+assert.equal(mapGapProject.structa_v3.events.at(-1).type, 'map_gap.answered');
+assert.equal(mapGapProject.structa_v3.events.at(-1).actor, 'human');
+const mapGapEvent = mapGapProject.structa_v3.events.at(-1);
+assert.equal(mapGapEvent.payload.after.constitution_value, mapGapProject.structa_v3.constitution.audience);
+assert.equal(mapGapEvent.payload.after.branch.summary,
+  mapGapProject.structa_v3.branches.find((branch) => branch.id === 'audience').summary);
+const eventCountBeforeReplay = mapGapProject.structa_v3.events.length;
+const replayedGap = engine.answerMapGap('audience', audienceAnswer, {
+  projectId: 'project-map-gap',
+  questionText: audienceGap.text
+});
+assert.equal(replayedGap.ok, true);
+assert.equal(replayedGap.replayed, true);
+assert.equal(mapGapProject.structa_v3.events.length, eventCountBeforeReplay);
+assert.equal(mapGapProject.nodes.filter((node) => node.meta?.entry_mode === 'map-gap-answer').length, 1);
+assert.equal(engine.answerMapGap('audience', 'A stale callback with a different answer.', {
+  projectId: 'project-map-gap',
+  questionText: audienceGap.text
+}).code, 'stale-intervention');
+assert.equal(mapGapProject.nodes.filter((node) => node.meta?.entry_mode === 'map-gap-answer').length, 1);
+assert.equal(engine.answerMapGap('people', 'This alias must not create an ad hoc branch.', {
+  projectId: 'project-map-gap'
+}).code, 'branch-not-found');
+assert.equal(mapGapProject.nodes.filter((node) => node.meta?.entry_mode === 'map-gap-answer').length, 1);
+assert.equal(fastFeedback.at(-1).detail.source, 'map-gap-answer');
+assert.equal(modelChanges.at(-1).itemId, 'audience');
+assert.equal(engine.applyOperation({
+  type: 'event.revert',
+  actor: 'human',
+  event_id: mapGapEvent.id
+}).ok, true);
+assert.equal(mapGapProject.structa_v3.constitution.audience, '');
+assert.equal(mapGapProject.structa_v3.branches.find((branch) => branch.id === 'audience').completeness, 0);
+assert.equal(mapGapProject.nodes.some((node) => node.node_id === 'old-node-239'), true,
+  'reversal restores the record evicted by the bounded ledger');
+assert.equal(mapGapProject.answers.some((answer) => answer.id === 'old-answer-119'), true,
+  'reversal restores the answer evicted by the bounded ledger');
+assert.equal(mapGapProject.nodes.some((node) => node.meta?.entry_mode === 'map-gap-answer'), false);
+assert.equal(mapGapProject.answers.some((answer) => answer.meta?.entry_mode === 'map-gap-answer'), false);
+assert.equal(engine.getNowView(mapGapProject).branch_id, 'audience');
+assert.equal(engine.applyOperation({
+  type: 'event.revert',
+  actor: 'human',
+  event_id: mapGapEvent.id
+}).code, 'already-reverted');
+const normalizedLongAnswer = engine.answerMapGap('audience', 'professional '.repeat(30), {
+  projectId: 'project-map-gap',
+  questionText: audienceGap.text
+});
+assert.equal(normalizedLongAnswer.ok, true);
+assert.ok(mapGapProject.structa_v3.constitution.audience.length <= 180);
+const longAnswerEvent = mapGapProject.structa_v3.events.at(-1);
+assert.equal(longAnswerEvent.payload.after.constitution_value, mapGapProject.structa_v3.constitution.audience);
+assert.equal(longAnswerEvent.payload.after.branch.summary,
+  mapGapProject.structa_v3.branches.find((branch) => branch.id === 'audience').summary);
 
 const lateDecision = engine.ingestDecisionCandidates([{
   id: 'decision-late-a',
@@ -258,4 +372,4 @@ assert.ok(exported.content.includes('STRUCTA Studio'));
 assert.ok(exported.content.includes('Creative Director'));
 assert.ok(exported.content.includes('Human-approved decisions'));
 
-console.log('v3 engine smoke · 54 assertions passed');
+console.log('v3 engine smoke · 94 assertions passed');

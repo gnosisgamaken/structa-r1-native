@@ -17,15 +17,17 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     pretendToBeVisual: true
   });
   const { window } = dom;
+  if (Number.isFinite(options.now)) window.Date.now = () => Number(options.now);
   const posts = [];
   const inbound = [];
   const emails = [];
+  const downloadClicks = [];
   const originalPost = function(payload) {
     posts.push(JSON.parse(payload));
     return true;
   };
   window.StructaBuild = Object.freeze({
-    uiBuildId: 'ui-20260812-structa-v3.7',
+    uiBuildId: 'ui-20260812-structa-v3.8',
     expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
     assetEpoch: 'test'
   });
@@ -45,7 +47,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     handleAction: actionId => Promise.resolve({
       ok: actionId === 'diagnostics-build-check',
       result: {
-        uiBuildId: 'ui-20260812-structa-v3.7',
+        uiBuildId: 'ui-20260812-structa-v3.8',
         serverBuildSha,
         status: 'current'
       }
@@ -61,10 +63,12 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
   try { Object.defineProperty(window.crypto, 'subtle', { value: webcrypto.subtle, configurable: true }); } catch (_) {}
   window.URL.createObjectURL = () => 'blob:device-proof';
   window.URL.revokeObjectURL = () => {};
-  window.HTMLAnchorElement.prototype.click = function() {};
+  window.HTMLAnchorElement.prototype.click = function() {
+    downloadClicks.push({ href: this.href, download: this.download });
+  };
   if (seed) window.localStorage.setItem('structa.device-proof.v1.active', seed);
   window.eval(source);
-  return { dom, window, posts, inbound, emails, originalPost };
+  return { dom, window, posts, inbound, emails, downloadClicks, originalPost };
 }
 
 function emitTrace(window, flow, from, to, ctx = {}) {
@@ -118,10 +122,10 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.enabled, true, url);
     assert.equal(proof.schema, 'structa.device-proof.v1');
     assert.match(proof.session_id, /^ST-\d{8}-[A-Za-z0-9]{8}$/);
-    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.7');
+    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.8');
     assert.equal(proof.step_id, 'B00');
     assert.equal(proof.events[0].type, 'session.start');
-    assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 2 * 60 * 60 * 1000);
+    assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 12 * 60 * 60 * 1000);
     assert.ok(runtime.window.localStorage.getItem('structa.device-proof.v1.active'));
     const control = runtime.window.document.getElementById('structa-device-proof-control');
     assert.ok(control, 'lab-only physical control is installed');
@@ -271,7 +275,7 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   assert.ok(proof.events.some(event => event.type === 'hardware.touch'));
   assert.ok(proof.events.some(event => event.type === 'hardware.motion' && event.flags.shake_detected === true));
   assert.ok(proof.events.every(event => event.session_id === proof.session_id));
-  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.7'));
+  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.8'));
   assert.ok(proof.events.every((event, index) => event.seq === index + 1));
 
   const { validateDeviceProof, decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
@@ -333,6 +337,7 @@ test('lab panel can finish, email, and reset a proof entirely on-device', async 
   assert.equal(runtime.window.StructaDeviceLab.getProof().status, 'complete');
   assert.ok(runtime.emails.length >= 1);
   assert.ok(runtime.emails.every(email => email.body.length <= 2700));
+  assert.equal(runtime.downloadClicks.length, 0, 'finish + send must not navigate the R1 WebView to a blob URL');
   assert.equal(runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'proof emailed');
 
   const reset = runtime.window.document.getElementById('structa-device-proof-reset');
@@ -363,6 +368,103 @@ test('completed proof survives reload until the explicit two-tap reset', () => {
   reset.click();
   reset.click();
   assert.notEqual(second.window.StructaDeviceLab.getProof().session_id, completed.session_id);
+  second.dom.window.close();
+});
+
+test('expiry is an honest release invariant while post-finish export retries remain recoverable', async () => {
+  const startedAt = Date.parse('2026-08-12T10:00:00.000Z');
+  const first = boot('https://structa.test/?lab=1', '', { now: startedAt });
+  const completed = first.window.StructaDeviceLab.finish();
+  assert.equal(invariant(completed, 'session.within_expiry').pass, true);
+  const stored = first.window.localStorage.getItem('structa.device-proof.v1.active');
+  first.dom.window.close();
+
+  const afterExpiry = boot('https://structa.test/?lab=1', stored, {
+    now: startedAt + (13 * 60 * 60 * 1000)
+  });
+  const retried = await afterExpiry.window.StructaDeviceLab.exportProof();
+  assert.equal(retried.session_id, completed.session_id);
+  assert.equal(invariant(retried.proof, 'session.within_expiry').pass, true, 'post-finish export events do not rewrite test validity');
+  const { validateDeviceProof } = await import('../scripts/validate-device-proof.mjs');
+  assert.notEqual(validateDeviceProof(retried.proof).verdict, 'failed');
+
+  const legacyTwoHour = JSON.parse(JSON.stringify(completed));
+  legacyTwoHour.expires_at = new Date(startedAt + (2 * 60 * 60 * 1000)).toISOString();
+  assert.deepEqual(validateDeviceProof(legacyTwoHour).errors, [], 'completed v3.7 two-hour proofs remain recoverable and structurally valid');
+  afterExpiry.dom.window.close();
+
+  const late = boot('https://structa.test/?lab=1', '', { now: startedAt });
+  late.window.Date.now = () => startedAt + (12 * 60 * 60 * 1000) + 1;
+  const lateProof = late.window.StructaDeviceLab.finish();
+  assert.equal(invariant(lateProof, 'session.within_expiry').pass, false);
+  const lateVerdict = validateDeviceProof(lateProof);
+  assert.equal(lateVerdict.ok, true);
+  assert.equal(lateVerdict.verdict, 'failed');
+  assert.ok(lateVerdict.failed_invariants.includes('session.within_expiry'));
+  late.dom.window.close();
+});
+
+test('expired running proof is terminalized without replacing its session or evidence', async () => {
+  const startedAt = Date.parse('2026-08-12T10:00:00.000Z');
+  const first = boot('https://structa.test/?lab=1', '', { now: startedAt });
+  first.window.StructaDeviceLab.setStep('B04');
+  first.window.StructaDeviceLab.markManual('retained-check', true);
+  const sessionId = first.window.StructaDeviceLab.getProof().session_id;
+  const stored = first.window.localStorage.getItem('structa.device-proof.v1.active');
+  first.dom.window.close();
+
+  const second = boot('https://structa.test/?lab=1', stored, {
+    now: startedAt + (12 * 60 * 60 * 1000) + 1
+  });
+  const expired = second.window.StructaDeviceLab.getProof();
+  assert.equal(expired.session_id, sessionId);
+  assert.equal(expired.status, 'failed');
+  assert.equal(expired.step_id, 'B04');
+  assert.ok(expired.events.some(event => event.type === 'manual.check'));
+  assert.ok(expired.events.some(event => event.type === 'session.expired'));
+  assert.equal(invariant(expired, 'session.within_expiry').pass, false);
+  second.window.document.getElementById('structa-device-proof-control').click();
+  assert.equal(second.window.document.getElementById('structa-device-proof-step').disabled, true);
+  assert.match(second.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, /proof expired/);
+  const { validateDeviceProof } = await import('../scripts/validate-device-proof.mjs');
+  const verdict = validateDeviceProof(expired);
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.verdict, 'failed');
+  second.dom.window.close();
+});
+
+test('failed email retains the completed proof without navigation and can retry after relaunch', async () => {
+  const first = boot('https://structa.test/?lab=1', '', {
+    emailHandler: () => ({ ok: false, mode: 'unavailable' })
+  });
+  first.window.StructaDeviceLab.setStep('B04');
+  const sessionId = first.window.StructaDeviceLab.getProof().session_id;
+  first.window.document.getElementById('structa-device-proof-control').click();
+  first.window.document.getElementById('structa-device-proof-send').click();
+  await waitFor(() => first.window.document.getElementById('structa-device-proof-send').disabled === false);
+
+  const stored = first.window.localStorage.getItem('structa.device-proof.v1.active');
+  const retained = JSON.parse(stored);
+  assert.equal(retained.session_id, sessionId);
+  assert.equal(retained.status, 'complete');
+  assert.equal(first.downloadClicks.length, 0);
+  assert.equal(first.posts.some(payload => payload.wantsJournalEntry === true), false);
+  assert.equal(first.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'email unavailable · proof retained');
+  assert.equal(first.window.document.getElementById('structa-device-proof-send').textContent, 'retry send');
+  first.dom.window.close();
+
+  const second = boot('https://structa.test/?lab=1', stored);
+  assert.equal(second.window.StructaDeviceLab.getProof().session_id, sessionId);
+  assert.equal(second.window.StructaDeviceLab.getProof().status, 'complete');
+  second.window.document.getElementById('structa-device-proof-control').click();
+  second.window.document.getElementById('structa-device-proof-send').click();
+  await waitFor(() => second.window.document.getElementById('structa-device-proof-send').disabled === false);
+
+  assert.ok(second.emails.length >= 1);
+  assert.equal(second.downloadClicks.length, 0);
+  assert.equal(second.posts.some(payload => payload.wantsJournalEntry === true), false);
+  assert.equal(second.window.StructaDeviceLab.getProof().session_id, sessionId);
+  assert.equal(second.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent, 'proof emailed');
   second.dom.window.close();
 });
 
@@ -411,7 +513,7 @@ test('build control reports workspace as mismatch and records the safe result', 
   button.click();
   await waitFor(() => button.disabled === false);
   const status = runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent;
-  assert.match(status, /ui-20260812-structa-v3\.7 · server workspace · mismatch/);
+  assert.match(status, /ui-20260812-structa-v3\.8 · server workspace · mismatch/);
   const event = runtime.window.StructaDeviceLab.getProof().events.filter(entry => entry.type === 'proof.control').at(-1);
   assert.equal(event.flags.current, false);
   assert.equal(event.flags.ok, false);
@@ -458,6 +560,50 @@ test('semantic allowlist drops adversarial IDs and detects nested production ima
   const verdict = validateDeviceProof(tampered);
   assert.equal(verdict.ok, false);
   assert.ok(verdict.errors.some(error => error.includes('forbidden') || error.includes('semantic identifier')));
+  runtime.dom.window.close();
+});
+
+test('vision traces retain only allowlisted categorical wire facts', async () => {
+  const runtime = boot('https://structa.test/?lab=1');
+  emitTrace(runtime.window, 'vision.bridge', 'prepare', 'posted', {
+    visionId: 'vision-wire-safe',
+    imagePlacement: 'top-level',
+    imageMode: 'raw-base64',
+    imageMimeType: 'image/jpeg',
+    imageChars: 4321
+  });
+  emitTrace(runtime.window, 'plugin.message.parsed', 'in', 'vision', {
+    visionId: 'vision-wire-safe',
+    status: 'insufficient',
+    captureKind: 'sketch_diagram',
+    projectRole: 'external_reference'
+  });
+  emitTrace(runtime.window, 'vision.bridge', 'prepare', 'posted', {
+    visionId: 'vision-wire-redacted',
+    imagePlacement: 'top-level plus private caption',
+    imageMode: 'RAW SECRET MODE',
+    imageMimeType: 'data:image/png;base64,LEAK_IMAGE',
+    status: 'user supplied private status',
+    captureKind: 'private project description',
+    projectRole: 'client name'
+  });
+
+  const proof = runtime.window.StructaDeviceLab.getProof();
+  const safePosted = proof.events.find(event => event.type === 'structa.trace' && event.ids?.vision_id === 'vision-wire-safe' && event.ids?.to_id === 'posted');
+  const safeParsed = proof.events.find(event => event.type === 'structa.trace' && event.ids?.vision_id === 'vision-wire-safe' && event.ids?.flow_id === 'plugin.message.parsed');
+  assert.equal(safePosted.ids.image_placement_id, 'top-level');
+  assert.equal(safePosted.ids.image_mode_id, 'raw-base64');
+  assert.equal(safePosted.ids.image_mime_type_id, 'image.jpeg');
+  assert.equal(safePosted.metrics.image_chars, 4321);
+  assert.equal(safeParsed.ids.status_id, 'insufficient');
+  assert.equal(safeParsed.ids.capture_kind_id, 'sketch_diagram');
+  assert.equal(safeParsed.ids.project_role_id, 'external_reference');
+  const serialized = JSON.stringify(proof);
+  for (const value of ['private caption', 'RAW SECRET MODE', 'LEAK_IMAGE', 'private project description', 'client name']) {
+    assert.equal(serialized.includes(value), false, value);
+  }
+  const { validateDeviceProof } = await import('../scripts/validate-device-proof.mjs');
+  assert.deepEqual(validateDeviceProof(proof).errors, []);
   runtime.dom.window.close();
 });
 
@@ -607,7 +753,7 @@ test('observed transport, correlation, press-pair, and blocked-queue violations 
   runtime.dom.window.close();
 });
 
-test('an unfinished session resumes for two hours and validator rejects sensitive fields', async () => {
+test('an unfinished session resumes within the twelve-hour lab window and validator rejects sensitive fields', async () => {
   const first = boot('https://structa.test/?lab=1');
   first.window.StructaDeviceLab.setStep('now_decision');
   first.window.StructaDeviceLab.markManual('decision_visible', true);

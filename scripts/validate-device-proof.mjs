@@ -18,11 +18,12 @@ const DANGEROUS_KEY = /(?:token|secret|auth|credential|cookie|key)/i;
 const SEMANTIC_ID_KEYS = new Set([
   'action_id', 'active_project_id', 'capture_id', 'check_id', 'comment_id',
   'completion_id', 'correlation_id', 'entry_id', 'event_id', 'flow_id',
-  'from_id', 'from_step_id', 'image_run_id', 'input_id', 'item_id', 'job_id',
+  'from_id', 'from_step_id', 'image_mime_type_id', 'image_mode_id',
+  'image_placement_id', 'image_run_id', 'input_id', 'item_id', 'job_id',
   'mode_id', 'name_id', 'node_id', 'operation_id', 'outcome_id', 'plugin_id',
   'previous_provider_slot_id', 'project_id', 'provider_slot_id', 'reason_id',
   'request_id', 'source_id', 'state_id', 'status_id', 'to_id', 'to_step_id',
-  'type_id', 'vision_id'
+  'type_id', 'capture_kind_id', 'project_role_id', 'vision_id'
 ]);
 const TRANSPORT_MARKER = 'STRUCTA_DEVICE_PROOF_TRANSPORT_V1';
 const MAX_TRANSPORT_BODY = 2700;
@@ -117,6 +118,32 @@ function sequencePass(proof) {
     previousMs = Number.isFinite(event?.ms) ? event.ms : previousMs;
     return valid;
   });
+}
+
+function sessionWithinExpiry(proof) {
+  const events = Array.isArray(proof?.events) ? proof.events : [];
+  const startedMs = Date.parse(proof?.started_at || '');
+  const expiresMs = Date.parse(proof?.expires_at || '');
+  if (!Number.isFinite(startedMs) || !Number.isFinite(expiresMs) || expiresMs < startedMs) return false;
+  const finishEvent = [...events].reverse().find(event => event?.type === 'session.finish') || null;
+  if (proof?.status === 'running') {
+    return events.some(event => {
+      const eventMs = Date.parse(event?.at || '');
+      return !Number.isFinite(eventMs) || eventMs < startedMs - 5000 || eventMs > expiresMs;
+    }) ? false : null;
+  }
+  if (!finishEvent) return false;
+  const finishedMs = Date.parse(proof?.finished_at || '');
+  const finishEventMs = Date.parse(finishEvent.at || '');
+  if (!Number.isFinite(finishedMs) || !Number.isFinite(finishEventMs)) return false;
+  if (finishedMs < startedMs || finishedMs > expiresMs || finishEventMs < startedMs || finishEventMs > expiresMs) return false;
+  if (Math.abs(finishedMs - finishEventMs) > 5000) return false;
+  return events
+    .filter(event => event && event.seq <= finishEvent.seq)
+    .every(event => {
+      const eventMs = Date.parse(event.at || '');
+      return Number.isFinite(eventMs) && eventMs >= startedMs - 5000 && eventMs <= expiresMs;
+    });
 }
 
 function deriveProvider(events) {
@@ -323,6 +350,7 @@ function deriveExpectedInvariants(proof, provider, storagePass) {
   const finished = proof.status !== 'running';
   return [
     { id: 'event.sequence_monotonic', pass: sequencePass(proof) },
+    { id: 'session.within_expiry', pass: sessionWithinExpiry(proof) },
     { id: 'provider.single_inflight', pass: provider.overlap_violations === 0 && provider.observed_max_in_flight <= 1, observed: provider.observed_max_in_flight, violations: provider.overlap_violations },
     { id: 'provider.settled_at_finish', pass: finished ? provider.outstanding === 0 && provider.abandoned === 0 : null, outstanding: provider.outstanding, abandoned: provider.abandoned },
     { id: 'runtime.no_uncaught_errors', pass: errorCount === 0, observed: errorCount },
@@ -369,7 +397,8 @@ export function validateDeviceProof(proof) {
 
   if (validIso(proof.started_at) && validIso(proof.expires_at)) {
     const ttl = Date.parse(proof.expires_at) - Date.parse(proof.started_at);
-    if (ttl < 60 * 60 * 1000 || ttl > 3 * 60 * 60 * 1000) errors.push('proof expiry must be approximately two hours');
+    const supportedTtls = new Set([2 * 60 * 60 * 1000, 12 * 60 * 60 * 1000]);
+    if (!supportedTtls.has(ttl)) errors.push('proof expiry must be a supported two-hour or twelve-hour lab window');
   }
 
   if (!isObject(proof.build)) {

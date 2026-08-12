@@ -6,13 +6,15 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.7`
+- UI build: `ui-20260812-structa-v3.8`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
 - Device-proof session ID:
 - rabbitOS version:
 - Deployed server SHA:
+
+Fresh v3.8 proof sessions remain active for twelve hours so one careful B00–B07 owner run can finish without silently rolling into a replacement session. An older two-hour proof remains recoverable and exportable, but it cannot pass the release validator if its recorded finish occurred after its own `expires_at`.
 
 ## Twenty-capture matrix
 
@@ -32,7 +34,7 @@ For every capture record:
 - Response is attached to the correct capture and project.
 - Observation, interpretation, implication, and uncertainty remain distinct.
 - Sketch is not treated as accepted fact; external reference is not treated as project evidence.
-- Timeout, invalid JSON, and mismatch remain degraded/non-blocking.
+- Timeout, invalid JSON, and rejected wrong-ID responses remain transport-degraded/non-blocking; a result that actually attaches to the wrong capture/project is a release blocker.
 
 ## Camera entry and cancel contract
 
@@ -45,13 +47,20 @@ For every capture record:
 
 ## Twenty-capture run order
 
-Open [`b04-target-pack.html`](b04-target-pack.html) on a laptop/tablet (or print it) for the original S1–S7 targets and practical household P1–P7/M1–M6 shot list. Advance the proof panel to `B04` only after `B03` and its pending analyses are complete. Note the latest Rabbit Hole entry and count, then capture `S1–S7`, `P1–P7`, and `M1–M6` in the table above. Use a plain capture, wait for its reading or explicit degraded state, record the outcome, and only then open the lens for the next target. Exactly 20 stored captures belong in this phase; a shutter failure that stores no original may be retried.
+Open [`b04-target-pack.html`](b04-target-pack.html) on a laptop/tablet (or print it) for the original S1–S7 targets and practical household P1–P7/M1–M6 shot list. Advance the proof panel to `B04` only after `B03` and its pending analyses are complete. Note the latest Rabbit Hole entry and count, then capture `S1–S7`, `P1–P7`, and `M1–M6` in the table above. Use a plain capture, wait for its reading or explicit unavailable/degraded state, record the two-axis outcome, and only then open the lens for the next target. Exactly 20 stored captures belong in this phase; a shutter failure that stores no original may be retried.
 
-Treat an appropriately uncertain/insufficient reading of an ambiguous target as matched. Degraded means explicitly unavailable; wrong means unrelated, confidently false, or attached to another frame. A shutter or feedback tone is allowed, but spoken words are not. Check Rabbit Hole after captures 5, 10, 15, and 20.
+Record each result as `ID · transport valid/degraded · semantic matched/non-match · clipped yes/no · silent yes/no`:
 
-After the twentieth result, browse all 20 originals, exit with RabbitOS Back, relaunch, and confirm every original remains in the same project. Check Rabbit Hole for the full test window. Report each target as `ID · matched / degraded / wrong · clipped yes/no · silent yes/no`, plus persistence and Rabbit Hole status. Clipping is a separate UI defect, not a vision failure unless it makes the reading unjudgeable.
+- Transport is **valid** only when STRUCTA accepts a `structa.vision.v1` envelope with the exact outstanding `vision_id`. Both `observed` and `insufficient` are valid schema statuses. `Visual signal insufficient` therefore proves an accepted transport envelope; it does not mean transport was unavailable.
+- Transport is **degraded** when analysis explicitly becomes unavailable because no acceptable envelope resolved the request, such as a timeout, malformed response, or rejected ID. A result attached to another frame/project is a correlation blocker rather than an ordinary degraded outcome.
+- Semantics are **matched** only when the reading is accurate and useful for that prepared target. On deliberately ambiguous controls `S7`, `P7`, and `M6`, a valid `insufficient` response may count as matched only when it appropriately preserves the intended ambiguity and makes no unsupported confident claim.
+- Semantics are a **non-match** for an unrelated, confidently false, or unjudgeable reading. A valid `insufficient` response on any clear target—`S1–S6`, `P1–P6`, or `M1–M5`—is a semantic non-match even though transport succeeded. Every transport-degraded result is also a semantic non-match for the product score.
 
-Stop immediately on speech, an automatic journal entry, a lost original, cross-capture/project attachment, a duplicated result, or an unexpected app exit. Continue through at most two explicit degraded results; a third makes the 18/20 threshold impossible. Stop if one capture remains processing without resolving or degrading for 90 seconds, because issuing another request would make correlation evidence ambiguous.
+A shutter or feedback tone is allowed, but spoken words are not. Check Rabbit Hole after captures 5, 10, 15, and 20.
+
+After the twentieth result, browse all 20 originals, exit with RabbitOS Back, relaunch, and confirm every original remains in the same project. Check Rabbit Hole for the full test window. Report all two-axis target outcomes, plus persistence and Rabbit Hole status. Clipping is a separate UI defect, but an unjudgeably clipped reading is a semantic non-match.
+
+Stop immediately on speech, an automatic journal entry, a lost original, cross-capture/project attachment, a duplicated result, or an unexpected app exit. An explicit unavailable result may continue as transport-degraded. Stop when three targets are semantic non-matches, including targets whose transport degraded; the manual 18/20 usefulness threshold is then mathematically impossible. Stop if one capture remains processing without resolving or degrading for 90 seconds, because issuing another request would make correlation evidence ambiguous.
 
 ## Fault injections
 
@@ -64,7 +73,8 @@ Stop immediately on speech, an automatic journal entry, a lost original, cross-c
 
 ## Release threshold
 
-- At least 18 of 20 captures return a valid, correctly matched silent envelope.
+- At least 18 of 20 captures return a valid, exactly correlated envelope.
+- At least 18 of 20 displayed readings are independently judged semantic matches against the prepared targets; a green machine proof does not supply this score.
 - Zero unsolicited speech.
 - Zero journal entries.
 - Zero cross-capture or cross-project matches.
@@ -73,6 +83,6 @@ Stop immediately on speech, an automatic journal entry, a lost original, cross-c
 
 Any speech, journal write, mismatched callback, or lost original is an automatic release blocker regardless of the aggregate score.
 
-The sanitized proof verifies intercepted transport flags; it cannot hear the speaker or inspect Rabbit Hole. Direct tester observation and the Rabbit Hole screenshot are required in addition to a green proof validator result.
+The sanitized proof verifies transport flags, exact correlation/schema acceptance, and attachment only. It cannot see the prepared target, judge semantic usefulness, hear the speaker, or inspect Rabbit Hole. The 20 manual semantic judgments, direct tester observation, and Rabbit Hole screenshot are required in addition to a green proof validator result.
 
 After the run, attach the sanitized device proof, synthetic `.structa.json`, and a Rabbit Hole screenshot covering the test window. Real project content and any R1 Anywhere key must not appear in the bundle.

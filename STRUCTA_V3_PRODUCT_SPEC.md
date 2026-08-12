@@ -52,7 +52,7 @@ The Rabbit bridge request contains only:
 ```json
 {
   "message": "<schema-bound perception prompt>",
-  "payload": { "imageBase64": "<jpeg>" },
+  "imageBase64": "<raw base64 jpeg, no data URL prefix>",
   "useLLM": true,
   "wantsR1Response": false,
   "wantsJournalEntry": false

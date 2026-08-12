@@ -283,10 +283,11 @@
     <h2>capture rules</h2>
     <ul>
       <li>Use only synthetic/non-client material and avoid faces, addresses, screens, and personal documents.</li>
-      <li>Store exactly one original and wait for its reading or explicit degraded state before the next target.</li>
-      <li>For S7, P7, and M6, uncertainty is the correct behavior—not a failure.</li>
-      <li>Record: ID · matched/degraded/wrong · clipped yes/no · silent yes/no.</li>
-      <li>Stop for speech, a Rabbit Hole entry, a lost original, a mismatched result, or 90 seconds unresolved.</li>
+      <li>Store exactly one original and wait for its reading or explicit unavailable/degraded state before the next target.</li>
+      <li>A schema-valid “visual signal insufficient” result is transport-valid, not degraded. It is a semantic non-match for clear targets S1–S6, P1–P6, and M1–M5.</li>
+      <li>For deliberately ambiguous controls S7, P7, and M6, appropriate uncertainty may be a semantic match if it avoids a confident unsupported claim.</li>
+      <li>Record: ID · transport valid/degraded · semantic matched/non-match · clipped yes/no · silent yes/no.</li>
+      <li>Stop for speech, a Rabbit Hole entry, a lost original, a mismatched result, 90 seconds unresolved, or the third semantic non-match (including a target whose transport degraded).</li>
     </ul>
   </section>
 </body>

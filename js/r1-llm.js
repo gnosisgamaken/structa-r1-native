@@ -399,6 +399,9 @@
           native?.traceEvent?.('vision.bridge', 'prepare', 'posted', {
             visionId: request.visionId,
             imageMode: request.imageMode || 'raw-base64',
+            imagePlacement: request.imagePlacement || 'top-level',
+            imageChars: Number(request.imageChars || 0),
+            imageMimeType: request.imageMimeType || '',
             timeoutMs: request.opts.timeout || 18000,
             payloadKeys: Object.keys(payload),
             silent: payload.wantsR1Response === false,
@@ -487,6 +490,8 @@
         layer: 'bridge'
       });
     }
+    var sourceImage = String(imageBase64 || '');
+    var sourceMimeMatch = sourceImage.match(/^data:([^;,]+)(?:;[^,]*)?;base64,/i);
     var requestedMode = String(opts.imageInputMode || opts.inputMode || 'raw-base64').toLowerCase();
     var imageMode = requestedMode === 'dataurl' || requestedMode === 'data-url' ? 'data-url' : 'raw-base64';
     var preparedImage = vision.formatImageInput(imageBase64, imageMode);
@@ -542,7 +547,10 @@
           journal: false,
           timeoutMs: timeoutMs,
           pluginId: '',
-          imageKind: imageMode
+          imageKind: imageMode,
+          imagePlacement: 'top-level',
+          imageChars: preparedImage.length,
+          imageMimeType: String(sourceMimeMatch?.[1] || opts.imageMimeType || '').toLowerCase()
         }
       });
     }
@@ -553,7 +561,10 @@
       wantsR1Response: false,
       journal: false,
       pluginId: '',
-      imageKind: imageMode
+      imageKind: imageMode,
+      imagePlacement: 'top-level',
+      imageChars: preparedImage.length,
+      imageMimeType: String(sourceMimeMatch?.[1] || opts.imageMimeType || '').toLowerCase()
     });
     return new Promise(function(resolve) {
       var request = {
@@ -563,6 +574,9 @@
         message: preparedPrompt,
         imageBase64: preparedImage,
         imageMode: imageMode,
+        imagePlacement: 'top-level',
+        imageChars: preparedImage.length,
+        imageMimeType: String(sourceMimeMatch?.[1] || opts.imageMimeType || '').toLowerCase(),
         visionId: visionId,
         imageRunId: visionId,
         collector: vision.createCollector(visionId),
@@ -775,6 +789,9 @@
       native?.traceEvent?.('plugin.message.parsed', 'in', 'vision', {
         imageRunId: imageRequest.visionId,
         visionId: imageRequest.visionId,
+        status: envelope.status,
+        captureKind: envelope.capture_kind,
+        projectRole: envelope.project_role,
         observationCount: envelope.observations.length,
         interpretationCount: envelope.interpretations.length,
         implicationCount: envelope.implications.length,
@@ -1355,10 +1372,10 @@
       bodyBytes: safeBody.length
     });
     if (hasNativeEmail) {
-      return Promise.resolve(messaging.emailUser({
-        subject: safeSubject,
-        body: safeBody
-      })).then(function(result) {
+      // The R1 messaging SDK accepts content as its first argument, not a
+      // `{ subject, body }` object. Include the proof subject in the content so
+      // multipart exports remain identifiable in the user's inbox.
+      return Promise.resolve(messaging.emailUser(safeSubject + '\n\n' + safeBody)).then(function(result) {
         if (result && typeof result === 'object' && result.ok === false) {
           traceEmail('email.native.failed', 'pending', 'native-rejected', {
             subject: safeSubject,
@@ -1515,6 +1532,9 @@
           captureId: captureId || '',
           visionId: visionId,
           itemId: options.itemId || '',
+          status: result.envelope?.status || '',
+          captureKind: result.envelope?.capture_kind || '',
+          projectRole: result.envelope?.project_role || '',
           observationCount: result.observations?.length || 0,
           interpretationCount: result.interpretations?.length || 0,
           implicationCount: result.implications?.length || 0,

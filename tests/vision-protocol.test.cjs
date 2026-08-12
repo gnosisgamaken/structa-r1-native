@@ -47,7 +47,7 @@ function envelope(visionId, patch = {}) {
 test('buildRabbitPayload emits the exact silent Rabbit vision payload', () => {
   assert.deepEqual(vision.buildRabbitPayload('inspect', 'YWJj'), {
     message: 'inspect',
-    payload: { imageBase64: 'YWJj' },
+    imageBase64: 'YWJj',
     useLLM: true,
     wantsR1Response: false,
     wantsJournalEntry: false

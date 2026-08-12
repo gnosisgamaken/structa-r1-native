@@ -38,9 +38,32 @@ function validEnvelope(visionId) {
   };
 }
 
-function createRuntime() {
+function insufficientEnvelope(visionId) {
+  return {
+    schema: vision.SCHEMA,
+    vision_id: visionId,
+    status: 'insufficient',
+    capture_kind: 'unknown',
+    project_role: 'unknown',
+    project_role_confidence: 0.2,
+    ocr: [],
+    observations: [],
+    interpretations: [],
+    implications: [],
+    uncertainties: [{
+      id: 'unc_1',
+      question: 'The image could not be read.',
+      impact: 'high',
+      related_ids: []
+    }]
+  };
+}
+
+function createRuntime(options = {}) {
   const posted = [];
   const dispatched = [];
+  const traces = [];
+  const emailCalls = [];
   const native = {
     deviceId: 'test-device',
     probeMode: false,
@@ -57,7 +80,7 @@ function createRuntime() {
       };
     },
     getClaimsForItem() { return []; },
-    traceEvent() {},
+    traceEvent(flow, from, to, context) { traces.push({ flow, from, to, context }); },
     recordProductEvent() {},
     appendLogEntry() {},
     recordVoiceCall() {}
@@ -70,7 +93,14 @@ function createRuntime() {
     addEventListener() {},
     removeEventListener() {},
     dispatchEvent(event) { dispatched.push(event); },
-    r1: {}
+    r1: options.nativeEmail === false ? {} : {
+      messaging: {
+        emailUser(content, emailOptions) {
+          emailCalls.push({ content, options: emailOptions });
+          return options.emailResult === undefined ? { ok: true } : options.emailResult;
+        }
+      }
+    }
   };
   const context = vm.createContext({
     window,
@@ -90,7 +120,7 @@ function createRuntime() {
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'js', 'r1-llm.js'), 'utf8');
   vm.runInContext(source, context, { filename: 'r1-llm.js' });
-  return { window, posted, dispatched };
+  return { window, posted, dispatched, traces, emailCalls };
 }
 
 async function waitUntil(predicate, timeoutMs = 1000) {
@@ -115,11 +145,12 @@ test('r1 image bridge posts exact payload and resolves only exact schema/id resp
   assert.ok(visionId);
   assert.deepEqual(outbound, {
     message: outbound.message,
-    payload: { imageBase64: 'YWJj' },
+    imageBase64: 'YWJj',
     useLLM: true,
     wantsR1Response: false,
     wantsJournalEntry: false
   });
+  assert.equal(Object.hasOwn(outbound, 'payload'), false);
   assert.equal(Object.hasOwn(outbound, 'pluginId'), false);
   assert.equal(Object.hasOwn(outbound, 'correlationId'), false);
 
@@ -144,6 +175,28 @@ test('r1 image bridge posts exact payload and resolves only exact schema/id resp
   assert.equal(result.interpretations.length, 1);
   assert.equal(result.implications.length, 1);
   assert.equal(result.uncertainties.length, 1);
+
+  const postedTrace = runtime.traces.find(entry =>
+    entry.flow === 'vision.bridge' && entry.from === 'prepare' && entry.to === 'posted'
+  );
+  assert.equal(postedTrace.context.imagePlacement, 'top-level');
+  assert.equal(postedTrace.context.imageMode, 'raw-base64');
+  assert.equal(postedTrace.context.imageChars, 4);
+  assert.equal(postedTrace.context.imageMimeType, 'image/png');
+  assert.deepEqual(Array.from(postedTrace.context.payloadKeys), [
+    'message',
+    'imageBase64',
+    'useLLM',
+    'wantsR1Response',
+    'wantsJournalEntry'
+  ]);
+
+  const parsedTrace = runtime.traces.find(entry =>
+    entry.flow === 'plugin.message.parsed' && entry.from === 'in' && entry.to === 'vision'
+  );
+  assert.equal(parsedTrace.context.status, 'observed');
+  assert.equal(parsedTrace.context.captureKind, 'space');
+  assert.equal(parsedTrace.context.projectRole, 'external_reference');
 });
 
 test('r1 bridge forwards an empty sttEnded as a terminal capture event', () => {
@@ -155,4 +208,46 @@ test('r1 bridge forwards an empty sttEnded as a terminal capture event', () => {
   assert.equal(runtime.dispatched[0].type, 'structa-stt-ended');
   assert.equal(runtime.dispatched[0].detail.transcript, '');
   assert.equal(runtime.posted.length, 0);
+});
+
+test('schema-valid insufficient remains transport success and is explicit in proof traces', async () => {
+  const runtime = createRuntime();
+  const pending = runtime.window.StructaLLM.sendBridgeImage(
+    'YWJj',
+    'Inspect this clear fixture.',
+    { captureId: 'cap_insufficient', timeout: 2000, imageInputMode: 'raw-base64' }
+  );
+
+  await waitUntil(() => runtime.posted.length === 1);
+  const visionId = vision.extractVisionIdFromPrompt(runtime.posted[0].message);
+  runtime.window.onPluginMessage({ response: JSON.stringify(insufficientEnvelope(visionId)) });
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.envelope.status, 'insufficient');
+  assert.equal(result.clean, 'visual signal insufficient');
+
+  const parsedTrace = runtime.traces.find(entry =>
+    entry.flow === 'plugin.message.parsed' && entry.from === 'in' && entry.to === 'vision'
+  );
+  assert.equal(parsedTrace.context.status, 'insufficient');
+  assert.equal(parsedTrace.context.observationCount, 0);
+  assert.equal(parsedTrace.context.uncertaintyCount, 1);
+});
+
+test('native proof email uses the R1 content-string contract without journaling', async () => {
+  const runtime = createRuntime();
+  const result = await runtime.window.StructaLLM.emailText(
+    'STRUCTA proof ST-20260812-test [1/2]',
+    'STRUCTA_DEVICE_PROOF_TRANSPORT_V1\nPART 1/2'
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(runtime.emailCalls.length, 1);
+  assert.equal(
+    runtime.emailCalls[0].content,
+    'STRUCTA proof ST-20260812-test [1/2]\n\nSTRUCTA_DEVICE_PROOF_TRANSPORT_V1\nPART 1/2'
+  );
+  assert.equal(runtime.emailCalls[0].options, undefined);
+  assert.equal(runtime.posted.length, 0, 'email must not fall through to the generic bridge or journal');
 });

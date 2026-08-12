@@ -12,10 +12,14 @@
 
   var SCHEMA = 'structa.device-proof.v1';
   var STORAGE_KEY = 'structa.device-proof.v1.active';
-  var SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+  // A full B00-B07 owner lab is intentionally deliberate and may span most of
+  // a working day on physical hardware. Keep one sanitized proof alive long
+  // enough to complete that run while still enforcing a finite expiry.
+  var SESSION_TTL_MS = 12 * 60 * 60 * 1000;
   var MAX_EVENTS = 1600;
   var MAX_TRANSPORT_BODY = 2700;
   var MAX_TRANSPORT_PARTS = 48;
+  var EMAIL_PART_TIMEOUT_MS = 8000;
   var STEP_GUIDANCE = Object.freeze({
     B00: 'B00 · check build before testing',
     B01: 'B01 · controls · system back exits',
@@ -40,6 +44,9 @@
     flow_id: true,
     from_id: true,
     from_step_id: true,
+    image_mime_type_id: true,
+    image_mode_id: true,
+    image_placement_id: true,
     image_run_id: true,
     input_id: true,
     item_id: true,
@@ -61,7 +68,17 @@
     to_id: true,
     to_step_id: true,
     type_id: true,
+    capture_kind_id: true,
+    project_role_id: true,
     vision_id: true
+  });
+  var SAFE_TRACE_CATEGORIES = Object.freeze({
+    image_placement: Object.freeze({ 'top-level': true, nested: true, missing: true }),
+    image_mode: Object.freeze({ 'raw-base64': true, 'data-url': true, missing: true }),
+    image_mime_type: Object.freeze({ 'image.jpeg': true, 'image.png': true, 'image.webp': true, 'image.gif': true, 'image.avif': true, unknown: true }),
+    status: Object.freeze({ observed: true, insufficient: true, unavailable: true }),
+    capture_kind: Object.freeze({ sketch_diagram: true, space: true, material_object: true, screen_graphic: true, other: true, unknown: true }),
+    project_role: Object.freeze({ existing_condition: true, working_artifact: true, external_reference: true, unknown: true })
   });
   var params = new URLSearchParams(window.location.search || '');
   var hash = String(window.location.hash || '').toLowerCase();
@@ -129,6 +146,16 @@
   function finiteNumber(value) {
     var number = Number(value);
     return Number.isFinite(number) ? number : null;
+  }
+
+  function safeTraceCategory(key, value) {
+    var allowed = SAFE_TRACE_CATEGORIES[key];
+    if (!allowed) return '';
+    var token = String(value === undefined || value === null ? '' : value)
+      .trim()
+      .toLowerCase()
+      .replace(/\//g, '.');
+    return allowed[token] ? token : '';
   }
 
   function randomId() {
@@ -241,6 +268,33 @@
       previousMs = event.ms;
     }
     return true;
+  }
+
+  function sessionWithinExpiry(current) {
+    var value = current && typeof current === 'object' ? current : {};
+    var events = Array.isArray(value.events) ? value.events : [];
+    var startedMs = Date.parse(value.started_at || '');
+    var expiresMs = Date.parse(value.expires_at || '');
+    if (!Number.isFinite(startedMs) || !Number.isFinite(expiresMs) || expiresMs < startedMs) return false;
+    var finishEvent = events.slice().reverse().find(function(event) { return event && event.type === 'session.finish'; }) || null;
+    if (value.status === 'running') {
+      return events.some(function(event) {
+        var eventMs = Date.parse(event && event.at || '');
+        return !Number.isFinite(eventMs) || eventMs < startedMs - 5000 || eventMs > expiresMs;
+      }) ? false : null;
+    }
+    if (!finishEvent) return false;
+    var finishedMs = Date.parse(value.finished_at || '');
+    var finishEventMs = Date.parse(finishEvent.at || '');
+    if (!Number.isFinite(finishedMs) || !Number.isFinite(finishEventMs)) return false;
+    if (finishedMs < startedMs || finishedMs > expiresMs || finishEventMs < startedMs || finishEventMs > expiresMs) return false;
+    if (Math.abs(finishedMs - finishEventMs) > 5000) return false;
+    return events
+      .filter(function(event) { return event && event.seq <= finishEvent.seq; })
+      .every(function(event) {
+        var eventMs = Date.parse(event.at || '');
+        return Number.isFinite(eventMs) && eventMs >= startedMs - 5000 && eventMs <= expiresMs;
+      });
   }
 
   function eventId(event, key) {
@@ -508,6 +562,7 @@
 
     return [
       { id: 'event.sequence_monotonic', pass: sequenceInvariant() },
+      { id: 'session.within_expiry', pass: sessionWithinExpiry(current) },
       {
         id: 'provider.single_inflight',
         pass: providerSummary.overlap_violations === 0 && providerSummary.observed_max_in_flight <= 1,
@@ -629,6 +684,31 @@
     }
   }
 
+  function terminalizeExpiredProof(value) {
+    var ended = now();
+    var started = Date.parse(value && value.started_at || '') || ended;
+    var priorMs = Array.isArray(value && value.events) && value.events.length
+      ? Number(value.events[value.events.length - 1].ms || 0)
+      : 0;
+    value.events.push({
+      session_id: value.session_id,
+      seq: value.events.length + 1,
+      ms: Math.max(priorMs, Math.max(0, ended - started)),
+      at: new Date(ended).toISOString(),
+      step_id: safeStep(value.step_id),
+      build: value.build.ui_build_id,
+      type: 'session.expired',
+      flags: { expired: true }
+    });
+    if (value.events.length > MAX_EVENTS) {
+      value.events = value.events.slice(value.events.length - MAX_EVENTS);
+      value.events.forEach(function(event, index) { event.seq = index + 1; });
+    }
+    value.status = 'failed';
+    value.finished_at = new Date(ended).toISOString();
+    return value;
+  }
+
   function restoreProof() {
     var parsed = null;
     try {
@@ -645,13 +725,17 @@
     var startedMs = Date.parse(parsed.started_at || '');
     var expiresMs = Date.parse(parsed.expires_at || '');
     if (!Number.isFinite(startedMs) || !Number.isFinite(expiresMs)) return null;
-    if (parsed.status === 'running') {
-      if (parsed.build.ui_build_id !== buildId()) return null;
-      if (now() < startedMs || now() > expiresMs || now() - startedMs > SESSION_TTL_MS) return null;
-    }
     if (!Array.isArray(parsed.events) || !safeToken(parsed.session_id, 96)) return null;
     parsed.step_id = safeStep(parsed.step_id);
     parsed.events = parsed.events.slice(-MAX_EVENTS);
+    if (parsed.status === 'running') {
+      if (now() < startedMs) return null;
+      if (now() > expiresMs || now() - startedMs > SESSION_TTL_MS) {
+        parsed = terminalizeExpiredProof(parsed);
+      } else if (parsed.build.ui_build_id !== buildId()) {
+        return null;
+      }
+    }
     var previousProvider = parsed.summary && parsed.summary.provider ? parsed.summary.provider : {};
     resumeAbandonedDelta = parsed.status === 'running' ? Number(previousProvider.outstanding || 0) : 0;
     provider.outbound = Number(previousProvider.outbound || 0);
@@ -946,6 +1030,9 @@
       if (!normalized) return;
       if (/_id$/.test(normalized) || /(?:^|_)(?:correlation|request|vision|entry|item|node|capture|project|operation|image_run)_id$/.test(normalized)) {
         fields[normalized] = safeToken(value, 96);
+      } else if (SAFE_TRACE_CATEGORIES[normalized]) {
+        var category = safeTraceCategory(normalized, value);
+        if (category) fields[normalized] = category;
       } else if (typeof value === 'boolean') {
         fields[normalized] = value;
       } else if (typeof value === 'number' && Number.isFinite(value)) {
@@ -1035,7 +1122,11 @@
       var eventCount = current && current.summary ? current.summary.event_count : 0;
       var currentStep = current ? safeStep(current.step_id) : 'B00';
       step.textContent = 'step · ' + currentStep;
-      status.textContent = label || STEP_GUIDANCE[currentStep] || ((current ? current.session_id : 'no session') + ' · ' + currentStep + ' · ' + eventCount + ' events');
+      var expired = !!(current && current.events && current.events.some(function(entry) { return entry.type === 'session.expired'; }));
+      step.disabled = !!(current && current.status !== 'running');
+      status.textContent = label || (expired
+        ? 'proof expired · send or start new session'
+        : (STEP_GUIDANCE[currentStep] || ((current ? current.session_id : 'no session') + ' · ' + currentStep + ' · ' + eventCount + ' events')));
     }
 
     function stop(event) {
@@ -1111,10 +1202,24 @@
       stop(event);
       send.disabled = true;
       updateStatus('finishing proof…');
-      if (proof && proof.status === 'running') finish();
-      var result = await exportProof();
-      updateStatus(result.email && result.email.ok ? 'proof emailed' : (result.local && result.local.ok ? 'proof saved locally' : 'proof export failed'));
-      send.disabled = false;
+      try {
+        if (proof && proof.status === 'running') finish();
+        var result = await exportProof();
+        if (result.email && result.email.ok) {
+          updateStatus('proof emailed');
+          send.textContent = 'send again';
+        } else if (result.local && result.local.ok) {
+          updateStatus('email unavailable · proof retained');
+          send.textContent = 'retry send';
+        } else {
+          updateStatus('proof export failed');
+        }
+      } catch (_) {
+        updateStatus('send failed · proof retained');
+        send.textContent = 'retry send';
+      } finally {
+        send.disabled = false;
+      }
     });
     journal.addEventListener('click', async function(event) {
       stop(event);
@@ -1507,12 +1612,15 @@
       var part = transport.parts[index];
       var response;
       try {
-        response = await window.StructaLLM.emailText(
-          'STRUCTA proof ' + value.session_id + ' [' + part.part + '/' + part.total + ']',
-          part.body
+        response = await promiseWithTimeout(
+          window.StructaLLM.emailText(
+            'STRUCTA proof ' + value.session_id + ' [' + part.part + '/' + part.total + ']',
+            part.body
+          ),
+          EMAIL_PART_TIMEOUT_MS
         );
-      } catch (_) {
-        response = { ok: false, mode: 'failed' };
+      } catch (error) {
+        response = { ok: false, mode: error && error.message === 'timeout' ? 'timeout' : 'failed' };
       }
       var receipt = {
         part: part.part,
@@ -1534,22 +1642,47 @@
     };
   }
 
-  function saveLocally(value) {
-    var filename = 'structa-device-proof-' + value.session_id + '.json';
+  function promiseWithTimeout(value, timeoutMs) {
+    return new Promise(function(resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function() {
+        if (settled) return;
+        settled = true;
+        reject(new Error('timeout'));
+      }, Math.max(1, Number(timeoutMs || EMAIL_PART_TIMEOUT_MS)));
+      Promise.resolve(value).then(function(result) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      }).catch(function(error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
+  function retainLocally(value) {
     try {
-      var blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
-      var url = URL.createObjectURL(blob);
-      var anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.style.display = 'none';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(function() { URL.revokeObjectURL(url); }, 0);
-      return { ok: true, filename: filename };
+      refreshSummary();
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+      storageAvailable = true;
+      return {
+        ok: true,
+        mode: 'local-storage',
+        storage_key: STORAGE_KEY,
+        recoverable_after_relaunch: true
+      };
     } catch (_) {
-      return { ok: false, filename: filename };
+      storageAvailable = false;
+      return {
+        ok: false,
+        mode: 'unavailable',
+        storage_key: STORAGE_KEY,
+        recoverable_after_relaunch: false
+      };
     }
   }
 
@@ -1581,7 +1714,12 @@
       journalFallbackRequested: opts.journalFallback === true
     }, proof.status !== 'running');
     var snapshot = getProof();
-    var local = saveLocally(snapshot);
+    // The R1 WebView does not reliably honor the HTML `download` attribute.
+    // Navigating it to a generated blob URL replaces the creation with a black
+    // document and can abort the native email handoff. The active proof is
+    // already the durable recovery copy; keep it in localStorage and perform
+    // transport without changing the current document.
+    var local = retainLocally(snapshot);
     var body = digest(snapshot);
     var email = { ok: false, attempted: false, mode: 'unavailable' };
     if (opts.email !== false && window.StructaLLM && typeof window.StructaLLM.emailText === 'function') {

@@ -64,9 +64,11 @@
   function buildRabbitPayload(message, imageBase64) {
     return {
       message: String(message || '').trim(),
-      payload: {
-        imageBase64: String(imageBase64 || '')
-      },
+      // r1-create's MessageOptions contract places imageBase64 beside message.
+      // Nesting it under `payload` is outside that bridge contract and can
+      // leave the prompt usable while the provider receives no image, yielding
+      // a schema-valid `insufficient` response to an effectively text-only request.
+      imageBase64: String(imageBase64 || ''),
       useLLM: true,
       wantsR1Response: false,
       wantsJournalEntry: false

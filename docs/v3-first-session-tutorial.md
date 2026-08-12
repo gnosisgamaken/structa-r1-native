@@ -21,8 +21,8 @@ At the end, the user has a small but genuine project map, one classified referen
    - Success: the user focuses at least one branch.
 
 3. **SHOW · add a reference**
-   - Prompt: `Tap the camera control, then capture a sketch, space, material, object, or reference.`
-   - Side may focus or prime the empty-SHOW camera control, but the tutorial waits for a direct touch before requesting the lens.
+   - Prompt: `Tap SHOW to open the lens, then capture a sketch, space, material, object, or reference.`
+   - On empty SHOW, the same intentional touch opens the lens directly. Side or PTT may arm a subtle cue, but never inserts another screen or another required tap.
    - After save-first capture, ask for the truth role only when classification is uncertain: existing condition, working artifact, or external inspiration.
    - Success: the original is stored before analysis and the reference is linked to a branch.
 

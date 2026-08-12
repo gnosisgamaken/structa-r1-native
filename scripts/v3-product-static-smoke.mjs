@@ -46,17 +46,25 @@ lacks(cascadeSource, /show is off|show is coming later|coming later/i,
 has(cascadeSource, /function\s+openCameraFromShow\s*\(/,
   'SHOW must provide a camera entry point');
 has(cascadeSource, /function\s+primeCameraFromHardware\s*\(/,
-  'SHOW must expose an explicit hardware-to-touch activation gate');
+  'SHOW must expose hardware-to-touch arming');
 has(cascadeSource, /if\s*\(source\s*!==\s*["']touch["']\)\s*return\s+primeCameraFromHardware\(source\)/,
-  'hardware camera requests must stop at the touch activation gate');
+  'hardware camera requests must stop at touch arming');
 has(cascadeSource, /StructaCamera\?\.openFromGesture\?\.\(options\.facingMode\s*\|\|\s*["']environment["']\)/,
   'the trusted touch path must invoke the native camera surface');
 has(cascadeSource, /case\s+STATES\.SHOW_BROWSE:[\s\S]{0,180}?openCameraFromShow\(["']side["']\)/,
-  'SHOW side click must route through the camera activation gate');
-has(cascadeSource, /["']data-hit-target["']:\s*["']camera-activation["'][\s\S]{0,900}?openCameraFromShow\(["']touch["']\)/,
-  'the activation gate must expose a direct-touch camera action');
-has(cascadeSource, /width:\s*192,\s*height:\s*54[\s\S]{0,220}?["']data-hit-target["']:\s*["']camera-activation["']/,
-  'the camera activation action must exceed the 44px touch minimum');
+  'SHOW Side must route through camera touch arming');
+has(cascadeSource, /["']data-hit-target["']:\s*["']camera-open["'][\s\S]{0,1500}?openCameraFromShow\(["']touch["']\)/,
+  'SHOW must expose direct trusted-touch camera actions');
+has(cascadeSource, /width:\s*46,\s*height:\s*MIN_DIRECT_TOUCH[\s\S]{0,220}?["']data-hit-target["']:\s*["']camera-open["']/,
+  'the compact SHOW lens action must meet the 44px touch minimum');
+has(cascadeSource, /data-hit-key["']:\s*["']show-empty["']/,
+  'empty SHOW must expose a direct full-panel camera action');
+lacks(cascadeSource, /SHOW_PRIMED|show_primed|camera-activation|touch required by r1/,
+  'the removed camera activation interstitial must have no stale cascade path');
+has(cascadeSource, /function\s+consumeArmedCameraTouch\s*\([\s\S]{0,700}?openCameraFromShow\(["']touch["']\)/,
+  'an armed SHOW must consume the next trusted touch without an interstitial');
+has(cascadeSource, /stateExitHandlers\[STATES\.SHOW_BROWSE\][\s\S]{0,500}?cameraRequestPending[\s\S]{0,300}?StructaCamera\?\.close/,
+  'leaving SHOW must cancel a pending camera acquisition');
 lacks(cascadeSource, /__structaCameraGuard|cameraHistoryGuard|history\.pushState|addEventListener\(["']popstate["']/,
   'camera navigation must not mutate WebView history or claim system Back');
 has(indexSource, /#camera-cancel\s*\{[\s\S]{0,320}?min-height:\s*44px/,

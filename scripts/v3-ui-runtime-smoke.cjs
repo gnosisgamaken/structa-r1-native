@@ -109,13 +109,28 @@ let cameraOpened = 0;
 let cameraClosed = 0;
 let cameraCaptured = 0;
 let cameraIsOpen = false;
+let cameraOpenPending = false;
+let cameraOpenDeferred = false;
+let cameraCloseRequests = 0;
+function resolveCameraOpen() {
+  if (!cameraOpenPending) return false;
+  cameraOpenPending = false;
+  cameraIsOpen = true;
+  window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
+  return true;
+}
 window.StructaCamera = {
   openFromGesture() {
     cameraOpened += 1;
-    cameraIsOpen = true;
-    window.dispatchEvent(new window.CustomEvent('structa-camera-open'));
+    cameraOpenPending = true;
+    if (!cameraOpenDeferred) resolveCameraOpen();
   },
   close() {
+    cameraCloseRequests += 1;
+    if (cameraOpenPending) {
+      cameraOpenPending = false;
+      return;
+    }
     if (!cameraIsOpen) return;
     cameraIsOpen = false;
     cameraClosed += 1;
@@ -123,6 +138,7 @@ window.StructaCamera = {
   },
   capture() {
     cameraCaptured += 1;
+    cameraOpenPending = false;
     if (!cameraIsOpen) return;
     cameraIsOpen = false;
     window.dispatchEvent(new window.CustomEvent('structa-camera-close'));
@@ -161,6 +177,7 @@ evaluate('structa-cascade.js');
 const panel = window.StructaPanel;
 assert.ok(panel, 'public panel API exists');
 const states = panel.STATES;
+assert.equal(states.SHOW_PRIMED, undefined, 'the obsolete camera interstitial is absent from the public state machine');
 const scene = window.document.getElementById('scene');
 const textContent = () => scene.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -190,28 +207,15 @@ function assertHitTargets(kind, expectedCount) {
 
 panel.transition(states.SHOW_BROWSE);
 assert.match(textContent(), /project reading|visual note/, 'SHOW renders the selected reference');
-window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(cameraOpened, 0, 'SHOW hardware Side does not request camera permission without a screen touch');
-assert.equal(panel.getState(), states.SHOW_PRIMED, 'SHOW hardware Side enters the explicit touch-activation gate');
-assert.match(textContent(), /touch required by r1.*tap to open lens/, 'the activation gate explains the required device touch');
-const activationTarget = scene.querySelector('rect[data-hit-target="camera-activation"]');
-assert.ok(activationTarget, 'the camera activation gate exposes one direct-touch target');
-assert.ok(Number(activationTarget.getAttribute('width')) >= 44 && Number(activationTarget.getAttribute('height')) >= 44,
-  'the camera activation target is at least 44x44');
-const activationCancel = scene.querySelector('rect[data-hit-target="camera-activation-cancel"]');
-assert.ok(activationCancel, 'the activation gate exposes an explicit cancel target');
-assert.ok(Number(activationCancel.getAttribute('width')) >= 44 && Number(activationCancel.getAttribute('height')) >= 44,
-  'the activation cancel target is at least 44x44');
-activationCancel.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
-assert.equal(panel.getState(), states.SHOW_BROWSE, 'activation cancel returns to SHOW without requesting a camera');
-assert.equal(cameraOpened, 0, 'activation cancel cannot acquire the lens');
-
-window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.SHOW_PRIMED, 'hardware Side can re-arm the activation gate after cancel');
-const trustedActivationTarget = scene.querySelector('rect[data-hit-target="camera-activation"]');
 const captureCountBeforeCameraOpen = project.captures.length;
-trustedActivationTarget.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
-assert.equal(cameraOpened, 1, 'a direct screen touch requests the camera exactly once');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'SHOW begins on the existing reference surface');
+assert.equal(scene.querySelector('[data-hit-target="camera-activation"]'), null,
+  'SHOW never renders the old camera activation interstitial');
+const capturedShowCamera = scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-lens"]');
+assert.ok(capturedShowCamera, 'SHOW with captures keeps a direct camera affordance');
+const openedBeforeCapturedTouch = cameraOpened;
+capturedShowCamera.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeCapturedTouch + 1, 'touching the captured SHOW camera affordance requests the lens exactly once');
 assert.equal(panel.getState(), states.CAMERA_OPEN, 'camera ready after the touch enters the camera state');
 assert.equal(historyPushCalls, 0, 'camera activation never mutates WebView history');
 assert.equal(historyBackCalls, 0, 'camera activation never drives WebView Back');
@@ -224,36 +228,67 @@ assert.equal(project.captures.length, captureCountBeforeCameraOpen, 'activation 
 assert.equal(historyPushCalls, 0, 'camera cancel leaves WebView history untouched');
 assert.equal(historyBackCalls, 0, 'camera cancel does not impersonate system Back');
 
+const openedBeforeSideArm = cameraOpened;
 window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.SHOW_PRIMED, 'camera can be armed again after cancellation');
-scene.querySelector('rect[data-hit-target="camera-activation"]')
-  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
-assert.equal(panel.getState(), states.CAMERA_OPEN, 'a new direct touch can reopen the camera');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'hardware Side subtly arms the existing SHOW surface without an interstitial');
+assert.equal(cameraOpened, openedBeforeSideArm, 'hardware Side cannot request camera permission without a trusted touch');
+assert.equal(scene.querySelector('[data-hit-target="camera-activation"]'), null,
+  'hardware arming does not restore the activation overlay');
+scene.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeSideArm + 1, 'the next trusted SHOW touch after Side opens the lens exactly once');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'the armed trusted touch enters the live camera');
 window.dispatchEvent(new window.CustomEvent('sideClick'));
 assert.equal(cameraCaptured, 1, 'camera Side capture still captures exactly once');
 assert.equal(panel.getState(), states.SHOW_BROWSE, 'capture completion returns to SHOW');
 assert.equal(historyPushCalls, 0, 'capture completion leaves WebView history untouched');
 assert.equal(historyBackCalls, 0, 'capture completion never invokes WebView Back');
 
-window.dispatchEvent(new window.CustomEvent('sideClick'));
-assert.equal(panel.getState(), states.SHOW_PRIMED, 'post-capture hardware Side still waits for touch');
-const openedBeforeLeavingGate = cameraOpened;
+cameraOpenDeferred = true;
+const closeRequestsBeforePendingNavigation = cameraCloseRequests;
+scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-lens"]')
+  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'SHOW stays visible while lens acquisition is pending');
+assert.equal(cameraOpenPending, true, 'the runtime smoke holds one camera acquisition pending');
 panel.goHome();
-assert.equal(panel.getState(), states.HOME, 'leaving the activation gate returns Home');
-assert.equal(cameraOpened, openedBeforeLeavingGate, 'leaving the activation gate never acquires a lens');
-assert.equal(project.captures.length, captureCountBeforeCameraOpen, 'leaving the activation gate cannot mutate the project');
+assert.equal(panel.getState(), states.HOME, 'navigation can leave SHOW while camera acquisition is pending');
+assert.equal(cameraCloseRequests, closeRequestsBeforePendingNavigation + 1, 'leaving SHOW cancels its pending camera acquisition');
+assert.equal(resolveCameraOpen(), false, 'a cancelled late acquisition cannot reopen the lens over Home');
+assert.equal(cameraIsOpen, false, 'no hidden camera remains after pending navigation');
+cameraOpenDeferred = false;
 
 const savedCaptureRows = project.captures.slice();
 project.captures.splice(0, project.captures.length);
 window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
 panel.transition(states.SHOW_BROWSE);
+const emptyShowCamera = scene.querySelector('[data-hit-target="camera-open"][data-hit-key="show-empty"]');
+assert.ok(emptyShowCamera, 'empty SHOW exposes one direct trusted-touch camera target');
+const openedBeforeEmptyTouch = cameraOpened;
+emptyShowCamera.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeEmptyTouch + 1, 'empty SHOW touch opens the lens exactly once without an interstitial');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'empty SHOW direct touch enters the live camera');
+window.StructaCamera.close();
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'live cancel returns to empty SHOW');
+
+panel.goHome();
+panel.selectCard('show');
+const emptyHomeShowCard = scene.querySelector('g[data-card-index="0"]');
+assert.ok(emptyHomeShowCard, 'the selected empty SHOW home card is touchable');
+const openedBeforeHomeTouch = cameraOpened;
+emptyHomeShowCard.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeHomeTouch + 1, 'touching the empty SHOW home card opens the lens in one step');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'empty SHOW home-card touch skips the browse/interstitial frame');
+window.StructaCamera.close();
+
+panel.transition(states.SHOW_BROWSE);
 const openedBeforeEmptyShowPtt = cameraOpened;
 window.dispatchEvent(new window.CustomEvent('longPressStart'));
-assert.equal(panel.getState(), states.SHOW_PRIMED, 'empty SHOW PTT also enters the explicit touch-activation gate');
+assert.equal(panel.getState(), states.SHOW_BROWSE, 'empty SHOW PTT only arms the existing SHOW surface');
 assert.equal(cameraOpened, openedBeforeEmptyShowPtt, 'empty SHOW PTT cannot acquire the camera without touch');
 window.dispatchEvent(new window.CustomEvent('longPressEnd'));
-scene.querySelector('rect[data-hit-target="camera-activation-cancel"]')
-  .dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+scene.dispatchEvent(new window.Event('pointerup', { bubbles: true }));
+assert.equal(cameraOpened, openedBeforeEmptyShowPtt + 1, 'the next trusted touch after empty SHOW PTT opens once');
+assert.equal(panel.getState(), states.CAMERA_OPEN, 'PTT-armed trusted touch enters the camera');
+window.StructaCamera.close();
 project.captures.push(...savedCaptureRows);
 window.dispatchEvent(new window.CustomEvent('structa-memory-updated'));
 

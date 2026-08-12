@@ -20,8 +20,8 @@
     B00: 'B00 · check build before testing',
     B01: 'B01 · controls · system back exits',
     B02: 'B02 · voice · empty input saves nothing',
-    B03: 'B03 · side primes · touch opens · cancel button returns',
-    B04: 'B04 · 20 silent vision captures',
+    B03: 'B03 · trusted show touch opens · hardware cues · cancel returns',
+    B04: 'B04 · one at a time · 20 silent vision captures',
     B05: 'B05 · map · decisions · uncertainty',
     B06: 'B06 · offline · errors · recovery',
     B07: 'B07 · export proof and project'

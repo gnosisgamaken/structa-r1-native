@@ -15,7 +15,7 @@ This branch implements:
 - project-bound asynchronous voice, vision, research, and impact-chain writes;
 - provenance-aware Rabbit research where unsourced synthesis remains a withheld hypothesis;
 - versioned Markdown and `.structa.json` handoff exports;
-- polished SHOW, TELL, KNOW, and NOW surfaces with hardware and direct-touch interaction, including the R1 camera's required touch-activation step.
+- polished SHOW, TELL, KNOW, and NOW surfaces with hardware and direct-touch interaction, including a one-touch R1 camera handoff without an activation interstitial.
 
 The canonical product contract is [STRUCTA_V3_PRODUCT_SPEC.md](STRUCTA_V3_PRODUCT_SPEC.md).
 

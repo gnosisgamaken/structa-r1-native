@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.5`
+- UI build: `ui-20260812-structa-v3.6`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
@@ -36,11 +36,21 @@ For every capture record:
 
 ## Camera entry and cancel contract
 
-- Side on empty SHOW may prime the camera affordance but does not prove lens access.
-- Directly touch the SHOW camera affordance; only that touch is expected to satisfy R1 WebView activation and open the preview.
+- A touch whose clear intent is to enter SHOW or open its lens must open the preview in that same gesture; it must not show a full-page activation card or require a second tap.
+- Side or empty-SHOW PTT cannot satisfy R1 WebView activation. They may show a subtle touch cue on normal SHOW; the next intentional SHOW touch opens the preview.
 - With the preview open, tap the visible top `cancel` button. It must return to SHOW without storing a frame.
 - RabbitOS system Back exits the whole creation and is not an in-app cancel. Test it only after saving an original, then relaunch and verify persistence.
-- The B03 proof is incomplete without both a touch-activated camera-open event and an open→in-app-close interval containing no capture.
+- The B03 proof is incomplete without both a same-gesture touch-activated camera-open event and an open→in-app-close interval containing no capture.
+
+## Twenty-capture run order
+
+Advance the proof panel to `B04` only after `B03` and its pending analyses are complete. Note the latest Rabbit Hole entry and count, then capture `S1–S7`, `P1–P7`, and `M1–M6` in the table above. Use a plain capture, wait for its reading or explicit degraded state, record the outcome, and only then open the lens for the next target. Exactly 20 stored captures belong in this phase; a shutter failure that stores no original may be retried.
+
+Treat an appropriately uncertain/insufficient reading of an ambiguous target as matched. Degraded means explicitly unavailable; wrong means unrelated, confidently false, or attached to another frame. A shutter or feedback tone is allowed, but spoken words are not. Check Rabbit Hole after captures 5, 10, 15, and 20.
+
+After the twentieth result, browse all 20 originals, exit with RabbitOS Back, relaunch, and confirm every original remains in the same project. Check Rabbit Hole for the full test window. Report each target as `ID · matched / degraded / wrong · clipped yes/no · silent yes/no`, plus persistence and Rabbit Hole status. Clipping is a separate UI defect, not a vision failure unless it makes the reading unjudgeable.
+
+Stop immediately on speech, an automatic journal entry, a lost original, cross-capture/project attachment, a duplicated result, or an unexpected app exit. Continue through at most two explicit degraded results; a third makes the 18/20 threshold impossible. Stop if one capture remains processing without resolving or degrading for 90 seconds, because issuing another request would make correlation evidence ambiguous.
 
 ## Fault injections
 

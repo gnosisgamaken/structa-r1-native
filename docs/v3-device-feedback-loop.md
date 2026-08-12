@@ -58,7 +58,7 @@ Run these phases in order. Set the active device-lab step before each phase when
 | `B00` | Build truth | Cold launch, open **proof**, run **check build** | Correct UI/assets/server; no boot error |
 | `B01` | Hardware | Touch; 10 wheel detents each way; Side; PTT; shake; system Back last | One intended action per input; system Back exits; relaunch resumes without mutation |
 | `B02` | Voice | Known phrase; empty release; cancel; answer question; custom decision | One transcript to the correct project; empty input creates nothing |
-| `B03` | Camera | Side prime; direct-touch activation; rear/front; flip; in-app cancel; capture; SHOW+TELL; host exit/relaunch | Touch opens the lens; cancel returns SHOW; original saves before analysis and survives host exit/relaunch |
+| `B03` | Camera | Direct SHOW touch; hardware cue; rear/front; flip; in-app cancel; capture; SHOW+TELL; host exit/relaunch | An intentional SHOW touch opens the lens immediately; hardware-only entry waits for the next touch; cancel returns SHOW; originals survive relaunch |
 | `B04` | Vision | Run the 20-capture matrix in `v3-r1-release-lab.md` | At least 18 valid; zero speech, journal writes, mismatches, or lost originals |
 | `B05` | Product | TELL → SHOW → KNOW → NOW; approve; reverse; review uncertainty | Clear map; stable human-gated decisions; batched uncertainty works |
 | `B06` | Recovery | Offline; force-close; denied camera; timeout; malformed/wrong ID; project switch | Graceful degradation, correct project binding, queue recovery |
@@ -68,18 +68,42 @@ For the visual relay, any unsolicited speech, Rabbit Hole entry, cross-project/c
 
 ### B03 exact camera sequence
 
-RabbitOS does not deliver system Back to this web creation. Back exits STRUCTA; that is the verified host contract, not a failed in-app cancel. Camera permission also requires a direct touch: Side may prime the empty-SHOW affordance, but cannot open a cold lens alone.
+RabbitOS does not deliver system Back to this web creation. Back exits STRUCTA; that is the verified host contract, not a failed in-app cancel. Camera permission also requires a direct touch. A touch whose clear intent is to enter SHOW or open its lens should open the preview in that same gesture. Side or empty-SHOW PTT cannot grant camera access; they leave SHOW visible with only a subtle touch cue, and the next intentional SHOW touch opens the lens. User activation is per gesture, not a permission that an earlier arbitrary touch can bank for later.
 
 1. Set the proof step to `B03`, close the proof panel, and enter SHOW.
-2. On empty SHOW, press Side once. It should reveal/focus the lens affordance; do not expect a live preview yet.
-3. Tap the SHOW camera affordance once. The rear preview must appear from that direct touch.
-4. Use Wheel to flip rear/front and back. Confirm both previews.
-5. Tap the visible top `cancel` button. It must close the lens, return to SHOW, and store no capture.
-6. Reopen with the direct-touch affordance. Capture once with tap or Side, then repeat once with PTT annotation for SHOW+TELL.
-7. Confirm both originals appear in SHOW before analysis finishes.
-8. Only after the saved-original check, press RabbitOS Back. STRUCTA should exit. Relaunch and confirm the project and originals persist.
+2. On empty SHOW, tap the empty capture area once. The rear preview must appear directly, without a full-page activation card or a second tap.
+3. Tap the visible top `cancel` button. It must close the lens, return to SHOW, and store no capture.
+4. On empty SHOW, press Side once. SHOW must stay usable and show no more than a subtle `touch to open lens` cue. Tap an appropriate part of SHOW once; the rear preview must open on that touch.
+5. Use Wheel to flip rear/front and back. Confirm both previews, then capture one plain frame with Side or by tapping the preview.
+6. Confirm the original appears in SHOW immediately, while its reading may still say that it is processing.
+7. Reopen with one intentional SHOW touch. Hold PTT, say `this sketch shows the studio entrance circulation`, then release. It must capture one SHOW+TELL frame and return to SHOW.
+8. Confirm the second original appears immediately and the spoken context stays attached to that frame. Wait until both B03 captures show either a project reading or an explicit degraded state. The device must not speak and STRUCTA must not create a Rabbit Hole entry.
+9. Only after both captures have settled, press RabbitOS Back. STRUCTA should exit. Relaunch and confirm the project and both originals persist.
 
-The proof requires one camera-open event whose last relevant physical input was direct touch, plus one open→close interval containing no stored capture. A system-Back exit cannot satisfy the cancel check because it produces no in-app camera-close event.
+The proof requires one camera-open event whose last relevant physical input was direct touch, plus one open→close interval containing no stored capture. A repeated full-page activation interstitial, a second required touch after an intentional SHOW touch, or a system-Back exit cannot satisfy this contract.
+
+### B04 exact silent-vision sequence
+
+Finish all of `B03`, including its pending analyses and relaunch check, before advancing the proof panel once to `B04`. Use plain image captures in this phase; SHOW+TELL was already proved in `B03`. Keep exactly one analysis in flight. Note the latest Rabbit Hole entry and count before the first capture.
+
+Prepare these 20 synthetic targets and run them in order:
+
+- `S1–S7` sketches/diagrams: bold hand sketch; annotated plan; flow diagram; low-contrast pencil; rotated page; dense notes; deliberately ambiguous sketch.
+- `P1–P7` spaces: room overview; doorway/circulation; exterior; low light; reflective surface; partial obstruction; deliberately unresolvable scale.
+- `M1–M6` materials/objects: material close-up; object assembly; damaged condition; multiple objects; fine texture; deliberately ambiguous material.
+
+For each target:
+
+1. Open the lens from the visible camera affordance (or the empty SHOW body) with one intentional touch, frame the target, and capture once with Side or a preview tap.
+2. Confirm its original appears in SHOW immediately. If no original was stored, retry; a failed shutter is not one of the 20.
+3. Wait until that capture changes from processing to either a project reading or an explicit unavailable/degraded state before opening the lens again. Never start the next target while the current one is still processing.
+4. Record only `ID · matched / degraded / wrong · clipped yes/no · silent yes/no`. `Matched` includes an appropriately uncertain/insufficient reading of an ambiguous target; `degraded` means analysis explicitly became unavailable; `wrong` means unrelated, confidently false, or attached to another frame. Mark clipped separately so the known reading-layout defect does not become a vision failure unless it prevents judging the result. A shutter or feedback tone is allowed; spoken words are not. Use a photo only for a wrong, duplicated, unjudgeably clipped, or visibly broken result.
+
+Check Rabbit Hole after captures 5, 10, 15, and 20. After `M6`, use Wheel to browse all 20 originals. Exit with RabbitOS Back, relaunch, and confirm all 20 remain attached to the same project. Then inspect Rabbit Hole for the full test window.
+
+Stop immediately and preserve the current proof if the device speaks, Rabbit Hole gains an automatic entry, an original disappears, a result lands on the wrong capture/project, a result is duplicated, or the app exits unexpectedly. An explicit unavailable result may continue as degraded; stop after the third degraded result because the 18/20 threshold can no longer pass. If processing neither resolves nor degrades within 90 seconds, stop rather than creating another request.
+
+Report the 20 compact outcome lines, whether all originals survived relaunch, whether the device remained silent, whether Rabbit Hole remained unchanged, and a photo of any anomaly. If clipping prevents judging a reading, label it `unjudgeable` in addition to `clipped yes`. Stop after `B04`; review the evidence before starting `B05`.
 
 The machine proof can establish that STRUCTA never requested speaker output or an automatic journal entry through the intercepted bridge. It cannot hear the device or inspect Rabbit Hole itself. The tester's direct observation and the Rabbit Hole screenshot are therefore separate required evidence; a green validator result alone is not the physical release verdict.
 

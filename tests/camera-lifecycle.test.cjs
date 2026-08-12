@@ -122,6 +122,34 @@ test('close invalidates pending acquisition and stops its late stream', async fu
   assert.equal(harness.status.textContent, 'camera closed');
 });
 
+test('repeated trusted touches while acquisition is pending request the lens only once', async function(t) {
+  const acquisition = deferred();
+  const media = fakeStream();
+  let requests = 0;
+  const harness = createHarness(function() {
+    requests += 1;
+    return acquisition.promise;
+  });
+  t.after(function() { harness.dom.window.close(); });
+  let opened = 0;
+  harness.window.addEventListener('structa-camera-open', function() { opened += 1; });
+
+  harness.window.StructaCamera.openFromGesture('environment');
+  harness.window.StructaCamera.openFromGesture('environment');
+  harness.window.StructaCamera.openFromGesture('environment');
+
+  assert.equal(requests, 1);
+  assert.equal(opened, 0);
+  assert.equal(harness.overlay.classList.contains('open'), false);
+
+  acquisition.resolve(media.stream);
+  await waitFor(function() { return harness.overlay.classList.contains('open'); });
+
+  assert.equal(requests, 1);
+  assert.equal(opened, 1);
+  assert.equal(harness.preview.srcObject, media.stream);
+});
+
 test('close stops an active camera and clears the primed stream', async function(t) {
   const media = fakeStream();
   const harness = createHarness(function() { return Promise.resolve(media.stream); });

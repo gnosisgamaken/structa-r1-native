@@ -4,7 +4,7 @@
  * Replaces all scattered booleans (hintMode, pttActive, activeSurface,
  * knowDetail, answeringQuestion, etc.) with a single formal state machine.
  *
- * States: HOME, SHOW_PRIMED, CAMERA_OPEN, CAMERA_CAPTURE,
+ * States: HOME, SHOW_BROWSE, CAMERA_OPEN, CAMERA_CAPTURE,
  *         TELL_PRIMED, VOICE_OPEN, VOICE_PROCESSING,
  *         KNOW_BROWSE, KNOW_DETAIL, KNOW_ANSWER,
  *         NOW_BROWSE, UNCERTAINTY_REVIEW, LOG_OPEN
@@ -48,7 +48,6 @@
     PROJECT_SWITCHER: 'project_switcher',
     TELL_BROWSE: 'tell_browse',
     SHOW_BROWSE: 'show_browse',
-    SHOW_PRIMED: 'show_primed',
     CAMERA_OPEN: 'camera_open',
     CAMERA_CAPTURE: 'camera_capture',
     TELL_PRIMED: 'tell_primed',
@@ -1441,24 +1440,15 @@
     }
   };
 
-  // --- SHOW_PRIMED ---
-  // R1 does not count the hardware button as a browser activation gesture.
-  // This explicit state explains the required touch before requesting camera
-  // access, so the first trusted screen tap opens the lens reliably.
-  stateEnterHandlers[STATES.SHOW_PRIMED] = function(data) {
-    document.title = 'show';
-    native?.setActiveNode?.('show');
-    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'show' });
-    window.StructaVoice?.close?.();
-    stateData.showStatus = data?.showStatus || 'touch required';
-    stateData.cameraActivationSource = data?.cameraActivationSource || 'hardware';
-  };
-
-  stateExitHandlers[STATES.SHOW_PRIMED] = function(data) {
-    if (transitionTargetState !== STATES.CAMERA_OPEN) {
-      window.StructaCamera?.close?.();
-      window.__STRUCTA_PTT_TARGET__ = null;
+  stateExitHandlers[STATES.SHOW_BROWSE] = function() {
+    // A trusted touch starts getUserMedia while SHOW is still visible. If the
+    // user navigates before acquisition resolves, invalidate that request so a
+    // late stream can never reopen the lens over another surface.
+    if (stateData.cameraRequestPending && transitionTargetState !== STATES.CAMERA_OPEN) {
+      stateData.cameraRequestPending = false;
+      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
     }
+    stateData.cameraTouchArmed = false;
   };
 
   // --- CAMERA_OPEN ---
@@ -1703,9 +1693,13 @@
   }
 
   // === Open a card's primary surface ===
-  function openCard(card) {
+  function openCard(card, options = {}) {
     fireFeedback('touch-commit');
     if (card.surface === 'camera') {
+      if (!buildShowSummary().current) {
+        if (options.source === 'touch') return openCameraFromShow('touch');
+        return primeCameraFromHardware(options.source || 'hardware');
+      }
       transition(STATES.SHOW_BROWSE);
       return;
     }
@@ -1724,12 +1718,23 @@
   }
 
   function primeCameraFromHardware(source = 'hardware') {
+    // Repeated hardware input while the trusted-touch request is already in
+    // flight must not re-arm SHOW or make that request impossible to cancel.
+    if (stateData.cameraRequestPending) return true;
     cameraReturnState = STATES.SHOW_BROWSE;
-    transition(STATES.SHOW_PRIMED, {
-      showStatus: 'touch required',
-      cameraActivationSource: source
-    });
-    native?.traceEvent?.('camera.activation', 'hardware', 'touch-required', {
+    const patch = {
+      showStatus: 'lens ready · touch to open',
+      cameraActivationSource: source,
+      cameraTouchArmed: true,
+      cameraRequestPending: false
+    };
+    if (currentState === STATES.SHOW_BROWSE) {
+      Object.assign(stateData, patch);
+      scheduleRender();
+    } else {
+      transition(STATES.SHOW_BROWSE, patch);
+    }
+    native?.traceEvent?.('camera.activation', 'hardware', 'touch-armed', {
       source: source
     });
     return true;
@@ -1737,22 +1742,37 @@
 
   function openCameraFromShow(source = 'touch', options = {}) {
     if (source !== 'touch') return primeCameraFromHardware(source);
+    if (stateData.cameraRequestPending || currentState === STATES.CAMERA_OPEN) return true;
     stateData.pendingShowNarration = false;
-    if (currentState !== STATES.SHOW_PRIMED) {
-      transition(STATES.SHOW_PRIMED, {
+    const patch = {
         showStatus: 'opening lens',
-        cameraActivationSource: 'touch'
-      });
+        cameraActivationSource: 'touch',
+        cameraTouchArmed: false,
+        cameraRequestPending: true
+      };
+    if (currentState !== STATES.SHOW_BROWSE) {
+      transition(STATES.SHOW_BROWSE, patch);
     } else {
-      stateData.showStatus = 'opening lens';
+      Object.assign(stateData, patch);
     }
     cameraReturnState = STATES.SHOW_BROWSE;
-    native?.traceEvent?.('camera.activation', 'touch-required', 'requesting', {
+    native?.traceEvent?.('camera.activation', 'touch', 'requesting', {
       source: source
     });
     window.StructaCamera?.openFromGesture?.(options.facingMode || 'environment');
     scheduleRender();
     return true;
+  }
+
+  function consumeArmedCameraTouch(event) {
+    if (currentState !== STATES.SHOW_BROWSE || !stateData.cameraTouchArmed || stateData.cameraRequestPending) {
+      return false;
+    }
+    event?.preventDefault?.();
+    event?.stopImmediatePropagation?.();
+    fireFeedback('touch-commit');
+    stateData.cameraTouchArmed = false;
+    return openCameraFromShow('touch');
   }
 
   function openTellSurface(extra = {}) {
@@ -2174,8 +2194,6 @@
       case STATES.TELL_BROWSE:
         return 'tell';
       case STATES.SHOW_BROWSE:
-        return 'show';
-      case STATES.SHOW_PRIMED:
         return 'show';
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
@@ -3611,7 +3629,7 @@
     const activate = event => {
       event.preventDefault();
       if (selected && isHome()) {
-        openCard(card);
+        openCard(card, { source: 'touch' });
       }
       else if (isHome()) {
         fireFeedback('touch-commit');
@@ -3779,7 +3797,7 @@
   }
 
   function drawShowSurface() {
-    if (!surfaceIsVisible('show') && currentState !== STATES.SHOW_PRIMED) return;
+    if (!surfaceIsVisible('show')) return;
     const showCard = cards.find(c => c.id === 'show');
     const model = buildShowSummary();
     const reference = getCaptureReference(model.current);
@@ -3787,74 +3805,13 @@
     mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: showCard.color });
     drawSurfaceHeader(showCard);
 
-    if (currentState === STATES.SHOW_PRIMED) {
-      mk('rect', { x: 12, y: 66, width: 216, height: 188, rx: 14, ry: 14, fill: 'rgba(8,8,8,0.12)' });
-      mk('rect', { x: 101, y: 83, width: 38, height: 27, rx: 7, ry: 7, fill: 'none', stroke: 'rgba(8,8,8,0.92)', 'stroke-width': 2 });
-      mk('circle', { cx: 120, cy: 96.5, r: 6.5, fill: 'none', stroke: 'rgba(8,8,8,0.92)', 'stroke-width': 2 });
-      text(120, 129, 'open the lens', {
-        fill: 'rgba(8,8,8,0.96)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '19',
-        'text-anchor': 'middle'
-      });
-      text(120, 146, 'touch required by r1', {
-        fill: 'rgba(8,8,8,0.56)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'middle'
-      });
-
-      const openTarget = mk('g', { style: 'cursor: pointer;', role: 'button', tabindex: '0', 'aria-label': 'tap to open lens' });
-      mk('rect', {
-        x: 24, y: 158, width: 192, height: 54, rx: 12, ry: 12,
-        fill: 'rgba(8,8,8,0.90)',
-        'data-hit-target': 'camera-activation',
-        'data-hit-key': 'camera-activation-open'
-      }, openTarget);
-      text(120, 191, stateData.showStatus === 'opening lens' ? 'opening lens…' : 'tap to open lens', {
-        fill: 'rgba(244,239,228,0.98)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16',
-        'text-anchor': 'middle'
-      }, openTarget);
-      openTarget.addEventListener('pointerup', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        fireFeedback('touch-commit');
-        openCameraFromShow('touch');
-      });
-
-      const cancelTarget = mk('g', { style: 'cursor: pointer;', role: 'button', tabindex: '0', 'aria-label': 'stay in show' });
-      mk('rect', {
-        x: 72, y: 215, width: 96, height: 44, rx: 10, ry: 10,
-        fill: 'rgba(8,8,8,0.06)',
-        stroke: 'rgba(8,8,8,0.24)',
-        'stroke-width': 1,
-        'data-hit-target': 'camera-activation-cancel',
-        'data-hit-key': 'camera-activation-cancel'
-      }, cancelTarget);
-      text(120, 242, 'cancel', {
-        fill: 'rgba(8,8,8,0.72)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '13',
-        'text-anchor': 'middle'
-      }, cancelTarget);
-      cancelTarget.addEventListener('pointerup', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        fireFeedback('touch-commit');
-        transition(STATES.SHOW_BROWSE, { showStatus: 'ready' });
-      });
-      text(120, 273, 'hardware prepared · screen touch grants access', {
-        fill: 'rgba(8,8,8,0.42)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '9',
-        'text-anchor': 'middle'
-      });
-      return;
-    }
-
     const lensTap = mk('g', { style: 'cursor: pointer;' });
+    mk('rect', {
+      x: 182, y: 6, width: 46, height: MIN_DIRECT_TOUCH, rx: 10, ry: 10,
+      fill: 'rgba(8,8,8,0.001)',
+      'data-hit-target': 'camera-open',
+      'data-hit-key': 'show-lens'
+    }, lensTap);
     mk('rect', { x: 184, y: 15, width: 43, height: 27, rx: 9, ry: 9, fill: 'rgba(8,8,8,0.14)' }, lensTap);
     mk('circle', { cx: 197, cy: 28.5, r: 5, fill: 'none', stroke: 'rgba(8,8,8,0.90)', 'stroke-width': 1.5 }, lensTap);
     mk('circle', { cx: 197, cy: 28.5, r: 1.5, fill: 'rgba(8,8,8,0.90)' }, lensTap);
@@ -3873,7 +3830,12 @@
 
     if (!model.current) {
       const emptyTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x: 12, y: 72, width: 216, height: 166, rx: 14, ry: 14, fill: 'rgba(8,8,8,0.12)' }, emptyTap);
+      mk('rect', {
+        x: 12, y: 72, width: 216, height: 166, rx: 14, ry: 14,
+        fill: 'rgba(8,8,8,0.12)',
+        'data-hit-target': 'camera-open',
+        'data-hit-key': 'show-empty'
+      }, emptyTap);
       mk('circle', { cx: 120, cy: 126, r: 24, fill: 'rgba(8,8,8,0.10)' }, emptyTap);
       mk('rect', { x: 109, y: 119, width: 22, height: 15, rx: 4, ry: 4, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.8 }, emptyTap);
       mk('circle', { cx: 120, cy: 126.5, r: 4.5, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.5 }, emptyTap);
@@ -3895,8 +3857,11 @@
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10'
       });
-      text(226, 271, 'side · prepare lens', {
-        fill: 'rgba(8,8,8,0.44)',
+      if (stateData.cameraTouchArmed) {
+        mk('circle', { cx: 138, cy: 267.5, r: 3, fill: 'rgba(8,8,8,0.82)' });
+      }
+      text(226, 271, stateData.cameraTouchArmed ? 'touch · open lens' : 'side · prepare lens', {
+        fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.84)' : 'rgba(8,8,8,0.44)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
         'text-anchor': 'end'
@@ -3989,8 +3954,11 @@
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, 274, 'side · prepare lens', {
-      fill: 'rgba(8,8,8,0.44)',
+    if (stateData.cameraTouchArmed) {
+      mk('circle', { cx: 138, cy: 270.5, r: 3, fill: 'rgba(8,8,8,0.82)' });
+    }
+    text(226, 274, stateData.cameraTouchArmed ? 'touch · open lens' : 'side · prepare lens', {
+      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.84)' : 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
@@ -4945,10 +4913,6 @@
         break;
       }
 
-      case STATES.SHOW_PRIMED:
-        fireFeedback('blocked');
-        break;
-
       case STATES.CAMERA_OPEN:
         window.StructaCamera?.flip?.();
         break;
@@ -5113,10 +5077,6 @@
         break;
       }
 
-      case STATES.SHOW_PRIMED:
-        fireFeedback('blocked');
-        break;
-
       case STATES.CAMERA_OPEN:
         // Side = capture
         fireFeedback('touch-commit');
@@ -5187,7 +5147,7 @@
         break;
 
       case STATES.HOME:
-        openCard(currentCard());
+        openCard(currentCard(), { source: 'side' });
         break;
 
       default:
@@ -5477,11 +5437,6 @@
     }
 
     switch (currentState) {
-      case STATES.SHOW_PRIMED:
-        stateData.pendingShowNarration = false;
-        scheduleRender();
-        break;
-
       case STATES.SHOW_BROWSE:
         stateData.pendingShowNarration = false;
         if (stateData.showStatus && stateData.showStatus.indexOf('opening') === 0) {
@@ -5612,7 +5567,6 @@
         // Don't preventDefault — let R1 close the app
         return;
 
-      case STATES.SHOW_PRIMED:
       case STATES.TELL_PRIMED:
         if (event) event.preventDefault?.();
         goHome();
@@ -5687,6 +5641,10 @@
   }
 
   svg.addEventListener('wheel', onWheel, { passive: false });
+  // Side/PTT can express camera intent but cannot satisfy getUserMedia's
+  // browser gesture requirement on R1. Consume the very next SHOW touch at
+  // capture phase so that same gesture opens the lens without an interstitial.
+  svg.addEventListener('pointerup', consumeArmedCameraTouch, { capture: true, passive: false });
   svg.addEventListener('pointerdown', onTutorialSkipPointerDown, { passive: true });
   svg.addEventListener('pointermove', onTutorialSkipPointerMove, { passive: true });
   svg.addEventListener('pointerdown', onTouchDebugPointerDown, { passive: true });
@@ -5721,7 +5679,8 @@
 
   // Camera events — transition state machine
   window.addEventListener('structa-camera-open', () => {
-    if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
+    if (currentState === STATES.SHOW_BROWSE) {
+      stateData.cameraRequestPending = false;
       transition(STATES.CAMERA_OPEN);
     }
     stateData.pendingShowNarration = false;
@@ -5793,8 +5752,11 @@
   });
 
   window.addEventListener('structa-camera-denied', function(event) {
-    if (currentState === STATES.SHOW_PRIMED) {
-      transition(STATES.SHOW_BROWSE, { showStatus: 'camera blocked · tap lens to retry' });
+    if (currentState === STATES.SHOW_BROWSE) {
+      stateData.cameraRequestPending = false;
+      stateData.cameraTouchArmed = false;
+      stateData.showStatus = 'camera blocked · tap lens to retry';
+      scheduleRender();
     }
     if (!onboardingActive() || getOnboardingStep() !== 4) return;
     native?.updateUIState?.({ tutorial_step4_camera_denied: true });
@@ -6029,7 +5991,7 @@
     if (currentState === STATES.HOME) {
       if (event.key === 'ArrowRight') selectIndex(selectedIndex + 1);
       if (event.key === 'ArrowLeft') selectIndex(selectedIndex - 1);
-      if (event.key === 'Enter' || event.key === ' ') openCard(currentCard());
+      if (event.key === 'Enter' || event.key === ' ') openCard(currentCard(), { source: 'keyboard' });
       if (event.key === 'Escape') goHome();
     } else {
       if (event.key === 'Escape') handleNativeBack(event);

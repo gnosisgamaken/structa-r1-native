@@ -32,6 +32,15 @@
   let cameraSessionOpen = false;
   let acquisitionEpoch = 0;
 
+  function isLabVisionProbeMode() {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      return params.get('lab') === '1' && params.get('vision_probe') === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
   // === SHOW+TELL voice strip state ===
   let voiceStripActive = false;
   let voiceStripTranscript = '';
@@ -346,6 +355,67 @@
     };
     if (projectId && native?.touchProjectMemoryById) native.touchProjectMemoryById(projectId, mutate);
     else if (isOriginProjectActive(projectId)) native?.touchProjectMemory?.(mutate);
+  }
+
+  // The native-vision gate must not compete with the governed production
+  // analysis request. In the explicit lab route, retain the original frame
+  // and pause ordinary analysis until the one plain-text bridge probe runs.
+  function markCaptureLabProbeReady(entryId, nodeId, thumbnailData, assetId, projectId) {
+    const mutate = function(project) {
+      const refs = findCaptureRefs(project, entryId, nodeId);
+      const timestamp = new Date().toISOString();
+      if (refs.capture) {
+        refs.capture.preview_data = refs.capture.preview_data || thumbnailData;
+        refs.capture.meta = {
+          ...(refs.capture.meta || {}),
+          analysis_status: 'lab-ready',
+          analysis_stage: 'vision probe ready',
+          analysis_enqueued_at: timestamp,
+          image_asset_id: refs.capture.meta?.image_asset_id || assetId || '',
+          claim_extraction_pending: false
+        };
+      }
+      if (refs.node) {
+        refs.node.meta = {
+          ...(refs.node.meta || {}),
+          analysis_status: 'lab-ready',
+          analysis_stage: 'vision probe ready',
+          analysis_enqueued_at: timestamp,
+          preview_data: refs.node.meta?.preview_data || thumbnailData,
+          image_asset_id: refs.node.meta?.image_asset_id || assetId || '',
+          claim_extraction_pending: false
+        };
+      }
+    };
+    if (projectId && native?.touchProjectMemoryById) native.touchProjectMemoryById(projectId, mutate);
+    else if (isOriginProjectActive(projectId)) native?.touchProjectMemory?.(mutate);
+    native?.traceEvent?.('vision.probe', 'capture', 'ready', {
+      entryId: entryId || '',
+      nodeId: nodeId || '',
+      projectId: projectId || ''
+    });
+  }
+
+  function getLatestCaptureForLab() {
+    const project = native?.getProjectMemory?.() || {};
+    const latestId = String(lastBundle?.entry_id || '');
+    const captures = Array.isArray(project.captures) ? project.captures : [];
+    const capture = (latestId && captures.find(function(entry) {
+      return captureEntryId(entry) === latestId;
+    })) || captures[0] || lastBundle || null;
+    const entryId = captureEntryId(capture) || latestId;
+    const assetId = captureAnalysisAssetId(capture) || capture?.image_asset?.entry_id || lastBundle?.image_asset?.entry_id || '';
+    const imageData = getStoredAssetData(assetId)
+      || capture?.image_asset?.data
+      || lastBundle?.image_asset?.data
+      || '';
+    return {
+      ok: !!(entryId && imageData),
+      entryId: entryId,
+      nodeId: capture?.node_id || '',
+      imageData: imageData,
+      imageMimeType: capture?.image_asset?.mime_type || lastBundle?.image_asset?.mime_type || dataUrlMimeType(imageData)
+    };
   }
 
   function updateCaptureAnalysisStage(entryId, nodeId, patch, projectId) {
@@ -1833,7 +1903,18 @@
       assetId: resolvedAsset.entry_id || '',
       operationId: operationId
     };
-    if (voiceSession) {
+    if (isLabVisionProbeMode() && !voiceSession) {
+      markCaptureLabProbeReady(
+        captureTarget.entryId,
+        captureTarget.nodeId,
+        captureTarget.thumbnailData,
+        captureTarget.assetId,
+        captureProjectId
+      );
+      if (isOriginProjectActive(captureProjectId)) {
+        native?.updateUIState?.({ user_status: 'frame saved · vision test ready' });
+      }
+    } else if (voiceSession) {
       voiceSession.target = captureTarget;
       if (voiceSession.quarantined || (voiceSession.settled && !voiceSession.terminal)) {
         markCaptureAnalysisQueued(
@@ -1938,6 +2019,7 @@
     scheduleAnalysisDrain,
     skipBlockedAnalysis,
     applyProbeDescription,
+    getLatestCaptureForLab,
     getPendingAnnotation: function() { return null; },
     get voiceStripActive() { return voiceStripActive; },
     get voiceStripTranscript() { return voiceStripTranscript; },

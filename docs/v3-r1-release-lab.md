@@ -6,7 +6,7 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 
 ## Build identity
 
-- UI build: `ui-20260812-structa-v3.9`
+- UI build: `ui-20260820-structa-v3.10`
 - Vision schema: `structa.vision.v1`
 - Device / OS:
 - Tester / date:
@@ -14,7 +14,21 @@ R1 Anywhere may be used first to exercise Rabbit-backed prompts and schemas, but
 - rabbitOS version:
 - Deployed server SHA:
 
-Fresh v3.9 proof sessions remain active for twelve hours so one careful B00–B07 owner run can finish without silently rolling into a replacement session. An older proof remains recoverable and exportable, but it cannot pass the release validator if its recorded finish occurred after its own `expires_at`.
+Fresh v3.10 proof sessions remain active for twelve hours so one careful B00–B07 owner run can finish without silently rolling into a replacement session. An older proof remains recoverable and exportable, but it cannot pass the release validator if its recorded finish occurred after its own `expires_at`.
+
+## Gate 0 — native vision bridge
+
+Do this before the twenty-capture matrix. It proves only the missing capability: whether a Creation can receive an image-specific plain-text response from Rabbit's model.
+
+1. Open the deployed lab URL with `?lab=1&vision_probe=1` and confirm `ui-20260820-structa-v3.10` in **check build**.
+2. In the proof panel set the step to `B04`.
+3. Take one new, clear reference capture. Use the framed camel artwork or another object whose distinctive subject is obvious.
+4. Reopen **proof** and tap **test native vision**. Wait up to 16 seconds. Do not open the lens, use PTT, or issue another request during this wait.
+5. The lab panel should show exactly one factual sentence. Screenshot that panel, then confirm no speech and no Rabbit Hole entry were created.
+
+Pass: the sentence names a real distinctive feature of that new image—for example, framed artwork, camels, white line drawing, or a dark background. The test response is intentionally not written into STRUCTA's project corpus; it is a transport gate, not a project decision.
+
+Fail: timeout, a generic non-image answer, `image unreadable` for a clear image, unsolicited speech, a Rabbit Hole entry, or an app exit. On an ordinary transport failure, stop after this one request and report the panel result; the next build can test the data-URL wire mode without mixing evidence.
 
 ## Twenty-capture matrix
 

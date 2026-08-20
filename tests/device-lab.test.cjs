@@ -21,13 +21,14 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
   const posts = [];
   const inbound = [];
   const emails = [];
+  const visionProbes = [];
   const downloadClicks = [];
   const originalPost = function(payload) {
     posts.push(JSON.parse(payload));
     return true;
   };
   window.StructaBuild = Object.freeze({
-    uiBuildId: options.uiBuildId || 'ui-20260812-structa-v3.9',
+    uiBuildId: options.uiBuildId || 'ui-20260820-structa-v3.10',
     expectedDiagnosticsAssetId: 'diag-20260811-structa-v3',
     assetEpoch: 'test'
   });
@@ -39,6 +40,12 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
       return options.emailHandler
         ? Promise.resolve(options.emailHandler(subject, body, emails.length))
         : Promise.resolve({ ok: true, mode: 'native' });
+    },
+    probeNativeImage(imageData, prompt, probeOptions) {
+      visionProbes.push({ imageData, prompt, options: probeOptions });
+      return options.visionProbeHandler
+        ? Promise.resolve(options.visionProbeHandler(imageData, prompt, probeOptions, visionProbes.length))
+        : Promise.resolve({ ok: false, code: 'probe-unavailable' });
     }
   };
   const serverBuildSha = options.serverBuildSha || 'abc123def456';
@@ -47,7 +54,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     handleAction: actionId => Promise.resolve({
       ok: actionId === 'diagnostics-build-check',
       result: {
-        uiBuildId: 'ui-20260812-structa-v3.9',
+        uiBuildId: 'ui-20260820-structa-v3.10',
         serverBuildSha,
         status: 'current'
       }
@@ -71,7 +78,7 @@ function boot(url = 'https://structa.test/', seed = '', options = {}) {
     window.localStorage.setItem('structa.device-proof.v1.email-progress', options.emailProgress);
   }
   window.eval(source);
-  return { dom, window, posts, inbound, emails, downloadClicks, originalPost };
+  return { dom, window, posts, inbound, emails, visionProbes, downloadClicks, originalPost };
 }
 
 function emitTrace(window, flow, from, to, ctx = {}) {
@@ -142,7 +149,7 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.enabled, true, url);
     assert.equal(proof.schema, 'structa.device-proof.v1');
     assert.match(proof.session_id, /^ST-\d{8}-[A-Za-z0-9]{8}$/);
-    assert.equal(proof.build.ui_build_id, 'ui-20260812-structa-v3.9');
+    assert.equal(proof.build.ui_build_id, 'ui-20260820-structa-v3.10');
     assert.equal(proof.step_id, 'B00');
     assert.equal(proof.events[0].type, 'session.start');
     assert.equal(Date.parse(proof.expires_at) - Date.parse(proof.started_at), 12 * 60 * 60 * 1000);
@@ -167,6 +174,44 @@ test('all supported device lab routes activate a persistent proof session', () =
     assert.equal(runtime.window.StructaDeviceLab.getProof().step_id, 'B00', 'step control wraps after B07');
     runtime.dom.window.close();
   }
+});
+
+test('B04 native vision probe shows the plain device reply without retaining its text in proof', async () => {
+  const runtime = boot('https://structa.test/?lab=1&vision_probe=1', '', {
+    visionProbeHandler: () => ({
+      ok: true,
+      clean: 'A framed artwork shows white line drawings of camels on a dark background.'
+    })
+  });
+  runtime.window.StructaCamera = {
+    getLatestCaptureForLab() {
+      return {
+        ok: true,
+        entryId: 'capture_probe',
+        nodeId: 'node_probe',
+        imageData: 'data:image/jpeg;base64,YWJj',
+        imageMimeType: 'image/jpeg'
+      };
+    }
+  };
+  runtime.window.StructaDeviceLab.setStep('B04');
+  runtime.window.document.getElementById('structa-device-proof-control').click();
+  const probe = runtime.window.document.getElementById('structa-device-proof-vision-test');
+  assert.ok(probe);
+  probe.click();
+  await waitFor(() => runtime.visionProbes.length === 1);
+  await waitFor(() => /vision reply:/.test(runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent));
+
+  assert.equal(runtime.visionProbes[0].options.imageInputMode, 'raw-base64');
+  assert.equal(runtime.visionProbes[0].options.timeout, 16000);
+  assert.match(runtime.visionProbes[0].prompt, /Do not return JSON/);
+  const proof = runtime.window.StructaDeviceLab.getProof();
+  const result = proof.events.find(event => event.type === 'vision.probe.result');
+  assert.equal(result.flags.ok, true);
+  assert.equal(result.flags.received, true);
+  assert.equal(result.metrics.response_chars, 74);
+  assert.equal(JSON.stringify(proof).includes('camels'), false);
+  runtime.dom.window.close();
 });
 
 test('proof records hardware, lifecycle, camera, trace, and bridge facts without content', async () => {
@@ -298,7 +343,7 @@ test('proof records hardware, lifecycle, camera, trace, and bridge facts without
   assert.ok(proof.events.some(event => event.type === 'hardware.touch'));
   assert.ok(proof.events.some(event => event.type === 'hardware.motion' && event.flags.shake_detected === true));
   assert.ok(proof.events.every(event => event.session_id === proof.session_id));
-  assert.ok(proof.events.every(event => event.build === 'ui-20260812-structa-v3.9'));
+  assert.ok(proof.events.every(event => event.build === 'ui-20260820-structa-v3.10'));
   assert.ok(proof.events.every((event, index) => event.seq === index + 1));
 
   const { validateDeviceProof, decodeDeviceProofTransport } = await import('../scripts/validate-device-proof.mjs');
@@ -601,7 +646,7 @@ test('build control reports workspace as mismatch and records the safe result', 
   button.click();
   await waitFor(() => button.disabled === false);
   const status = runtime.window.document.querySelector('#structa-device-proof-panel [aria-live="polite"]').textContent;
-  assert.match(status, /ui-20260812-structa-v3\.9 · server workspace · mismatch/);
+  assert.match(status, /ui-20260820-structa-v3\.10 · server workspace · mismatch/);
   const event = runtime.window.StructaDeviceLab.getProof().events.filter(entry => entry.type === 'proof.control').at(-1);
   assert.equal(event.flags.current, false);
   assert.equal(event.flags.ok, false);

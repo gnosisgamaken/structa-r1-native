@@ -199,6 +199,36 @@ test('r1 image bridge posts exact payload and resolves only exact schema/id resp
   assert.equal(parsedTrace.context.projectRole, 'external_reference');
 });
 
+test('plain native-vision probe returns the device text before STRUCTA schema parsing', async () => {
+  const runtime = createRuntime();
+  const pending = runtime.window.StructaLLM.probeNativeImage(
+    'data:image/jpeg;base64,YWJj',
+    'Inspect the attached image. Return one factual sentence.',
+    { captureId: 'cap_probe', timeout: 2000, imageInputMode: 'raw-base64' }
+  );
+
+  await waitUntil(() => runtime.posted.length === 1);
+  const outbound = runtime.posted[0];
+  assert.deepEqual(outbound, {
+    message: 'Inspect the attached image. Return one factual sentence.',
+    imageBase64: 'YWJj',
+    useLLM: true,
+    wantsR1Response: false,
+    wantsJournalEntry: false
+  });
+  assert.doesNotMatch(outbound.message, /REQUIRED_SHAPE|structa\.vision\.v1/);
+
+  runtime.window.onPluginMessage({ status: 'processing' });
+  runtime.window.onPluginMessage({ response: 'A framed artwork shows white line drawings of camels on a dark background.' });
+  const result = await pending;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.clean, 'A framed artwork shows white line drawings of camels on a dark background.');
+  assert.ok(runtime.traces.some(entry =>
+    entry.flow === 'vision.probe' && entry.from === 'bridge' && entry.to === 'stored' && entry.context.silent === true && entry.context.journal === false
+  ));
+});
+
 test('r1 bridge forwards an empty sttEnded as a terminal capture event', () => {
   const runtime = createRuntime();
 

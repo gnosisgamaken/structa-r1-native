@@ -27,7 +27,7 @@
     B01: 'B01 · controls · system back exits',
     B02: 'B02 · voice · empty input saves nothing',
     B03: 'B03 · trusted show touch opens · hardware cues · cancel returns',
-    B04: 'B04 · one at a time · 20 silent vision captures',
+    B04: 'B04 · one fresh capture · silent native-vision probe',
     B05: 'B05 · map · decisions · uncertainty',
     B06: 'B06 · offline · errors · recovery',
     B07: 'B07 · export proof and project'
@@ -1061,6 +1061,7 @@
     if (flow === 'vision.bridge' && to === 'posted') associateProvider(identifier);
     if (
       flow === 'plugin.message.parsed' ||
+      (flow === 'vision.probe' && /^(?:stored|timeout|failed|error|cancelled|canceled)$/.test(to)) ||
       ((flow === 'bridge' || flow === 'vision.bridge') && /^(?:timeout|failed|error|cancelled|canceled)$/.test(to))
     ) {
       providerComplete(identifier);
@@ -1079,6 +1080,7 @@
     var step = document.createElement('button');
     var buildCheck = document.createElement('button');
     var send = document.createElement('button');
+    var visionTest = document.createElement('button');
     var journal = document.createElement('button');
     var reset = document.createElement('button');
     var close = document.createElement('button');
@@ -1094,15 +1096,15 @@
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'device proof controls');
     panel.setAttribute('aria-hidden', 'true');
-    panel.style.cssText = 'position:absolute;inset:8px;z-index:120;display:none;box-sizing:border-box;overflow:hidden;flex-direction:column;gap:5px;padding:8px;background:#0b0b0b;border:1px solid rgba(244,239,228,.22);color:#f4efe4;font:12px PowerGrotesk-Regular,sans-serif;pointer-events:auto;';
+    panel.style.cssText = 'position:absolute;inset:8px;z-index:120;display:none;box-sizing:border-box;overflow-y:auto;overflow-x:hidden;flex-direction:column;gap:5px;padding:8px;background:#0b0b0b;border:1px solid rgba(244,239,228,.22);color:#f4efe4;font:12px PowerGrotesk-Regular,sans-serif;pointer-events:auto;';
 
     title.textContent = 'device proof';
     title.style.cssText = 'font-size:15px;letter-spacing:.02em;color:#f4efe4;';
     status.setAttribute('aria-live', 'polite');
-    status.style.cssText = 'height:24px;flex:0 0 24px;color:rgba(244,239,228,.64);font-size:10px;line-height:1.2;overflow:hidden;overflow-wrap:anywhere;';
+    status.style.cssText = 'height:36px;flex:0 0 36px;color:rgba(244,239,228,.64);font-size:10px;line-height:1.2;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap;';
     actions.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:5px;';
 
-    [step, buildCheck, send, journal, reset, close].forEach(function(button) {
+    [step, buildCheck, visionTest, send, journal, reset, close].forEach(function(button) {
       button.type = 'button';
       button.style.cssText = 'min-height:44px;border:1px solid rgba(244,239,228,.16);background:rgba(244,239,228,.06);color:#f4efe4;font:11px PowerGrotesk-Regular,sans-serif;padding:0 8px;text-align:left;';
     });
@@ -1111,6 +1113,11 @@
     buildCheck.id = 'structa-device-proof-build-check';
     buildCheck.textContent = 'check build';
     buildCheck.style.gridColumn = '1 / -1';
+    visionTest.id = 'structa-device-proof-vision-test';
+    visionTest.textContent = 'test native vision';
+    visionTest.style.gridColumn = '1 / -1';
+    visionTest.style.borderColor = 'rgba(91,212,196,.52)';
+    visionTest.style.minHeight = '34px';
     send.id = 'structa-device-proof-send';
     send.textContent = 'finish + send';
     send.style.borderColor = 'rgba(255,138,101,.58)';
@@ -1202,6 +1209,63 @@
       updateStatus(uiBuild + ' · server ' + serverLabel + ' · ' + buildStatus);
       buildCheck.disabled = false;
     });
+    visionTest.addEventListener('click', async function(event) {
+      stop(event);
+      var current = getProof();
+      if (!current || current.step_id !== 'B04') {
+        updateStatus('set step B04, then take one new clear capture');
+        return;
+      }
+      var camera = window.StructaCamera;
+      var llm = window.StructaLLM;
+      var capture = camera && typeof camera.getLatestCaptureForLab === 'function'
+        ? camera.getLatestCaptureForLab()
+        : null;
+      if (!capture || !capture.ok || !capture.imageData) {
+        record('vision.probe.control', { actionId: 'native-vision', available: false, captureId: capture?.entryId || '' });
+        updateStatus('take a new capture first · then test vision');
+        return;
+      }
+      if (!llm || typeof llm.probeNativeImage !== 'function') {
+        record('vision.probe.control', { actionId: 'native-vision', available: false, captureId: capture.entryId || '' });
+        updateStatus('native vision probe unavailable in this build');
+        return;
+      }
+      visionTest.disabled = true;
+      updateStatus('sending one silent image probe…');
+      record('vision.probe.control', { actionId: 'native-vision', available: true, captureId: capture.entryId || '' });
+      try {
+        var result = await llm.probeNativeImage(
+          capture.imageData,
+          'Inspect the attached image. Return exactly one short factual sentence naming the most distinctive visible object, form, or readable text. Do not return JSON. Do not explain the request. If the image is genuinely unreadable, say only: image unreadable.',
+          {
+            captureId: capture.entryId || '',
+            imageMimeType: capture.imageMimeType || '',
+            imageInputMode: 'raw-base64',
+            timeout: 16000,
+            priority: 'low'
+          }
+        );
+        var reply = String(result?.clean || result?.text || '').trim();
+        record('vision.probe.result', {
+          actionId: 'native-vision',
+          captureId: capture.entryId || '',
+          ok: !!(result && result.ok && reply),
+          received: !!reply,
+          responseChars: reply.length
+        });
+        if (result && result.ok && reply) {
+          updateStatus('vision reply:\n' + reply);
+        } else {
+          updateStatus('no usable reply · ' + safeToken(result?.code || result?.error || 'timeout', 48));
+        }
+      } catch (_) {
+        record('vision.probe.result', { actionId: 'native-vision', captureId: capture.entryId || '', ok: false });
+        updateStatus('probe failed · original capture retained');
+      } finally {
+        visionTest.disabled = false;
+      }
+    });
     send.addEventListener('click', async function(event) {
       stop(event);
       send.disabled = true;
@@ -1256,6 +1320,7 @@
     panel.appendChild(status);
     actions.appendChild(step);
     actions.appendChild(buildCheck);
+    actions.appendChild(visionTest);
     actions.appendChild(send);
     actions.appendChild(journal);
     actions.appendChild(reset);

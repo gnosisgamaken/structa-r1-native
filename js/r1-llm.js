@@ -330,6 +330,7 @@
   function clearBridgeRequest(request) {
     if (!request) return;
     if (request.timeout) clearTimeout(request.timeout);
+    if (request.plainSettleTimer) clearTimeout(request.plainSettleTimer);
     pendingBridgeRequests.delete(request.correlationId);
     if (activeRequest && activeRequest.id === request.id) {
       activeRequest = null;
@@ -350,7 +351,7 @@
         return;
       }
 
-      var isVisionRequest = request.mode === 'vision';
+      var isVisionRequest = request.mode === 'vision' || request.mode === 'vision-probe';
       if (!isVisionRequest) pendingBridgeRequests.set(request.correlationId, request);
       request.timeout = setTimeout(function() {
         if (!activeRequest || activeRequest.id !== request.id) return;
@@ -600,6 +601,80 @@
     });
   }
 
+  // This is deliberately separate from sendBridgeImage(). The production
+  // relay expects STRUCTA's strict JSON envelope; the device probe must first
+  // establish that an image-specific *plain text* answer reaches a Creation.
+  // Keeping it serial, silent, and lab-only at the call site makes that proof
+  // independent of schema parsing and project writeback.
+  function sendPlainImageProbe(imageBase64, prompt, options) {
+    var opts = options || {};
+    if (!vision) {
+      return Promise.resolve({ ok: false, error: 'StructaVisionProtocol not available', code: 'vision-protocol-unavailable', layer: 'client' });
+    }
+    if (typeof PluginMessageHandler === 'undefined') {
+      return Promise.resolve({ ok: false, error: 'PluginMessageHandler not available', code: 'bridge-unavailable', layer: 'bridge' });
+    }
+    var sourceImage = String(imageBase64 || '');
+    var sourceMimeMatch = sourceImage.match(/^data:([^;,]+)(?:;[^,]*)?;base64,/i);
+    var requestedMode = String(opts.imageInputMode || opts.inputMode || 'raw-base64').toLowerCase();
+    var imageMode = requestedMode === 'dataurl' || requestedMode === 'data-url' ? 'data-url' : 'raw-base64';
+    var preparedImage = vision.formatImageInput(sourceImage, imageMode);
+    if (!preparedImage) {
+      return Promise.resolve({ ok: false, error: 'image missing', code: 'image-missing', layer: 'client' });
+    }
+    var visionId = String(opts.visionId || vision.createVisionId(opts.captureId || 'probe'));
+    if (!/^[a-z0-9_-]{4,64}$/.test(visionId)) {
+      return Promise.resolve({ ok: false, error: 'vision_id is invalid', code: 'vision-id-invalid', layer: 'client' });
+    }
+    var message = String(prompt || '').trim() || 'Inspect the attached image. Return one short factual sentence about what is visibly present.';
+    var timeoutMs = Number(opts.timeout || 16000);
+    native?.traceEvent?.('vision.probe', 'prepare', 'queued', {
+      captureId: opts.captureId || '',
+      visionId: visionId,
+      imageMode: imageMode,
+      imagePlacement: 'top-level',
+      imageChars: preparedImage.length,
+      imageMimeType: String(sourceMimeMatch?.[1] || opts.imageMimeType || '').toLowerCase(),
+      timeoutMs: timeoutMs,
+      silent: true,
+      journal: false
+    });
+    return new Promise(function(resolve) {
+      var request = {
+        id: getNextId(),
+        mode: 'vision-probe',
+        correlationId: createCorrelationId(),
+        message: message,
+        imageBase64: preparedImage,
+        imageMode: imageMode,
+        imagePlacement: 'top-level',
+        imageChars: preparedImage.length,
+        imageMimeType: String(sourceMimeMatch?.[1] || opts.imageMimeType || '').toLowerCase(),
+        visionId: visionId,
+        imageRunId: visionId,
+        captureId: opts.captureId || '',
+        plainFragments: [],
+        plainSettleTimer: null,
+        opts: {
+          timeout: timeoutMs,
+          priority: opts.priority || 'low',
+          expectResponse: true,
+          policy: { allowSpeech: false, silent: true, source: 'vision-probe' }
+        },
+        createdAt: Date.now(),
+        resolve: resolve,
+        timeout: null
+      };
+      if (request.opts.priority === 'low') requestQueue.push(request);
+      else {
+        var firstLowIndex = requestQueue.findIndex(function(entry) { return entry.opts && entry.opts.priority === 'low'; });
+        if (firstLowIndex === -1) requestQueue.push(request);
+        else requestQueue.splice(firstLowIndex, 0, request);
+      }
+      processQueue();
+    });
+  }
+
   function processQueue() {
     if (activeRequest || !requestQueue.length || dispatchTimer) return;
 
@@ -698,7 +773,7 @@
 
     notifyAmbientBridgeListeners(data);
 
-    if (activeRequest && activeRequest.mode === 'vision') {
+    if (activeRequest && (activeRequest.mode === 'vision' || activeRequest.mode === 'vision-probe')) {
       var imageRequest = activeRequest;
       var rawDump = '';
       var payloadObject = data && typeof data === 'object' ? data : null;
@@ -758,6 +833,51 @@
           latencyMs: Date.now() - imageRequest.startedAt
         });
         processQueue();
+        return;
+      }
+      if (imageRequest.mode === 'vision-probe') {
+        var plainReply = sanitizeResponse(imageText);
+        var filler = /^(?:processing|thinking|analysing|analyzing|taking a look|one moment|image received|looking at the image)[.!…\s]*$/i.test(plainReply);
+        if (!plainReply || filler) {
+          native?.traceEvent?.('vision.probe', 'bridge', 'collecting', {
+            captureId: imageRequest.captureId || '',
+            visionId: imageRequest.visionId,
+            hasText: !!plainReply
+          });
+          return;
+        }
+        if (!Array.isArray(imageRequest.plainFragments)) imageRequest.plainFragments = [];
+        if (imageRequest.plainFragments[imageRequest.plainFragments.length - 1] !== plainReply) {
+          imageRequest.plainFragments.push(plainReply);
+        }
+        if (imageRequest.plainSettleTimer) clearTimeout(imageRequest.plainSettleTimer);
+        imageRequest.plainSettleTimer = setTimeout(function() {
+          if (!activeRequest || activeRequest.id !== imageRequest.id) return;
+          var combined = sanitizeResponse((imageRequest.plainFragments || []).join('\n'));
+          if (!combined) return;
+          clearBridgeRequest(imageRequest);
+          native?.traceEvent?.('vision.probe', 'bridge', 'stored', {
+            captureId: imageRequest.captureId || '',
+            visionId: imageRequest.visionId,
+            responseChars: combined.length,
+            silent: true,
+            journal: false
+          });
+          imageRequest.resolve({
+            ok: true,
+            visionId: imageRequest.visionId,
+            imageRunId: imageRequest.visionId,
+            text: combined,
+            clean: combined,
+            latencyMs: Date.now() - imageRequest.startedAt
+          });
+          processQueue();
+        }, 450);
+        native?.traceEvent?.('vision.probe', 'bridge', 'reply-received', {
+          captureId: imageRequest.captureId || '',
+          visionId: imageRequest.visionId,
+          fragmentCount: imageRequest.plainFragments.length
+        });
         return;
       }
       var collected = imageRequest.collector.feed(data);
@@ -1622,7 +1742,7 @@
       source: 'image-probe',
       reason: 'image prompt probes stay quiet'
     }, function() {
-      var bridgeCall = sendBridgeImage(imageInput, String(prompt || '').trim(), {
+      var bridgeCall = sendPlainImageProbe(imageInput, String(prompt || '').trim(), {
         visionId: options.visionId || '',
         captureId: options.captureId || '',
         project: options.project || buildProjectEnvelope('show'),
@@ -2409,6 +2529,7 @@
     evaluateMilestone: evaluateMilestone,
     requestCaptureDescription: requestCaptureDescription,
     probeImagePrompt: probeImagePrompt,
+    probeNativeImage: sendPlainImageProbe,
     sendBridgeImage: sendBridgeImage,
     askRabbitAboutImage: sendBridgeImage,
     buildBridgeImagePrompt: buildBridgeImagePrompt,

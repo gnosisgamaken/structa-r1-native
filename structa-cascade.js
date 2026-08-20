@@ -1,13 +1,13 @@
 /**
- * structa-cascade.js — V2 State Machine Rewrite
+ * structa-cascade.js — V3 r1 device state machine
  *
  * Replaces all scattered booleans (hintMode, pttActive, activeSurface,
  * knowDetail, answeringQuestion, etc.) with a single formal state machine.
  *
- * States: HOME, SHOW_PRIMED, CAMERA_OPEN, CAMERA_CAPTURE,
+ * States: HOME, SHOW_BROWSE, CAMERA_OPEN, CAMERA_CAPTURE,
  *         TELL_PRIMED, VOICE_OPEN, VOICE_PROCESSING,
  *         KNOW_BROWSE, KNOW_DETAIL, KNOW_ANSWER,
- *         NOW_BROWSE, LOG_OPEN
+ *         NOW_BROWSE, UNCERTAINTY_REVIEW, LOG_OPEN
  *
  * Each state has: enter(), exit(), render(), and input handlers.
  * transition(newState, data) manages all state changes atomically.
@@ -42,12 +42,12 @@
   };
 
   // === Constants ===
+  const MIN_DIRECT_TOUCH = 44;
   const STATES = Object.freeze({
     HOME: 'home',
     PROJECT_SWITCHER: 'project_switcher',
     TELL_BROWSE: 'tell_browse',
     SHOW_BROWSE: 'show_browse',
-    SHOW_PRIMED: 'show_primed',
     CAMERA_OPEN: 'camera_open',
     CAMERA_CAPTURE: 'camera_capture',
     TELL_PRIMED: 'tell_primed',
@@ -57,6 +57,7 @@
     KNOW_DETAIL: 'know_detail',
     KNOW_ANSWER: 'know_answer',
     NOW_BROWSE: 'now_browse',
+    UNCERTAINTY_REVIEW: 'uncertainty_review',
     LOG_OPEN: 'log_open',
     TRIANGLE_OPEN: 'triangle_open'
   });
@@ -67,10 +68,10 @@
   }
   const triangleEngine = window.StructaTriangle;
   const cards = [
-    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'voice-first mode', roleShort: 'coming later', color: 'var(--show)', surface: 'camera' },
-    { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'voice note', roleShort: 'voice in', color: 'var(--tell)', surface: 'voice' },
-    { id: 'know', title: 'know', iconPath: iconAsset('card-know', 'assets/icons/png/7.png'), iconFallback: '◈', role: 'signal extraction', roleShort: 'find signal', color: 'var(--know)', surface: 'insight' },
-    { id: 'now', title: 'now', iconPath: iconAsset('card-now', 'assets/icons/png/6.png'), iconFallback: '▣', role: 'decision surface', roleShort: 'act on it', color: 'var(--now)', surface: 'project' }
+    { id: 'show', title: 'show', iconPath: iconAsset('card-show', 'assets/icons/png/4.png'), iconFallback: '▣', role: 'capture reference', roleShort: 'capture reference', color: 'var(--show)', surface: 'camera' },
+    { id: 'tell', title: 'tell', iconPath: iconAsset('card-tell', 'assets/icons/png/3.png'), iconFallback: '◉', role: 'capture thought', roleShort: 'capture thought', color: 'var(--tell)', surface: 'voice' },
+    { id: 'know', title: 'know', iconPath: iconAsset('card-know', 'assets/icons/png/7.png'), iconFallback: '◈', role: 'project map', roleShort: 'project map', color: 'var(--know)', surface: 'insight' },
+    { id: 'now', title: 'now', iconPath: iconAsset('card-now', 'assets/icons/png/6.png'), iconFallback: '▣', role: 'next intervention', roleShort: 'next intervention', color: 'var(--now)', surface: 'project' }
   ];
 
   // === State machine ===
@@ -81,6 +82,7 @@
   let logReturnState = STATES.HOME;
   let cameraReturnState = STATES.HOME;
   let voiceReturnState = STATES.HOME;
+  let pttInputActive = false;
   let transitionTargetState = null;
   let sideClickTimer = null;
   let touchLogPressTimer = null;
@@ -109,6 +111,7 @@
     : function(callback) { return setTimeout(callback, 16); };
   const debugMode = new URLSearchParams(window.location.search || '').get('debug') === '1';
   const probeMode = window.location.hash.includes('probe') || debugMode;
+  if (logDrawer) logDrawer.style.display = debugMode ? '' : 'none';
   let renderScheduled = false;
   let logRefreshScheduled = false;
   let opsRefreshScheduled = false;
@@ -266,8 +269,8 @@
   }
 
   function projectMark(project = getProjectMemory()) {
-    const value = String(project?.project_mark || '').trim().toUpperCase();
-    return /^[A-Z]{2}$/.test(value) ? value : '';
+    const value = String(project?.project_mark || '').trim().toLowerCase();
+    return /^[a-z]{2}$/.test(value) ? value : '';
   }
 
   function compactProjectName(name = '') {
@@ -329,7 +332,7 @@
   }
 
   function allowMenuFlush() {
-    return !!native?.flushMemory;
+    return !!debugMode && !!native?.flushMemory;
   }
 
   function currentCard() {
@@ -594,7 +597,7 @@
   }
 
   function onboardingAllowsLogs() {
-    return true;
+    return debugMode;
   }
 
   function canOpenProjectSwitcherFromState(state = currentState) {
@@ -639,8 +642,14 @@
     stateData.knowFocusNodeId = '';
     stateData.knowBodyScrollTop = 0;
     stateData.knowBodyMaxScroll = 0;
+    stateData.mapBranchIndex = 0;
+    stateData.mapBranchId = '';
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
+    stateData.nowInterventionId = '';
+    stateData.uncertaintyActionIndex = 0;
+    stateData.uncertaintyId = '';
+    stateData.uncertaintyCorrectionId = '';
     stateData.projectListIndex = 0;
     stateData.inlinePTTSurface = '';
     stateData.triangleStatus = '';
@@ -701,6 +710,7 @@
     const meta = capture?.meta || {};
     if (Number(meta.annotation_window_until || 0) > Date.now()) return 'speak to tag, or wait';
     const stage = lower(meta.analysis_stage || '');
+    if (stage === 'awaiting comment' || lower(meta.analysis_status || '') === 'awaiting-comment') return 'saving your context…';
     if (stage === 'capturing') return 'capturing';
     if (stage === 'queued' || stage === 'analyzing') return 'describing image...';
     if (stage === 'extracting claims') return 'extracting claims';
@@ -713,7 +723,7 @@
   }
 
   function getShowFooter(model) {
-    return 'coming later';
+    return 'side · prepare lens';
   }
 
   function buildUISnapshot() {
@@ -731,13 +741,13 @@
       effective_selected_card_id: effectiveSelected,
       show_available: allowed.includes('show'),
       queue_blocker_count: Array.isArray(ui?.queue_blockers) ? ui.queue_blockers.length : 0,
-      show_capture_count: 0,
-      show_status: 'off',
-      show_current_summary: 'show is coming later',
-      show_current_processing_line: 'voice-first mode is active',
+      show_capture_count: model.captures?.length || 0,
+      show_status: model.current ? 'ready' : 'empty',
+      show_current_summary: model.summary || 'capture a reference',
+      show_current_processing_line: model.processingLine || 'ready',
       show_current_analysis_state: model.analysisState || '',
-      show_claim_count: 0,
-      show_footer: 'coming later'
+      show_claim_count: model.claimCount || 0,
+      show_footer: getShowFooter(model)
     };
   }
 
@@ -912,6 +922,7 @@
     wheelDeltaAccumulator = 0;
     lastNativeScrollAt = 0;
     lastNativeScrollDirection = 0;
+    pttInputActive = false;
     resetTutorialSurfaceState();
     resetVoiceChrome();
     invalidateDataCaches();
@@ -1186,7 +1197,10 @@
     stateExitHandlers[prev]?.(prevStateData);
 
     currentState = newState;
-    stateData = { ...stateData, ...data };
+    const voiceReset = newState === STATES.VOICE_OPEN
+      ? { answeringQuestion: null, buildContext: null, triangleMode: false, fromPTT: false }
+      : {};
+    stateData = { ...stateData, ...voiceReset, ...data };
     transitionTargetState = null;
 
     // Enter new state
@@ -1214,12 +1228,11 @@
     const traceFilter = stateData.logTraceFilter || 'all';
     const showDiagnostics = !!stateData.logDiagnosticMode;
     const diagnosticRows = (logOpen && showDiagnostics && diagnostics?.getDrawerRows) ? diagnostics.getDrawerRows() : null;
-    const actionRows = (!traceMode && !diagnosticRows && logOpen) ? buildProductLogActions() : [];
     const entries = traceMode
       ? getTraceEntries(logOpen ? 20 : 5, traceFilter)
       : (diagnosticRows && diagnosticRows.length
         ? diagnosticRows
-        : actionRows.concat((native?.getRecentLogEntries?.(limit, { visible_only: true, product_only: true }) || []).slice(-limit)));
+        : (native?.getRecentLogEntries?.(limit, { visible_only: true, product_only: true }) || []).slice(-limit));
     if (!entries.length) {
       if (logOpen) renderLogRows([]);
       else log.innerHTML = '';
@@ -1281,245 +1294,6 @@
     return true;
   }
 
-  const IMAGE_PROBE_VARIANTS = [
-    {
-      id: 'magic-journal-fetch',
-      keyword: 'probe-magic-journal-fetch',
-      label: 'img fetch',
-      prompt: [
-        'Analyze this image and record a note in my journal about it.',
-        'Include this exact line in the note: Image Analysis Tag:{{analysis_tag}}',
-        'Describe only visible facts.',
-        'Keep it concise.',
-        'Do not speculate.'
-      ].join('\n'),
-      imageInputMode: 'normalizedDataUrl',
-      pluginId: 'com.r1.pixelart',
-      omitUseLLM: true,
-      wantsR1Response: true,
-      journal: true,
-      followupFetch: true,
-      followupDelayMs: 28000,
-      followupIntervalMs: 7000,
-      followupFetchAttempts: 2,
-      fetchTimeout: 22000,
-      followupReadyResponses: 3,
-      prefetchCoverText: 'hm',
-      prefetchCoverDelayMs: 320,
-      prefetchPostWaitMs: 1400
-    }
-  ];
-
-  function normalizeProbeImageHref(dataUrl) {
-    return new Promise(function(resolve) {
-      if (!dataUrl) {
-        resolve('');
-        return;
-      }
-      const image = new Image();
-      image.onload = function() {
-        let targetWidth = image.width;
-        let targetHeight = Math.round(targetWidth * 4 / 3);
-        if (image.height > targetHeight) {
-          targetHeight = image.height;
-          targetWidth = Math.round(targetHeight * 3 / 4);
-        }
-        if (targetWidth > 2048) {
-          const scale = 2048 / targetWidth;
-          targetWidth = 2048;
-          targetHeight = Math.round(targetHeight * scale);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(dataUrl);
-          return;
-        }
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, targetWidth, targetHeight);
-        const scale = Math.min(targetWidth / Math.max(1, image.width), targetHeight / Math.max(1, image.height));
-        const drawWidth = Math.round(image.width * scale);
-        const drawHeight = Math.round(image.height * scale);
-        const offsetX = Math.floor((targetWidth - drawWidth) / 2);
-        const offsetY = Math.floor((targetHeight - drawHeight) / 2);
-        ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
-        try {
-          resolve(canvas.toDataURL('image/jpeg', 0.92));
-        } catch (_) {
-          resolve(dataUrl);
-        }
-      };
-      image.onerror = function() {
-        resolve(dataUrl);
-      };
-      image.src = dataUrl;
-    });
-  }
-
-  function getCurrentProbeCapture() {
-    const summary = buildShowSummary();
-    const capture = summary.current;
-    if (!capture) return null;
-    const href = getCaptureImageHref(capture);
-    if (!href) return null;
-    return {
-      capture: capture,
-      captureId: capture?.entry_id || capture?.id || capture?.node_id || '',
-      imageHref: href,
-      imageBase64: String(href).split(',').pop() || ''
-    };
-  }
-
-  function buildProductLogActions() {
-    return [];
-  }
-
-  function runImageProbeVariant(variantId) {
-    const probeCapture = getCurrentProbeCapture();
-    const variant = IMAGE_PROBE_VARIANTS.find(function(entry) { return entry.id === variantId; });
-    if (!probeCapture || !probeCapture.imageBase64 || !variant) {
-      native?.recordProductEvent?.('background work failed', {
-        captureId: probeCapture?.captureId || '',
-        detail: 'image probe unavailable'
-      });
-      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
-      return Promise.resolve({ ok: false, error: 'image probe unavailable' });
-    }
-    const imagePromise = variant.imageInputMode === 'normalizedDataUrl'
-      ? normalizeProbeImageHref(probeCapture.imageHref)
-      : Promise.resolve(probeCapture.imageBase64);
-    const keywordSeed = [
-      variant.keyword || variant.id || 'probe-image',
-      String(probeCapture.captureId || '').slice(-12) || 'capture',
-      Date.now().toString(36)
-    ].filter(Boolean).join('-');
-    const resolvedVariant = {
-      ...variant,
-      keyword: keywordSeed,
-      prompt: String(variant.prompt || '').replace(/\{\{analysis_tag\}\}/g, keywordSeed)
-    };
-    function writeProbeResultToCurrentCapture(cleanText, variant, probeMeta) {
-      const text = String(cleanText || '').trim();
-      if (!text) return false;
-      const applied = window.StructaCamera?.applyProbeDescription?.(
-        probeCapture.captureId || '',
-        probeCapture.capture?.node_id || '',
-        text,
-        {
-          source: probeMeta?.source || variant.id || 'probe',
-          raw: probeMeta?.raw || ''
-        }
-      ) === true;
-      const mirrored = native?.applyCaptureDescription?.(
-        probeCapture.captureId || '',
-        probeCapture.capture?.node_id || '',
-        text,
-        {
-          source: probeMeta?.source || variant.id || 'probe'
-        }
-      ) || { ok: false, rawFound: false, nodeFound: false };
-      if (!applied) {
-        native?.touchProjectMemory?.(function(project) {
-          const nodes = project.nodes || [];
-          const node = nodes.find(function(item) {
-            return item?.node_id === (probeCapture.capture?.node_id || '') ||
-              item?.capture_image === probeCapture.captureId ||
-              item?.meta?.bundle_id === probeCapture.captureId;
-          }) || null;
-          if (node) {
-            node.body = text;
-            node.meta = {
-              ...(node.meta || {}),
-              analysis_status: 'ready',
-              analysis_stage: 'done',
-              analysis_completed_at: new Date().toISOString(),
-              description_text: text
-            };
-          }
-        });
-      }
-      native?.traceEvent?.('image.probe', applied ? 'apply' : 'apply-miss', mirrored.ok ? 'mirror' : 'mirror-miss', {
-        captureId: probeCapture.captureId || '',
-        nodeId: probeCapture.capture?.node_id || '',
-        source: probeMeta?.source || variant.id || '',
-        rawFound: mirrored.rawFound === true,
-        nodeFound: mirrored.nodeFound === true
-      });
-      stateData.showCaptureEntryId = probeCapture.captureId || stateData.showCaptureEntryId || '';
-      stateData.showStatus = 'capture ready';
-      native?.updateUIState?.({
-        last_capture_entry_id: probeCapture.captureId || '',
-        last_capture_summary: text,
-        user_status: 'description stored'
-      });
-      native?.appendLogEntry?.({
-        kind: 'product',
-        message: 'description stored',
-        linked_capture_id: probeCapture.captureId || null,
-        meta: {
-          keyword: variant.keyword || '',
-          source: probeMeta?.source || variant.id || '',
-          text: text.slice(0, 120)
-        }
-      });
-      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-      return true;
-    }
-
-    return imagePromise.then(function(imageInput) {
-      return window.StructaLLM?.probeImagePrompt?.(imageInput, resolvedVariant.prompt, {
-        captureId: probeCapture.captureId,
-        keyword: resolvedVariant.keyword,
-        label: resolvedVariant.label,
-        imageInputMode: resolvedVariant.imageInputMode || 'raw',
-        pluginId: resolvedVariant.pluginId || '',
-        journal: resolvedVariant.journal === true,
-        wantsR1Response: resolvedVariant.wantsR1Response === true,
-        expectResponse: resolvedVariant.expectResponse !== false,
-        listenback: resolvedVariant.listenback === true,
-        listenbackPostFirst: resolvedVariant.listenbackPostFirst === true,
-        listenbackStartDelayMs: resolvedVariant.listenbackStartDelayMs || 320,
-        listenbackWarmupMs: resolvedVariant.listenbackWarmupMs || 120,
-        listenbackStopAfterMs: resolvedVariant.listenbackStopAfterMs || 5200,
-        listenbackTimeoutMs: resolvedVariant.listenbackTimeoutMs || 7000,
-        coverText: resolvedVariant.coverText || '',
-        coverDelayMs: resolvedVariant.coverDelayMs || 260,
-        omitMessage: resolvedVariant.omitMessage === true,
-        omitUseLLM: resolvedVariant.omitUseLLM === true,
-        omitWantsR1Response: resolvedVariant.omitWantsR1Response === true,
-        omitWantsJournalEntry: resolvedVariant.omitWantsJournalEntry === true,
-        followupFetch: resolvedVariant.followupFetch === true,
-        followupDelayMs: resolvedVariant.followupDelayMs || 4200,
-        followupIntervalMs: resolvedVariant.followupIntervalMs || 2600,
-        followupFetchAttempts: resolvedVariant.followupFetchAttempts || 3,
-        fetchTimeout: resolvedVariant.fetchTimeout || 15000,
-        minReadyResponses: resolvedVariant.followupReadyResponses || 3,
-        prefetchCoverText: resolvedVariant.prefetchCoverText || '',
-        prefetchCoverDelayMs: resolvedVariant.prefetchCoverDelayMs || 240,
-        prefetchPostWaitMs: resolvedVariant.prefetchPostWaitMs || 1400
-      });
-    }).then(function(result) {
-      if (result && result.ok && result.clean) {
-        writeProbeResultToCurrentCapture(result.clean, resolvedVariant, {
-          source: resolvedVariant.id,
-          raw: result.raw || ''
-        });
-      }
-      refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
-      return result;
-    });
-  }
-
-  function handleDrawerAction(actionId) {
-    if (actionId === 'image-probe-missing') {
-      return Promise.resolve({ ok: false, error: 'capture a frame first' });
-    }
-    if (actionId.indexOf('image-probe-') === 0) return runImageProbeVariant(actionId.replace('image-probe-', ''));
-    return Promise.resolve({ ok: false, error: 'unknown drawer action' });
-  }
-
   function setLogDrawer(open) {
     logOpen = !!open;
     logDrawer.classList.toggle('open', logOpen);
@@ -1548,9 +1322,9 @@
     event.preventDefault();
     event.stopPropagation();
     fireFeedback('touch-commit');
-    const actionPromise = actionId.indexOf('image-probe-') === 0
-      ? handleDrawerAction(actionId)
-      : (diagnostics?.handleAction ? diagnostics.handleAction(actionId) : Promise.resolve({ ok: false, error: 'action unavailable' }));
+    const actionPromise = diagnostics?.handleAction
+      ? diagnostics.handleAction(actionId)
+      : Promise.resolve({ ok: false, error: 'diagnostics unavailable' });
     actionPromise.then(function() {
       refreshLogFromMemory({ jumpToLatest: true, forceFollow: true });
     }).catch(function() {
@@ -1654,26 +1428,28 @@
     setLogDrawer(false);
     const captures = getCaptureList();
     const maxIndex = Math.max(0, captures.length - 1);
-    stateData.showCaptureIndex = Math.min(stateData.showCaptureIndex || 0, maxIndex);
+    if (typeof data?.showCaptureIndex === 'number') {
+      stateData.showCaptureIndex = Math.max(0, Math.min(data.showCaptureIndex, maxIndex));
+    } else if (!stateData.showCaptureEntryId && captures.length) {
+      stateData.showCaptureIndex = maxIndex;
+      stateData.showCaptureEntryId = captureIdentity(captures[maxIndex]);
+    } else {
+      stateData.showCaptureIndex = Math.min(stateData.showCaptureIndex || 0, maxIndex);
+    }
     if (!stateData.showStatus) {
       stateData.showStatus = captures.length ? 'capture ready' : 'empty';
     }
   };
 
-  // --- SHOW_PRIMED (legacy invisible warm state) ---
-  stateEnterHandlers[STATES.SHOW_PRIMED] = function(data) {
-    document.title = 'show';
-    native?.setActiveNode?.('show');
-    native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'camera' });
-    window.StructaVoice?.close?.();
-  };
-
-  stateExitHandlers[STATES.SHOW_PRIMED] = function(data) {
-    if (currentState !== STATES.CAMERA_OPEN) {
-      // User cancelled priming — close camera
-      window.StructaCamera?.close?.();
-      window.__STRUCTA_PTT_TARGET__ = null;
+  stateExitHandlers[STATES.SHOW_BROWSE] = function() {
+    // A trusted touch starts getUserMedia while SHOW is still visible. If the
+    // user navigates before acquisition resolves, invalidate that request so a
+    // late stream can never reopen the lens over another surface.
+    if (stateData.cameraRequestPending && transitionTargetState !== STATES.CAMERA_OPEN) {
+      stateData.cameraRequestPending = false;
+      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
     }
+    stateData.cameraTouchArmed = false;
   };
 
   // --- CAMERA_OPEN ---
@@ -1753,9 +1529,11 @@
     }
 
     const voiceOverlay = document.getElementById('voice-overlay');
-    const surfaceMap = { home: 'project context', tell: 'on note', show: 'on frame', know: 'on signal', insight: 'on signal', project: 'on decision', now: 'on decision', log: 'to log' };
+    const surfaceMap = { home: 'project context', tell: 'on note', show: 'on reference', know: 'on branch', insight: 'on branch', project: 'on next move', now: 'on next move', log: 'to log' };
     const surface = data.inlinePTTSurface || data.buildContext?.surface || '';
-    const contextLabelText = data.triangleMode
+    const contextLabelText = data.buildContext?.kind === 'uncertainty-correction'
+      ? 'correcting observation'
+      : data.triangleMode
       ? 'your angle'
       : data.answeringQuestion
         ? 'answering ask'
@@ -1808,7 +1586,7 @@
 
   // --- KNOW_BROWSE ---
   stateEnterHandlers[STATES.KNOW_BROWSE] = function(data) {
-    document.title = 'stack';
+    document.title = 'know';
     native?.setActiveNode?.('know');
     native?.updateUIState?.({ selected_card_id: 'know', last_surface: 'insight' });
     setLogDrawer(false);
@@ -1816,6 +1594,10 @@
     stateData.knowItemIndex = typeof data?.knowItemIndex === 'number' ? data.knowItemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowChipIndex = typeof data?.knowChipIndex === 'number' ? data.knowChipIndex : (typeof stateData.knowChipIndex === 'number' ? stateData.knowChipIndex : 0);
     stateData.knowFocusNodeId = data?.preserveKnowFocus ? (stateData.knowFocusNodeId || '') : (typeof data?.knowFocusNodeId === 'string' ? data.knowFocusNodeId : '');
+    stateData.mapBranchIndex = typeof data?.mapBranchIndex === 'number'
+      ? data.mapBranchIndex
+      : (typeof stateData.mapBranchIndex === 'number' ? stateData.mapBranchIndex : 0);
+    if (typeof data?.mapBranchId === 'string') stateData.mapBranchId = data.mapBranchId;
     if (onboardingActive()) {
       const step = getOnboardingStep();
       markTutorialStepEntered(step);
@@ -1832,6 +1614,8 @@
     stateData.knowItemIndex = typeof data?.itemIndex === 'number' ? data.itemIndex : (typeof stateData.knowItemIndex === 'number' ? stateData.knowItemIndex : 0);
     stateData.knowBodyScrollTop = 0;
     stateData.knowBodyMaxScroll = 0;
+    if (typeof data?.mapBranchIndex === 'number') stateData.mapBranchIndex = data.mapBranchIndex;
+    if (typeof data?.mapBranchId === 'string') stateData.mapBranchId = data.mapBranchId;
   };
 
   // --- KNOW_ANSWER ---
@@ -1846,12 +1630,16 @@
 
   // --- NOW_BROWSE ---
   stateEnterHandlers[STATES.NOW_BROWSE] = function(data) {
-    document.title = 'stack';
+    document.title = 'now';
     native?.setActiveNode?.('now');
     native?.updateUIState?.({ selected_card_id: 'now', last_surface: 'project' });
     setLogDrawer(false);
-    stateData.decisionIndex = 0;
-    stateData.selectedOption = 0;
+    const intervention = getNowV3View();
+    if (stateData.nowInterventionId !== intervention.id) {
+      stateData.selectedOption = 0;
+      stateData.nowInterventionId = intervention.id || '';
+    }
+    stateData.decisionIndex = Number(intervention.index || 0);
     if (onboardingActive()) {
       if (getOnboardingStep() === 1) {
         setOnboardingStep(2, { via: 'primary' });
@@ -1862,6 +1650,18 @@
     } else {
       clearTutorialStep2HintTimer();
     }
+  };
+
+  // --- UNCERTAINTY_REVIEW ---
+  stateEnterHandlers[STATES.UNCERTAINTY_REVIEW] = function(data) {
+    document.title = 'review';
+    native?.setActiveNode?.('now');
+    native?.updateUIState?.({ selected_card_id: 'now', last_surface: 'uncertainty_review' });
+    setLogDrawer(false);
+    stateData.uncertaintyActionIndex = typeof data?.uncertaintyActionIndex === 'number'
+      ? data.uncertaintyActionIndex
+      : 0;
+    if (typeof data?.uncertaintyId === 'string') stateData.uncertaintyId = data.uncertaintyId;
   };
 
   // --- LOG_OPEN ---
@@ -1894,9 +1694,13 @@
   }
 
   // === Open a card's primary surface ===
-  function openCard(card) {
+  function openCard(card, options = {}) {
     fireFeedback('touch-commit');
     if (card.surface === 'camera') {
+      if (!buildShowSummary().current) {
+        if (options.source === 'touch') return openCameraFromShow('touch');
+        return primeCameraFromHardware(options.source || 'hardware');
+      }
       transition(STATES.SHOW_BROWSE);
       return;
     }
@@ -1914,17 +1718,51 @@
     }
   }
 
-  function openCameraFromShow(source = 'touch', options = {}) {
-    stateData.showStatus = 'show is coming later';
-    stateData.pendingShowNarration = false;
-    if (currentState !== STATES.SHOW_BROWSE) {
-      transition(STATES.SHOW_BROWSE, {
-        showStatus: 'show is coming later'
-      });
+  function primeCameraFromHardware(source = 'hardware') {
+    // Repeated hardware input while the trusted-touch request is already in
+    // flight must not re-arm SHOW or make that request impossible to cancel.
+    if (stateData.cameraRequestPending) return true;
+    cameraReturnState = STATES.SHOW_BROWSE;
+    const patch = {
+      showStatus: 'lens ready · touch to open',
+      cameraActivationSource: source,
+      cameraTouchArmed: true,
+      cameraRequestPending: false
+    };
+    if (currentState === STATES.SHOW_BROWSE) {
+      Object.assign(stateData, patch);
+      scheduleRender();
     } else {
-      render();
+      transition(STATES.SHOW_BROWSE, patch);
     }
-    return false;
+    native?.traceEvent?.('camera.activation', 'hardware', 'touch-armed', {
+      source: source
+    });
+    return true;
+  }
+
+  function openCameraFromShow(source = 'touch', options = {}) {
+    if (source !== 'touch') return primeCameraFromHardware(source);
+    if (stateData.cameraRequestPending || currentState === STATES.CAMERA_OPEN) return true;
+    stateData.pendingShowNarration = false;
+    const patch = {
+        showStatus: 'opening lens',
+        cameraActivationSource: 'touch',
+        cameraTouchArmed: false,
+        cameraRequestPending: true
+      };
+    if (currentState !== STATES.SHOW_BROWSE) {
+      transition(STATES.SHOW_BROWSE, patch);
+    } else {
+      Object.assign(stateData, patch);
+    }
+    cameraReturnState = STATES.SHOW_BROWSE;
+    native?.traceEvent?.('camera.activation', 'touch', 'requesting', {
+      source: source
+    });
+    window.StructaCamera?.openFromGesture?.(options.facingMode || 'environment');
+    scheduleRender();
+    return true;
   }
 
   function openTellSurface(extra = {}) {
@@ -1933,52 +1771,152 @@
   }
 
   function openNowNextMove() {
-    const data = buildNowSummary();
-    if (data.activeQuestionNodeId) {
-      voiceReturnState = STATES.NOW_BROWSE;
+    beginNowInterventionVoice(STATES.NOW_BROWSE, false, 'project');
+  }
+
+  function beginNowInterventionVoice(returnState, fromPTT, inlineSurface) {
+    const intervention = getNowV3View();
+    if (intervention.type === 'uncertainty_review') {
+      transition(STATES.UNCERTAINTY_REVIEW, { uncertaintyId: intervention.id });
+      return true;
+    }
+    voiceReturnState = returnState || STATES.NOW_BROWSE;
+    if (intervention.type === 'question' || intervention.type === 'map_gap') {
+      const isMapGap = intervention.type === 'map_gap';
+      const questions = isMapGap ? [] : (getProjectMemory()?.open_question_nodes || getProjectMemory()?.open_questions || []);
+      const questionIndex = isMapGap ? -1 : Math.max(0, questions.findIndex(function(item, index) {
+        const raw = typeof item === 'string' ? {} : item;
+        return (raw.node_id || raw.id || 'question-' + index) === intervention.id;
+      }));
       transition(STATES.VOICE_OPEN, {
         answeringQuestion: {
-          index: 0,
-          nodeId: data.activeQuestionNodeId || '',
-          text: data.nextPromptText || '',
-          source: data.activeQuestionNode?.source || 'question'
+          index: questionIndex,
+          nodeId: isMapGap ? '' : (intervention.id || ''),
+          text: intervention.text || '',
+          source: isMapGap ? 'map-gap' : 'question',
+          projectId: getProjectMemory()?.project_id || '',
+          mapGap: isMapGap,
+          branchId: intervention.branch_id || (isMapGap ? intervention.id : '') || ''
         },
-        fromPTT: false,
-        inlinePTTSurface: 'project'
+        fromPTT: fromPTT !== false,
+        inlinePTTSurface: inlineSurface || 'project'
       });
-      return;
+      return true;
     }
-    voiceReturnState = STATES.NOW_BROWSE;
     transition(STATES.VOICE_OPEN, {
-      fromPTT: false,
+      fromPTT: fromPTT !== false,
+      inlinePTTSurface: inlineSurface || 'project',
       tellStatus: 'listening',
-      inlinePTTSurface: 'project',
       buildContext: buildNowVoiceContext()
     });
+    return true;
   }
 
   function approveCurrentNowDecision() {
     const project = getProjectMemory();
     const pending = project?.pending_decisions || [];
-    const decisionIndex = stateData.decisionIndex || 0;
-    if (!(pending.length && decisionIndex < pending.length)) return false;
-    const current = pending[decisionIndex];
-    const options = (typeof current !== 'string' && current?.options) || [];
+    const intervention = getNowV3View();
+    if (intervention.type !== 'decision') return false;
+    const matchedIndex = pending.findIndex(function(item, index) {
+      const raw = typeof item === 'string' ? {} : item;
+      return (raw?.id || raw?.node_id || 'decision-' + index) === intervention.id;
+    });
+    const decisionIndex = matchedIndex >= 0 ? matchedIndex : Number(intervention.index || stateData.decisionIndex || 0);
+    const engine = getProjectEngine();
+    if (!engine?.approveDecision && !(pending.length && decisionIndex < pending.length)) return false;
+    const options = Array.isArray(intervention.options) ? intervention.options : [];
     const selectedOptionIndex = Math.max(0, Math.min(stateData.selectedOption || 0, Math.max(options.length - 1, 0)));
     const selectedOption = options.length ? options[selectedOptionIndex] : null;
-    native?.approvePendingDecision?.(decisionIndex, selectedOptionIndex, selectedOption);
+    const result = engine?.approveDecision
+      ? engine.approveDecision(intervention.id, selectedOptionIndex, selectedOption)
+      : native?.approvePendingDecision?.(decisionIndex, selectedOptionIndex, selectedOption);
+    if (result?.ok === false) return false;
+    fireFeedback('resolve');
     window.StructaLLM?.speakMilestone?.('decision_approved');
     pushLog(selectedOption ? `decision approved: ${selectedOption}` : 'decision approved', 'decision');
     stateData.decisionIndex = 0;
     stateData.selectedOption = 0;
-    stateData.nowFeedback = 'decision queued';
+    stateData.nowInterventionId = '';
+    stateData.nowFeedback = 'locked';
     setTimeout(function() {
-      if (stateData.nowFeedback === 'decision queued') {
+      if (stateData.nowFeedback === 'locked') {
         stateData.nowFeedback = '';
         scheduleRender();
       }
     }, 520);
     scheduleRender();
+    return true;
+  }
+
+  function getActiveUncertainty() {
+    const queued = getQueuedUncertainties();
+    const requestedId = stateData.uncertaintyId || '';
+    const item = queued.find(function(entry) { return entry.id === requestedId; }) || queued[0] || null;
+    if (item) stateData.uncertaintyId = item.id;
+    return { item, queued };
+  }
+
+  function beginUncertaintyCorrection(item) {
+    if (!item?.id) return false;
+    stateData.uncertaintyCorrectionId = item.id;
+    voiceReturnState = STATES.UNCERTAINTY_REVIEW;
+    transition(STATES.VOICE_OPEN, {
+      fromPTT: true,
+      inlinePTTSurface: 'project',
+      triangleMode: true,
+      buildContext: {
+        kind: 'uncertainty-correction',
+        nodeId: item.capture_id || item.id,
+        text: item.statement || '',
+        surface: 'project'
+      }
+    });
+    return true;
+  }
+
+  function applyCurrentUncertaintyAction(actionOverride) {
+    const current = getActiveUncertainty();
+    const item = current.item;
+    if (!item) {
+      transition(STATES.NOW_BROWSE);
+      return false;
+    }
+    const actions = ['confirm', 'correct', 'dismiss'];
+    const action = actionOverride || actions[Math.max(0, Math.min(Number(stateData.uncertaintyActionIndex || 0), actions.length - 1))];
+    if (action === 'correct') return beginUncertaintyCorrection(item);
+    const result = getProjectEngine()?.reviewUncertainty?.(item.id, action, '');
+    if (!result?.ok) {
+      fireFeedback('blocked');
+      return false;
+    }
+    fireFeedback('resolve');
+    if (stateData.uncertaintyCorrectionId === item.id) stateData.uncertaintyCorrectionId = '';
+    pushLog(action === 'confirm' ? 'observation confirmed' : 'observation dismissed', 'decision');
+    const remaining = getQueuedUncertainties();
+    stateData.uncertaintyId = remaining[0]?.id || '';
+    stateData.uncertaintyActionIndex = 0;
+    stateData.nowInterventionId = '';
+    if (!remaining.length) transition(STATES.NOW_BROWSE);
+    else scheduleRender();
+    return true;
+  }
+
+  function completeUncertaintyCorrection(transcript) {
+    const id = stateData.uncertaintyCorrectionId || '';
+    const correction = String(transcript || '').trim();
+    if (!id || !correction) return false;
+    const result = getProjectEngine()?.reviewUncertainty?.(id, 'correct', correction);
+    if (!result?.ok) {
+      fireFeedback('blocked');
+      return false;
+    }
+    stateData.uncertaintyCorrectionId = '';
+    stateData.uncertaintyActionIndex = 0;
+    stateData.nowInterventionId = '';
+    const remaining = getQueuedUncertainties();
+    stateData.uncertaintyId = remaining[0]?.id || '';
+    fireFeedback('resolve');
+    pushLog('observation corrected', 'decision');
     return true;
   }
 
@@ -2247,7 +2185,6 @@
         return 'tell';
       case STATES.SHOW_BROWSE:
         return 'show';
-      case STATES.SHOW_PRIMED:
       case STATES.CAMERA_OPEN:
       case STATES.CAMERA_CAPTURE:
         return 'camera';
@@ -2261,6 +2198,7 @@
       case STATES.KNOW_DETAIL:
         return 'insight';
       case STATES.NOW_BROWSE:
+      case STATES.UNCERTAINTY_REVIEW:
         return 'project';
       default:
         return 'home';
@@ -2268,7 +2206,7 @@
   }
 
   function surfaceMode() {
-    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE || currentState === STATES.SHOW_PRIMED) {
+    if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       return 'camera';
     }
     if (currentState === STATES.VOICE_OPEN) return 'recording';
@@ -2319,6 +2257,172 @@
       voiceEntries +
       (brief ? 1 : 0);
     return count > 0;
+  }
+
+  function getProjectEngine() {
+    return window.StructaProjectEngine || null;
+  }
+
+  function getProjectMapView() {
+    const project = getProjectMemory() || {};
+    const engine = getProjectEngine();
+    if (engine?.getMapView) {
+      try {
+        const model = engine.getMapView(project);
+        if (model && Array.isArray(model.branches)) return model;
+      } catch (error) {
+        console.warn('structa map selector fallback', error);
+      }
+    }
+
+    const derived = project.derived_candidates || {};
+    const questions = project.open_question_nodes || project.open_questions || [];
+    const pending = project.pending_decisions || [];
+    const backlog = project.backlog || [];
+    const hasBrief = !!String(project.brief || '').trim();
+    const makeBranch = function(id, title, completeness, status, summary) {
+      return {
+        id,
+        title,
+        status,
+        summary: lower(summary || ''),
+        driving_question: '',
+        completeness: Math.max(0, Math.min(100, Number(completeness || 0))),
+        evidence_ids: [],
+        question_ids: [],
+        decision_ids: [],
+        blocker_count: status === 'blocked' ? 1 : 0
+      };
+    };
+    const branches = [
+      makeBranch('outcome', 'outcome', hasBrief ? 64 : 0, hasBrief ? 'open' : 'seed', project.brief || 'what must exist when this succeeds?'),
+      makeBranch('audience', 'people', project.user_role ? 52 : 0, project.user_role ? 'open' : 'seed', project.user_role || 'who must this work for?'),
+      makeBranch('direction', 'direction', Math.min(92, ((derived.themes || []).length * 18) + (pending.length * 24)), pending.length ? 'decision_ready' : ((derived.themes || []).length ? 'open' : 'seed'), (derived.themes || [])[0]?.text || ''),
+      makeBranch('constraints', 'reality', Math.min(92, (derived.blockers || []).length * 28), (derived.blockers || []).length ? 'blocked' : 'seed', (derived.blockers || [])[0]?.text || ''),
+      makeBranch('validation', 'proof', Math.min(92, questions.length * 16), questions.length ? 'open' : 'seed', 'how will this be tested?'),
+      makeBranch('delivery', 'delivery', Math.min(92, backlog.length * 22), backlog.length ? 'open' : 'seed', backlog[0]?.title || 'what should happen next?')
+    ];
+    return {
+      project_id: project.project_id || '',
+      title: projectDisplayName(project),
+      brief: project.brief || '',
+      branches,
+      completeness: Math.round(branches.reduce(function(total, branch) { return total + branch.completeness; }, 0) / branches.length),
+      open_decisions: pending.length,
+      open_questions: questions.length,
+      uncertainty_count: (project.structa_v3?.uncertainties || []).filter(function(item) { return item?.status === 'queued'; }).length,
+      reference_count: (project.structa_v3?.references || []).length
+    };
+  }
+
+  function getQueuedUncertainties() {
+    const project = getProjectMemory() || {};
+    return (project.structa_v3?.uncertainties || []).filter(function(item) {
+      return item && (!item.status || item.status === 'queued');
+    });
+  }
+
+  function getNowV3View() {
+    const project = getProjectMemory() || {};
+    const engine = getProjectEngine();
+    if (engine?.getNowView) {
+      try {
+        const model = engine.getNowView(project);
+        if (model && model.type) return model;
+      } catch (error) {
+        console.warn('structa now selector fallback', error);
+      }
+    }
+
+    const pending = project.pending_decisions || [];
+    if (pending.length) {
+      const raw = typeof pending[0] === 'string' ? { text: pending[0] } : pending[0];
+      const options = (raw.options || raw.decision_options || []).filter(Boolean).slice(0, 4);
+      return {
+        id: raw.id || raw.node_id || 'decision-0',
+        type: 'decision',
+        label: 'decision ready',
+        text: raw.text || raw.title || raw.body || 'decision awaiting review',
+        why: raw.why || raw.rationale || 'this choice changes the project direction',
+        options: options.length >= 2 ? options : ['approve direction', 'research first', 'answer another way'],
+        recommended: raw.recommended || '',
+        branch_id: raw.branch_id || raw.meta?.branch_id || 'direction',
+        confidence: raw.confidence || 'med',
+        index: 0
+      };
+    }
+    const uncertainties = getQueuedUncertainties();
+    if (uncertainties.length >= 3 || project.structa_v3?.review_requested) {
+      return {
+        id: uncertainties[0]?.id || 'uncertainty-review',
+        type: 'uncertainty_review',
+        label: 'review batch',
+        text: uncertainties[0]?.statement || 'visual observation needs review',
+        why: uncertainties[0]?.why || 'confirm before this influences a consequential decision',
+        options: ['confirm', 'correct', 'dismiss'],
+        batch_count: uncertainties.length,
+        branch_id: uncertainties[0]?.branch_id || 'direction',
+        capture_id: uncertainties[0]?.capture_id || ''
+      };
+    }
+    const questions = project.open_question_nodes || [];
+    if (questions.length) {
+      const question = questions[0];
+      return {
+        id: question.node_id || question.id || 'question-0',
+        type: 'question',
+        label: 'one useful question',
+        text: question.body || question.title || 'what should become clearer next?',
+        why: question.meta?.rationale || 'your answer will advance the project map',
+        branch_id: question.branch_id || question.meta?.branch_id || 'outcome',
+        question
+      };
+    }
+    const map = getProjectMapView();
+    const branch = (map.branches || []).filter(function(item) { return item.status !== 'closed'; }).sort(function(a, b) {
+      return Number(a.completeness || 0) - Number(b.completeness || 0);
+    })[0];
+    return branch ? {
+      id: branch.id,
+      type: 'map_gap',
+      label: branch.title + ' · ' + Number(branch.completeness || 0) + '%',
+      text: branch.driving_question || branch.summary || 'what would make this part of the project clear?',
+      why: 'this is the least resolved part of the project map',
+      branch_id: branch.id
+    } : {
+      id: 'ready',
+      type: 'ready',
+      label: 'map coherent',
+      text: 'choose the next delivery move',
+      why: 'the current project map has no blocking gaps',
+      branch_id: 'delivery'
+    };
+  }
+
+  function getSelectedMapBranch() {
+    const map = getProjectMapView();
+    const branches = map.branches || [];
+    if (!branches.length) return { map, branch: null, index: 0 };
+    const remembered = stateData.mapBranchId
+      ? branches.findIndex(function(branch) { return branch.id === stateData.mapBranchId; })
+      : -1;
+    const index = Math.max(0, Math.min(remembered >= 0 ? remembered : Number(stateData.mapBranchIndex || 0), branches.length - 1));
+    stateData.mapBranchIndex = index;
+    stateData.mapBranchId = branches[index]?.id || '';
+    return { map, branch: branches[index], index };
+  }
+
+  function branchStateLabel(status) {
+    const labels = {
+      seed: 'forming',
+      open: 'open',
+      blocked: 'blocked',
+      decision_ready: 'decision',
+      decided: 'decided',
+      validate: 'validate',
+      closed: 'closed'
+    };
+    return labels[status] || 'open';
   }
 
   // === NOW card builder ===
@@ -2685,11 +2789,11 @@
 
   // === SVG rendering helpers ===
   function cardLayout(index) {
-    if (index === selectedIndex) return { x: 106, y: 62, scale: 1.62, opacity: 1, depth: -1 };
+    if (index === selectedIndex) return { x: 82, y: 68, scale: 1.34, opacity: 1, depth: -1 };
     const depth = ((selectedIndex - index - 1 + cards.length) % cards.length);
-    var heroCenterY = 62 + (150 * 1.62) / 2;
-    var scales = [0.54, 0.74, 0.96];
-    var xPositions = [18, 46, 74];
+    var heroCenterY = 68 + (150 * 1.34) / 2;
+    var scales = [0.52, 0.70, 0.88];
+    var xPositions = [12, 36, 58];
     var stack = scales.map(function(s, i) {
       var cardH = 150 * s;
       return { x: xPositions[i], y: heroCenterY - cardH / 2, scale: s, opacity: 1, depth: i };
@@ -2805,28 +2909,18 @@
     if (logOpen || currentState === STATES.LOG_OPEN) return;
     const jobs = getQueuePendingJobs();
     const depth = jobs.length;
-    const width = depth ? Math.min(220, 24 + depth * 28) : 220;
-    const opacity = depth ? String(0.96 + (Math.sin(Date.now() / 260) * 0.04)) : '0.08';
-    const fill = depth ? getQueueTierColor(jobs[0].priority) : 'rgba(244,239,228,0.18)';
-    const indicator = mk('rect', {
+    if (!depth) return;
+    const width = Math.min(220, 28 + depth * 24);
+    mk('rect', {
       x: 10,
-      y: 288,
+      y: 279,
       width: width,
       height: 2,
       rx: 1,
       ry: 1,
-      fill: fill,
-      opacity: opacity,
-      style: onboardingAllowsLogs() ? 'cursor: pointer;' : ''
+      fill: getQueueTierColor(jobs[0].priority),
+      opacity: '0.72'
     });
-    if (onboardingAllowsLogs()) {
-      indicator.addEventListener('pointerup', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-        fireFeedback('touch-commit');
-        transition(STATES.LOG_OPEN);
-      });
-    }
   }
 
   function drawKnowItemDots(count, currentIndex, x, y) {
@@ -2971,7 +3065,7 @@
       escapeHtml(formatTimeLabel(item?.created_at)),
       '</div>',
       '</div>',
-      '<div style="font-size:15px; line-height:1.2; font-weight:600; color:rgba(26,22,18,1); margin-bottom:8px;">',
+      '<div style="font-size:15px; line-height:1.2; color:rgba(26,22,18,1); margin-bottom:8px;">',
       escapeHtml(item?.title || 'untitled'),
       '</div>',
       isClaimTriangle
@@ -3096,7 +3190,7 @@
     const pair = triangle.pair || {};
     const pointA = pair.a;
     const pointB = pair.b;
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: 'rgba(7,7,7,0.985)' });
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: 'rgba(7,7,7,0.985)' });
     const accent = triangleColor(pointB || pointA);
     mk('path', { d: 'M 14 18 L 23 34 L 32 18 Z', fill: accent });
     text(40, 31, 'triangle', {
@@ -3226,7 +3320,7 @@
     const onboardingProjectLesson = onboardingActive() && getOnboardingStep() === 1;
     const activeCount = projects.filter(function(project) { return project.status !== 'archived'; }).length;
 
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: '#070707' });
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: '#070707' });
     if (recordingActive()) recordingDot(23, 25, 10, svg);
     else drawFramedIcon(iconAsset('brand-mark', 'assets/icons/png/5.png'), {
       x: 12, y: 14, width: 22, height: 22, rx: 4, ry: 4
@@ -3456,29 +3550,31 @@
       let statLabel = '';
       const project = getProjectMemory();
       const nowData = buildNowSummary();
+      const mapData = getProjectMapView();
+      const intervention = getNowV3View();
       if (onboardingActive() && card.id === 'now') {
         statNumber = '0';
         statLabel = 'start here';
       } else if (card.id === 'show') {
-        statNumber = '';
-        statLabel = 'off';
+        statNumber = String(getCaptureList().length || '');
+        statLabel = getCaptureList().length ? 'references' : 'ready';
       } else if (card.id === 'tell') {
         statNumber = String(getVoiceEntries().length);
         statLabel = 'spoken';
       } else if (card.id === 'know') {
-        const askCount = Number(nowData.asksCount || 0);
-        const signalCount = Number(nowData.signalsCount || 0);
-        statNumber = askCount > 0 ? String(askCount) : String(signalCount);
-        statLabel = askCount > 0 ? 'asks' : 'signals';
+        statNumber = String((mapData.branches || []).length || '');
+        statLabel = 'branches';
       } else if (card.id === 'now') {
-        const decisionCount = Number(nowData.decisionCount || 0);
-        const queueCount = Number(nowData.queueCount || 0);
-        statNumber = decisionCount > 0 ? String(decisionCount) : String(queueCount);
-        statLabel = decisionCount > 0 ? 'decisions' : 'queued';
+        statNumber = intervention.type === 'uncertainty_review'
+          ? String(intervention.batch_count || '')
+          : (intervention.type === 'decision' ? '1' : '');
+        statLabel = intervention.type === 'decision'
+          ? 'decision'
+          : (intervention.type === 'uncertainty_review' ? 'to review' : intervention.label || 'next move');
       }
 
       if (statNumber && statNumber !== '0') {
-        text(132, 80, statNumber, {
+        text(110, 80, statNumber, {
           fill: 'rgba(8,8,8,0.20)',
           'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '38',
           'text-anchor': 'end'
@@ -3497,13 +3593,13 @@
         }, group);
       }
 
-      const pendingCount = (project?.pending_decisions || []).length;
-      const questionCount = (project?.open_questions || []).length;
+      const pendingCount = (project?.pending_decisions || []).length + (getQueuedUncertainties().length ? 1 : 0);
+      const questionCount = (project?.open_question_nodes || project?.open_questions || []).length;
       if (pendingCount > 0 && card.id === 'now') {
-        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#ff8a65', opacity: '0.86' }, group);
+        mk('circle', { cx: 110, cy: 18, r: 4, fill: 'rgba(8,8,8,0.72)', opacity: '0.86' }, group);
       }
       if (questionCount > 0 && card.id === 'know') {
-        mk('circle', { cx: 136, cy: 18, r: 4, fill: '#f8c15d', opacity: '0.86' }, group);
+        mk('circle', { cx: 110, cy: 18, r: 4, fill: 'rgba(8,8,8,0.72)', opacity: '0.86' }, group);
       }
     } else if (stackLead) {
       if (card.iconPath) {
@@ -3523,7 +3619,7 @@
     const activate = event => {
       event.preventDefault();
       if (selected && isHome()) {
-        openCard(card);
+        openCard(card, { source: 'touch' });
       }
       else if (isHome()) {
         fireFeedback('touch-commit');
@@ -3674,22 +3770,185 @@
     };
   }
 
+  function captureIdentity(capture) {
+    return capture?.entry_id || capture?.id || capture?.node_id || capture?.capture_id || '';
+  }
+
+  function getCaptureReference(capture) {
+    if (!capture) return null;
+    const ids = [
+      captureIdentity(capture),
+      capture?.node_id || '',
+      capture?.meta?.bundle_id || ''
+    ].filter(Boolean);
+    return (getProjectMemory()?.structa_v3?.references || []).find(function(reference) {
+      return ids.indexOf(reference?.capture_id || '') >= 0 || ids.indexOf(reference?.id || '') >= 0;
+    }) || null;
+  }
+
   function drawShowSurface() {
-    if (!surfaceIsVisible('show') && currentState !== STATES.SHOW_PRIMED) return;
+    if (!surfaceIsVisible('show')) return;
     const showCard = cards.find(c => c.id === 'show');
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: showCard.color });
+    const model = buildShowSummary();
+    const reference = getCaptureReference(model.current);
+    const captures = model.captures || [];
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: showCard.color });
     drawSurfaceHeader(showCard);
-    mk('rect', { x: 14, y: 84, width: 212, height: 144, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.12)' });
-    text(20, 110, 'show is off for this release', {
-      fill: 'rgba(8,8,8,0.96)',
+
+    const lensTap = mk('g', { style: 'cursor: pointer;' });
+    mk('rect', {
+      x: 142, y: 6, width: 46, height: MIN_DIRECT_TOUCH, rx: 10, ry: 10,
+      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.001)',
+      'data-hit-target': 'camera-open',
+      'data-hit-key': 'show-lens'
+    }, lensTap);
+    mk('rect', { x: 144, y: 15, width: 43, height: 27, rx: 9, ry: 9, fill: stateData.cameraTouchArmed ? 'rgba(119,213,255,0.96)' : 'rgba(8,8,8,0.14)' }, lensTap);
+    mk('circle', { cx: 157, cy: 28.5, r: 5, fill: 'none', stroke: 'rgba(8,8,8,0.90)', 'stroke-width': 1.5 }, lensTap);
+    mk('circle', { cx: 157, cy: 28.5, r: 1.5, fill: 'rgba(8,8,8,0.90)' }, lensTap);
+    text(180, 32, '+', {
+      fill: 'rgba(8,8,8,0.88)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '16'
+      'font-size': '16',
+      'text-anchor': 'middle'
+    }, lensTap);
+    lensTap.addEventListener('pointerup', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      fireFeedback('touch-commit');
+      openCameraFromShow('touch');
     });
-    wrapTextBlock(undefined, 'voice-first mode is active', 20, 136, 188, 13, 'rgba(8,8,8,0.92)', '13', 2);
-    wrapTextBlock(undefined, 'tell, know, now, and triangle are available', 20, 162, 188, 12, 'rgba(8,8,8,0.66)', '11', 3);
-    wrapTextBlock(undefined, 'image support will return in a later update', 20, 206, 188, 12, 'rgba(8,8,8,0.48)', '10', 3);
-    text(226, 276, 'coming later', {
-      fill: 'rgba(8,8,8,0.34)',
+
+    if (!model.current) {
+      const emptyTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', {
+        x: 12, y: 72, width: 216, height: 166, rx: 14, ry: 14,
+        fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.18)' : 'rgba(8,8,8,0.12)',
+        stroke: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.88)' : 'none',
+        'stroke-width': stateData.cameraTouchArmed ? 2 : 0,
+        'data-hit-target': 'camera-open',
+        'data-hit-key': 'show-empty'
+      }, emptyTap);
+      mk('circle', { cx: 120, cy: 126, r: 24, fill: 'rgba(8,8,8,0.10)' }, emptyTap);
+      mk('rect', { x: 109, y: 119, width: 22, height: 15, rx: 4, ry: 4, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.8 }, emptyTap);
+      mk('circle', { cx: 120, cy: 126.5, r: 4.5, fill: 'none', stroke: 'rgba(8,8,8,0.88)', 'stroke-width': 1.5 }, emptyTap);
+      text(120, 175, stateData.cameraTouchArmed ? 'ready · tap here' : 'tap to open lens', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17',
+        'text-anchor': 'middle'
+      }, emptyTap);
+      wrapTextBlock(emptyTap, stateData.cameraTouchArmed ? 'structa lens · touch to open' : 'sketch · space · material · object', 35, 198, 170, 13, 'rgba(8,8,8,0.56)', '11', 2);
+      emptyTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        openCameraFromShow('touch');
+      });
+      text(14, 271, 'camera stays on device', {
+        fill: 'rgba(8,8,8,0.38)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(226, 271, stateData.cameraTouchArmed ? 'camera area · open' : 'side · prepare lens', {
+        fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.84)' : 'rgba(8,8,8,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
+
+    const imageFrame = mk('g');
+    mk('rect', { x: 12, y: 68, width: 216, height: 112, rx: 12, ry: 12, fill: 'rgba(8,8,8,0.16)' }, imageFrame);
+    if (model.imageHref) {
+      drawRasterFrame(model.imageHref, {
+        x: 12, y: 68, width: 216, height: 112, rx: 12, ry: 12,
+        preserveAspectRatio: 'xMidYMid slice'
+      }, imageFrame);
+      mk('rect', { x: 12, y: 68, width: 216, height: 112, rx: 12, ry: 12, fill: 'none', stroke: 'rgba(8,8,8,0.14)', 'stroke-width': 1 }, imageFrame);
+    } else {
+      text(120, 123, 'reference stored', {
+        fill: 'rgba(8,8,8,0.58)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '13',
+        'text-anchor': 'middle'
+      }, imageFrame);
+    }
+    const rawClassName = lower(String(reference?.capture_class || reference?.kind || (model.analysisReady ? 'reference' : 'reading'))).replace(/_/g, ' ');
+    const className = rawClassName === 'unknown' ? 'reference' : rawClassName;
+    mk('rect', { x: 18, y: 74, width: Math.min(106, 18 + className.length * 5.4), height: 19, rx: 7, ry: 7, fill: 'rgba(8,8,8,0.72)' }, imageFrame);
+    text(27, 87, className, {
+      fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
+    }, imageFrame);
+    text(220, 172, recentTimeLabel(model.createdAt), {
+      fill: 'rgba(244,239,228,0.78)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'end'
+    }, imageFrame);
+    const queuedForCapture = getQueuedUncertainties().filter(function(item) {
+      return item.capture_id && [captureIdentity(model.current), model.current?.node_id || '', model.current?.meta?.bundle_id || ''].indexOf(item.capture_id) >= 0;
+    }).length;
+    if (queuedForCapture) {
+      mk('rect', { x: 167, y: 74, width: 53, height: 19, rx: 7, ry: 7, fill: 'rgba(8,8,8,0.72)' }, imageFrame);
+      text(193.5, 87, queuedForCapture + ' to review', {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '8',
+        'text-anchor': 'middle'
+      }, imageFrame);
+    }
+
+    const awaitingUserContext = model.analysisState === 'awaiting-comment';
+    const hasUserContext = !!String(model.latestCommentText || '').trim();
+    const observation = lower(String(
+      awaitingUserContext ? 'saving your context…' : (hasUserContext ? model.latestCommentText : (
+        reference?.observations?.[0]?.text ||
+        reference?.relevance?.[0]?.text ||
+        model.descriptionText || model.summary || 'reference captured'
+      ))
+    ));
+    text(14, 198, awaitingUserContext ? 'show + tell' : (hasUserContext ? 'your context' : (reference ? 'project reading' : (model.analysisReady ? 'visual note' : 'processing quietly'))), {
+      fill: 'rgba(8,8,8,0.46)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
+    });
+    wrapTextBlock(undefined, observation, 14, 215, 212, 12, 'rgba(8,8,8,0.92)', '11', 2);
+
+    const visible = captures.slice(Math.max(0, model.currentIndex - 1), Math.min(captures.length, model.currentIndex + 3));
+    const firstIndex = Math.max(0, model.currentIndex - 1);
+    visible.forEach(function(capture, offset) {
+      const absoluteIndex = firstIndex + offset;
+      const x = 14 + offset * 42;
+      const selected = absoluteIndex === model.currentIndex;
+      const thumbTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x, y: 237, width: 34, height: 24, rx: 6, ry: 6, fill: 'rgba(8,8,8,0.14)', stroke: selected ? 'rgba(8,8,8,0.90)' : 'rgba(8,8,8,0.10)', 'stroke-width': selected ? 2 : 1 }, thumbTap);
+      const href = getCaptureImageHref(capture);
+      if (href) drawRasterFrame(href, { x: x + 2, y: 239, width: 30, height: 20, rx: 4, ry: 4, opacity: selected ? 1 : 0.68 }, thumbTap);
+      thumbTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('scroll-step');
+        stateData.showCaptureIndex = absoluteIndex;
+        stateData.showCaptureEntryId = captureIdentity(capture);
+        render();
+      });
+    });
+    text(226, 252, (model.currentIndex + 1) + ' / ' + captures.length, {
+      fill: 'rgba(8,8,8,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+    text(14, 274, reference ? 'hold ptt · add context' : 'visual relay pending', {
+      fill: 'rgba(8,8,8,0.38)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+    text(226, 274, stateData.cameraTouchArmed ? 'lens ready · tap +' : 'side · prepare lens', {
+      fill: stateData.cameraTouchArmed ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
       'text-anchor': 'end'
@@ -3730,28 +3989,38 @@
   }
 
   function buildShowVoiceContext() {
-    return { kind: 'show', text: 'show is coming later', surface: 'show' };
+    const model = buildShowSummary();
+    const capture = model.current;
+    return {
+      kind: 'capture-reference',
+      nodeId: capture?.node_id || captureIdentity(capture),
+      text: capture ? getCaptureSummary(capture) : '',
+      surface: 'show'
+    };
   }
 
   function buildKnowVoiceContext() {
-    const model = buildKnowModel();
-    const items = getKnowVisibleItems(model);
-    const idx = Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)));
-    const item = items[idx];
+    const selected = getSelectedMapBranch();
+    const item = selected.branch;
     return {
-      kind: item?.source || 'know',
-      nodeId: item?.node_id || '',
-      text: item ? ((item.title || '') + ' ' + (item.body || '')).trim() : '',
+      kind: 'project-branch',
+      nodeId: item?.id || '',
+      branchId: item?.id || '',
+      text: item ? ((item.title || '') + ' ' + (item.summary || item.driving_question || '')).trim() : '',
       surface: 'know'
     };
   }
 
   function buildNowVoiceContext() {
-    const data = buildNowSummary();
+    const data = getNowV3View();
     return {
-      kind: 'project',
-      nodeId: data.activeQuestionNodeId || '',
-      text: data.nextPromptText || '',
+      kind: data.type === 'decision' ? 'decision-answer' : 'project-intervention',
+      nodeId: data.id || '',
+      decisionId: data.type === 'decision' ? (data.id || '') : '',
+      branchId: data.branch_id || '',
+      text: data.text || '',
+      options: data.type === 'decision' ? (data.options || []).slice(0, 4) : [],
+      projectId: getProjectMemory()?.project_id || '',
       surface: 'project'
     };
   }
@@ -3774,24 +4043,39 @@
   }
 
   function buildShowCommentContext() {
-    return null;
+    const model = buildShowSummary();
+    const capture = model.current;
+    if (!capture) return null;
+    const captureId = captureIdentity(capture);
+    const nodeId = capture?.node_id || '';
+    return {
+      kind: 'capture-comment',
+      captureId,
+      entryId: captureId,
+      nodeId,
+      title: 'visual reference',
+      text: getCaptureSummary(capture),
+      surface: 'show',
+      projectId: getProjectMemory()?.project_id || '',
+      createdAt: model.createdAt || '',
+      commentKind: 'context',
+      projectSummary: getNowV3View().text || ''
+    };
   }
 
   function buildKnowCommentContext() {
-    const model = buildKnowModel();
-    const items = getKnowVisibleItems(model);
-    const idx = Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)));
-    const item = items[idx];
-    if (!item?.node_id) return null;
+    const selected = getSelectedMapBranch();
+    const item = selected.branch;
+    if (!item?.id) return null;
     return {
-      kind: 'thread-comment',
-      nodeId: item.node_id,
-      title: item.title || item.source || 'know item',
-      text: [item.title || '', item.body || ''].join(' ').trim(),
+      kind: 'project-branch',
+      nodeId: item.id,
+      branchId: item.id,
+      title: item.title || 'project branch',
+      text: [item.title || '', item.summary || item.driving_question || ''].join(' ').trim(),
       surface: 'know',
-      createdAt: item.created_at || '',
-      commentKind: item.source === 'question' ? 'clarification' : 'comment',
-      projectSummary: buildNowSummary().nextPromptText || ''
+      createdAt: item.updated_at || '',
+      projectSummary: getNowV3View().text || ''
     };
   }
 
@@ -3838,39 +4122,37 @@
   }
 
   function buildKnowTriangleItem() {
-    const model = buildKnowModel();
-    const items = getKnowVisibleItems(model);
-    const item = items[Math.max(0, Math.min(stateData.knowItemIndex || 0, Math.max(items.length - 1, 0)))];
+    const item = getSelectedMapBranch().branch;
     if (!item) return null;
     return {
       type: 'know',
-      id: item?.node_id || `${item.source || 'know'}:${item.title || item.body || ''}`,
-      nodeId: item?.node_id || '',
+      id: 'branch:' + item.id,
+      nodeId: item.id || '',
       project_id: getActiveProjectId(),
-      title: item?.title || 'signal',
-      body: item?.body || item?.title || '',
-      summary: item?.body || item?.title || '',
-      timeLabel: recentTimeLabel(item?.created_at),
-      created_at: item?.created_at || '',
+      title: item.title || 'project branch',
+      body: item.summary || item.driving_question || item.title || '',
+      summary: item.summary || item.driving_question || item.title || '',
+      timeLabel: recentTimeLabel(item.updated_at),
+      created_at: item.updated_at || '',
       cardId: 'know',
-      knowType: item?.source === 'question' ? 'ask' : 'signal'
+      knowType: 'branch'
     };
   }
 
   function buildNowTriangleItem() {
-    const data = buildNowSummary();
+    const data = getNowV3View();
     return {
       type: 'now',
-      id: data.activeQuestionNodeId || `project:${getActiveProjectId()}`,
-      nodeId: data.activeQuestionNodeId || '',
+      id: data.id || `project:${getActiveProjectId()}`,
+      nodeId: data.id || '',
       project_id: getActiveProjectId(),
-      title: data.nextPromptType || 'project state',
-      body: data.nextPromptText || 'project context',
-      summary: data.nextPromptText || 'project context',
+      title: data.label || 'project state',
+      body: data.text || 'project context',
+      summary: data.text || 'project context',
       timeLabel: 'now',
       created_at: new Date().toISOString(),
       cardId: 'now',
-      nowType: data.activeQuestionNodeId ? 'question' : 'project'
+      nowType: data.type || 'project'
     };
   }
 
@@ -3919,6 +4201,8 @@
         knowItemIndex: stateData.knowItemIndex || 0,
         knowChipIndex: stateData.knowChipIndex || 0,
         knowFocusNodeId: stateData.knowFocusNodeId || '',
+        mapBranchIndex: stateData.mapBranchIndex || 0,
+        mapBranchId: stateData.mapBranchId || '',
         decisionIndex: stateData.decisionIndex || 0,
         selectedOption: stateData.selectedOption || 0
       }
@@ -3936,7 +4220,7 @@
     if (card.id === 'tell') return buildTellVoiceContext();
     if (card.id === 'know') return { kind: 'know', text: 'selected knowledge focus', surface: 'know' };
     if (card.id === 'now') return buildNowVoiceContext();
-    if (card.id === 'show') return { kind: 'show', text: 'show is coming later', surface: 'show' };
+    if (card.id === 'show') return buildShowVoiceContext();
     return { kind: card.id, text: card.role || card.title || '', surface: card.id };
   }
 
@@ -3946,7 +4230,7 @@
     const model = buildTellModel();
     const inlineListening = recordingActive() && activeSurface() === 'tell';
 
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: tellCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: tellCard.color });
     drawSurfaceHeader(tellCard);
     mk('rect', { x: 14, y: 76, width: 212, height: 92, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
     if (inlineListening) {
@@ -4016,26 +4300,35 @@
     }
 
     const relatedIndexes = [];
-    for (let offset = 1; offset < model.entries.length && relatedIndexes.length < 4; offset += 1) {
+    for (let offset = 1; offset < model.entries.length && relatedIndexes.length < 2; offset += 1) {
       relatedIndexes.push((model.currentIndex + offset) % model.entries.length);
     }
     relatedIndexes.forEach((absoluteIndex, index) => {
       const entry = model.entries[absoluteIndex];
-      const y = 176 + (index * 26);
-      const rowTap = mk('g', { style: 'cursor: pointer;' });
+      const y = 174 + (index * 48);
+      const rowTap = mk('g', {
+        style: 'cursor: pointer;',
+        role: 'button',
+        tabindex: '0',
+        'aria-label': 'select note ' + (absoluteIndex + 1)
+      });
       mk('rect', {
         x: 14,
         y,
         width: 212,
-        height: 22,
-        rx: 6,
-        ry: 6,
-        fill: 'rgba(8,8,8,0.10)'
+        height: MIN_DIRECT_TOUCH,
+        rx: 10,
+        ry: 10,
+        fill: 'rgba(8,8,8,0.10)',
+        'data-hit-target': 'tell-row',
+        'data-hit-key': 'note-' + absoluteIndex
       }, rowTap);
-      text(22, y + 13, lower((entry.body || entry.title || 'voice entry').slice(0, 34)), {
-        fill: 'rgba(8,8,8,0.92)',
+      wrapTextBlock(rowTap, lower(entry.body || entry.title || 'voice entry'), 22, y + 17, 180, 11, 'rgba(8,8,8,0.92)', '10', 2);
+      text(216, y + 28, '›', {
+        fill: 'rgba(8,8,8,0.44)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '11'
+        'font-size': '15',
+        'text-anchor': 'end'
       }, rowTap);
       rowTap.addEventListener('pointerup', event => {
         event.preventDefault();
@@ -4046,7 +4339,7 @@
         render();
       });
     });
-    text(226, 276, model.entries.length > 1 ? 'scroll notes · hold ptt' : 'hold ptt', {
+    text(226, 276, model.entries.length > 1 ? 'wheel · notes   hold ptt' : 'hold ptt', {
       fill: 'rgba(8,8,8,0.36)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -4055,16 +4348,160 @@
   }
 
   // === NOW panel render ===
-  // Clean hierarchy: project name -> latest change -> pending decision -> stats
+  // One intervention at a time: the highest-leverage human move.
+  function drawUncertaintyReview(nowCard) {
+    const active = getActiveUncertainty();
+    const item = active.item;
+    const queued = active.queued;
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: nowCard.color });
+    drawSurfaceHeader(nowCard, { hideSubtitle: true });
+    text(226, 28, item ? ((queued.indexOf(item) + 1) + ' / ' + queued.length) : 'complete', {
+      fill: 'rgba(8,8,8,0.46)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+    text(14, 58, 'visual uncertainty review', {
+      fill: 'rgba(8,8,8,0.58)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '11'
+    });
+
+    if (!item) {
+      mk('rect', { x: 12, y: 76, width: 216, height: 150, rx: 14, ry: 14, fill: 'rgba(8,8,8,0.11)' });
+      mk('circle', { cx: 120, cy: 127, r: 20, fill: 'rgba(8,8,8,0.10)' });
+      text(120, 133, '✓', {
+        fill: 'rgba(8,8,8,0.90)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '21',
+        'text-anchor': 'middle'
+      });
+      text(120, 174, 'review complete', {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '18',
+        'text-anchor': 'middle'
+      });
+      text(120, 196, 'nothing uncertain will steer a decision', {
+        fill: 'rgba(8,8,8,0.52)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'middle'
+      });
+      text(226, 272, 'side · continue', {
+        fill: 'rgba(8,8,8,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
+
+    const capture = getCaptureList().find(function(entry) {
+      return [captureIdentity(entry), entry?.node_id || '', entry?.meta?.bundle_id || ''].indexOf(item.capture_id || '') >= 0;
+    }) || null;
+    const href = getCaptureImageHref(capture);
+    mk('rect', { x: 12, y: 70, width: 72, height: 68, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.14)' });
+    if (href) drawRasterFrame(href, { x: 12, y: 70, width: 72, height: 68, rx: 10, ry: 10, preserveAspectRatio: 'xMidYMid slice' });
+    else {
+      text(48, 108, 'reference', {
+        fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9',
+        'text-anchor': 'middle'
+      });
+    }
+    text(94, 78, lower(String(item.branch_id || 'direction')).replace(/_/g, ' '), {
+      fill: 'rgba(8,8,8,0.46)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
+    });
+    wrapTextBlock(undefined, item.statement || 'confirm this observation', 94, 96, 132, 13, 'rgba(8,8,8,0.96)', '12', 4);
+
+    mk('rect', { x: 12, y: 148, width: 216, height: 54, rx: 10, ry: 10, fill: 'rgba(8,8,8,0.09)' });
+    text(20, 164, 'why this paused', {
+      fill: 'rgba(8,8,8,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9'
+    });
+    wrapTextBlock(undefined, item.why || 'confirm before this changes the project direction', 20, 181, 198, 11, 'rgba(8,8,8,0.76)', '10', 2);
+
+    const actions = ['confirm', 'correct', 'dismiss'];
+    actions.forEach(function(action, index) {
+      const selected = index === Number(stateData.uncertaintyActionIndex || 0);
+      const tap = mk('g', {
+        style: 'cursor: pointer;',
+        role: 'button',
+        tabindex: '0',
+        'aria-label': action + ' observation'
+      });
+      const x = 12 + index * 73;
+      mk('rect', {
+        x, y: 210, width: 69, height: MIN_DIRECT_TOUCH, rx: 11, ry: 11,
+        fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.11)',
+        stroke: selected ? 'rgba(8,8,8,0.92)' : 'rgba(8,8,8,0.08)',
+        'stroke-width': 1,
+        'data-hit-target': 'uncertainty-action',
+        'data-hit-key': action
+      }, tap);
+      text(x + 34.5, 236, action, {
+        fill: selected ? '#f4efe4' : 'rgba(8,8,8,0.78)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11',
+        'text-anchor': 'middle'
+      }, tap);
+      tap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        stateData.uncertaintyActionIndex = index;
+        applyCurrentUncertaintyAction(action);
+      });
+    });
+    text(14, 272, 'wheel · choose', {
+      fill: 'rgba(8,8,8,0.38)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10'
+    });
+    text(226, 272, 'side · apply', {
+      fill: 'rgba(8,8,8,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+  }
+
+  function decisionOptionFrame(index, count) {
+    const top = 170;
+    const secondRow = 218;
+    if (count <= 2) {
+      return { x: 12, y: index === 0 ? top : secondRow, width: 216, height: MIN_DIRECT_TOUCH };
+    }
+    if (count === 3 && index === 0) {
+      return { x: 12, y: top, width: 216, height: MIN_DIRECT_TOUCH };
+    }
+    const gridIndex = count === 3 ? index - 1 : index;
+    return {
+      x: gridIndex % 2 === 0 ? 12 : 124,
+      y: count === 3 ? secondRow : (gridIndex < 2 ? top : secondRow),
+      width: 104,
+      height: MIN_DIRECT_TOUCH
+    };
+  }
+
   function drawNowPanel() {
     if (!surfaceIsVisible('project')) return;
     const nowCard = cards.find(c => c.id === 'now');
-    let data;
+    if (currentState === STATES.UNCERTAINTY_REVIEW) {
+      drawUncertaintyReview(nowCard);
+      return;
+    }
+    let intervention;
     try {
-      data = buildNowSummary();
+      intervention = getNowV3View();
     } catch (error) {
       console.error('structa now render failed', error);
-      mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
+      mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: nowCard.color });
       drawSurfaceHeader(nowCard);
       text(14, 112, 'now recovering', {
         fill: 'rgba(8,8,8,0.96)',
@@ -4072,7 +4509,7 @@
         'font-size': '17'
       });
       wrapTextBlock(undefined, 'back out, then reopen now.', 14, 138, 212, 14, 'rgba(8,8,8,0.80)', '13', 3);
-      text(226, 276, 'back · reopen', {
+      text(226, 272, 'back · reopen', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4080,43 +4517,26 @@
       });
       return;
     }
-    const inlineListening = recordingActive() && activeSurface() === 'project';
-    const queueCount = data.queueCount || 0;
-    const blockerHint = lower(String(data.queueBlockerText || '').trim());
     const projectSurfaceMode = activeSurface() === 'project' ? surfaceMode() : 'stable';
 
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: nowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: nowCard.color });
     drawSurfaceHeader(nowCard);
     if (projectSurfaceMode === 'recording' || projectSurfaceMode === 'processing') {
       const promptText = lower(
         stateData.answeringQuestion?.text ||
-        data.nextPromptText ||
+        intervention.text ||
         'hold ptt to continue'
       );
-      const progressLabel = lower(String(stateData.nowFeedback || (projectSurfaceMode === 'recording' ? 'recording answer' : 'processing quietly')));
-      const queueLine = getQueueLine();
-      mk('rect', { x: 10, y: 84, width: 220, height: 162, rx: 12, fill: 'rgba(8,8,8,0.13)' });
-      text(18, 102, projectSurfaceMode === 'recording' ? 'recording answer' : 'processing answer', {
+      mk('rect', { x: 10, y: 74, width: 220, height: 174, rx: 14, fill: 'rgba(8,8,8,0.13)' });
+      recordingDot(120, 111, 20, svg);
+      text(120, 150, projectSurfaceMode === 'recording' ? 'listening' : 'shaping your answer', {
         fill: 'rgba(8,8,8,0.96)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '16'
+        'font-size': '16',
+        'text-anchor': 'middle'
       });
-      wrapTextBlock(undefined, promptText, 18, 130, 194, 14, 'rgba(8,8,8,0.86)', '13', 4);
-      text(18, 212, queueCount ? `${queueCount} queued` : 'queue clear', {
-        fill: 'rgba(8,8,8,0.48)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10'
-      });
-      text(222, 212, projectSurfaceMode === 'recording' ? 'release to send' : progressLabel, {
-        fill: 'rgba(8,8,8,0.48)',
-        'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '10',
-        'text-anchor': 'end'
-      });
-      if (queueLine) {
-        wrapTextBlock(undefined, lower(queueLine), 18, 230, 194, 11, 'rgba(8,8,8,0.66)', '10', 2);
-      }
-      text(226, 276, projectSurfaceMode === 'recording' ? 'release to send' : 'background queue running', {
+      wrapTextBlock(undefined, promptText, 24, 177, 192, 13, 'rgba(8,8,8,0.74)', '11', 4);
+      text(226, 272, projectSurfaceMode === 'recording' ? 'release · send' : 'working quietly', {
         fill: 'rgba(8,8,8,0.36)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
@@ -4124,34 +4544,130 @@
       });
       return;
     }
-    const boxY = 84;
-    mk('rect', { x: 10, y: boxY, width: 220, height: 154, rx: 12, fill: 'rgba(8,8,8,0.13)' });
-    text(18, boxY + 18, lower(data.nextPromptType || 'project update'), {
+
+    const branch = (getProjectMapView().branches || []).find(function(item) { return item.id === intervention.branch_id; });
+    const branchLabel = lower(branch?.title || intervention.branch_id || 'project').replace(/_/g, ' ');
+    text(14, 76, lower(intervention.label || 'next move'), {
       fill: 'rgba(8,8,8,0.50)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-      wrapTextBlock(undefined, lower(String(data.nextPromptText || 'what changed, what needs attention, or what should happen next?')), 18, boxY + 40, 192, 15, 'rgba(8,8,8,0.96)', '15', 5);
-    if (data.brief) {
-      wrapTextBlock(undefined, lower(data.brief), 18, boxY + 124, 192, 11, 'rgba(8,8,8,0.56)', '10', 2);
-    }
-    const countsLine = `asks ${data.asksCount} · sig ${data.signalsCount} · dec ${data.decisionCount} · loops ${data.loopsCount}`;
-    text(18, 248, countsLine, {
+    text(226, 76, branchLabel, {
+      fill: 'rgba(8,8,8,0.40)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+    const isDecision = intervention.type === 'decision';
+    wrapTextBlock(undefined, intervention.text || 'what should happen next?', 14, isDecision ? 96 : 100, 212, isDecision ? 14 : 15, 'rgba(8,8,8,0.96)', '15', isDecision ? 3 : 5);
+    text(14, isDecision ? 138 : 181, 'why now', {
       fill: 'rgba(8,8,8,0.42)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10'
+      'font-size': '9'
     });
-    if (queueCount || blockerHint) {
-      text(226, 248, blockerHint ? 'background stalled' : `${queueCount} queued`, {
-        fill: 'rgba(8,8,8,0.42)',
+    wrapTextBlock(undefined, intervention.why || 'this advances the project map', 14, isDecision ? 151 : 197, 212, isDecision ? 10 : 11, 'rgba(8,8,8,0.66)', isDecision ? '9' : '10', 2);
+
+    if (isDecision) {
+      const options = (intervention.options || []).slice(0, 4);
+      options.forEach(function(option, index) {
+        const selected = index === Number(stateData.selectedOption || 0);
+        const optionTap = mk('g', {
+          style: 'cursor: pointer;',
+          role: 'button',
+          tabindex: '0',
+          'aria-label': 'select ' + lower(String(option))
+        });
+        const frame = decisionOptionFrame(index, options.length);
+        mk('rect', {
+          x: frame.x, y: frame.y, width: frame.width, height: frame.height, rx: 11, ry: 11,
+          fill: selected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.10)',
+          'data-hit-target': 'now-option',
+          'data-hit-key': 'option-' + index,
+          'data-option-count': String(options.length)
+        }, optionTap);
+        const optionFontSize = frame.width < 150 ? '9' : '10';
+        wrapTextBlock(optionTap, String(option), frame.x + 10, frame.y + 17, frame.width - 30, 11, selected ? '#f4efe4' : 'rgba(8,8,8,0.80)', optionFontSize, 2);
+        if (selected) text(frame.x + frame.width - 10, frame.y + 27, '●', {
+          fill: '#f4efe4',
+          'font-family': 'PowerGrotesk-Regular, sans-serif',
+          'font-size': '7',
+          'text-anchor': 'end'
+        }, optionTap);
+        optionTap.addEventListener('pointerup', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          fireFeedback('scroll-step');
+          stateData.selectedOption = index;
+          render();
+        });
+      });
+      text(14, 274, stateData.nowFeedback === 'locked' ? 'direction locked' : 'human approval required', {
+        fill: 'rgba(8,8,8,0.40)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(226, 274, 'side · lock', {
+        fill: 'rgba(8,8,8,0.46)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '10',
         'text-anchor': 'end'
       });
+      return;
     }
-    text(226, 276, inlineListening ? 'release to answer' : 'hold ptt anywhere', {
-      fill: 'rgba(8,8,8,0.36)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif', 'font-size': '10', 'text-anchor': 'end'
+
+    if (intervention.type === 'uncertainty_review') {
+      const reviewTap = mk('g', { style: 'cursor: pointer;' });
+      mk('rect', { x: 12, y: 224, width: 216, height: 35, rx: 11, ry: 11, fill: 'rgba(8,8,8,0.88)' }, reviewTap);
+      text(24, 246, 'review ' + Number(intervention.batch_count || 1) + ' observations', {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11'
+      }, reviewTap);
+      text(216, 246, '›', {
+        fill: '#f4efe4',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '17',
+        'text-anchor': 'end'
+      }, reviewTap);
+      reviewTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        fireFeedback('touch-commit');
+        transition(STATES.UNCERTAINTY_REVIEW, { uncertaintyId: intervention.id });
+      });
+      text(226, 274, 'side · review batch', {
+        fill: 'rgba(8,8,8,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
+
+    const questionTap = mk('g', { style: 'cursor: pointer;' });
+    mk('rect', { x: 12, y: 225, width: 216, height: 35, rx: 11, ry: 11, fill: 'rgba(8,8,8,0.88)' }, questionTap);
+    text(24, 247, intervention.type === 'ready' ? 'shape the next move' : 'answer by voice', {
+      fill: '#f4efe4',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '11'
+    }, questionTap);
+    text(216, 247, 'hold ptt', {
+      fill: 'rgba(244,239,228,0.64)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '9',
+      'text-anchor': 'end'
+    }, questionTap);
+    questionTap.addEventListener('pointerup', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      fireFeedback('touch-commit');
+      openNowNextMove();
+    });
+    text(226, 274, 'side or hold ptt · answer', {
+      fill: 'rgba(8,8,8,0.44)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
     });
   }
 
@@ -4159,134 +4675,151 @@
   function drawInsightSurface() {
     if (!surfaceIsVisible('insight')) return;
     const knowCard = cards.find(c => c.id === 'know');
-    const model = buildKnowModel();
-    const laneIdx = stateData.knowLaneIndex || 0;
-    const lane = model.lanes[laneIdx] || model.lanes[0];
-    if (!lane) return;
-    const itemIdx = stateData.knowItemIndex || 0;
-    const items = getKnowVisibleItems(model);
-    const safeItemIdx = Math.min(itemIdx, items.length - 1);
-    if (safeItemIdx !== itemIdx) stateData.knowItemIndex = safeItemIdx;
-    const item = items[safeItemIdx] || lane.items[0];
+    const selected = getSelectedMapBranch();
+    const map = selected.map;
+    const branches = map.branches || [];
+    const branch = selected.branch;
     const detailMode = currentState === STATES.KNOW_DETAIL;
 
-    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: knowCard.color });
+    mk('rect', { x: 0, y: 0, width: 240, height: 282, fill: knowCard.color });
     drawSurfaceHeader(knowCard, { hideSubtitle: true });
 
-    const footerY = 282;
-    const switcherX = 154;
-    const switcherY = 18;
-    const switcherW = 72;
-    const laneDots = model.lanes.slice(0, 4);
-    const switcherTap = mk('g', { style: 'cursor: pointer;' });
-    mk('rect', {
-      x: switcherX,
-      y: switcherY,
-      width: switcherW,
-      height: 30,
-      rx: 10,
-      ry: 10,
-      fill: 'rgba(8,8,8,0.14)'
-    }, switcherTap);
-    text(switcherX + switcherW / 2, switcherY + 13, lower(lane.label || lane.id || 'asks'), {
-      fill: 'rgba(8,8,8,0.96)',
-      'font-family': 'PowerGrotesk-Regular, sans-serif',
-      'font-size': '10',
-      'text-anchor': 'middle'
-    }, switcherTap);
-    laneDots.forEach(function(entry, index) {
-      mk('circle', {
-        cx: switcherX + 18 + (index * 10),
-        cy: switcherY + 22,
-        r: 2.4,
-        fill: index === laneIdx ? '#3cc76a' : 'rgba(8,8,8,0.24)'
-      }, switcherTap);
-    });
-    switcherTap.addEventListener('pointerup', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      fireFeedback('touch-commit');
-      stateData.knowLaneIndex = ((laneIdx || 0) + 1) % Math.max(model.lanes.length, 1);
-      stateData.knowItemIndex = 0;
-      stateData.knowBodyScrollTop = 0;
-      stateData.knowBodyMaxScroll = 0;
-      render();
-    });
-
-    const frame = { x: 10, y: 92, width: 220, height: Math.max(136, footerY - 98) };
-    const nextText = lower(String(item?.next || '')).replace(/[{}[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-    const html = buildKnowFrameMarkup({
-      ...item,
-      body: detailMode && nextText && nextText !== 'review this'
-        ? ((item?.body || 'no content yet') + '\n\nnext move\n' + nextText)
-        : (item?.body || 'no content yet')
-    }, detailMode);
-    drawKnowScrollFrame({ html: html }, frame, `${currentState}:${lane.id}:${safeItemIdx}:${item?.node_id || item?.created_at || ''}:${item?.threadDepth || 0}`);
-
-    if (item?.triangulated) {
-      text(frame.x + frame.width - 38, frame.y - 4, '▼', {
-        fill: 'rgba(8,8,8,0.58)',
+    if (detailMode && branch) {
+      text(14, 58, 'project branch', {
+        fill: 'rgba(8,8,8,0.46)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+      text(226, 58, Number(branch.completeness || 0) + '%', {
+        fill: 'rgba(8,8,8,0.52)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '11',
+        'text-anchor': 'end'
+      });
+      mk('rect', { x: 12, y: 70, width: 216, height: 174, rx: 14, ry: 14, fill: 'rgba(8,8,8,0.11)' });
+      text(20, 95, lower(branch.title || branch.id || 'branch'), {
+        fill: 'rgba(8,8,8,0.96)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '20'
+      });
+      mk('rect', { x: 154, y: 78, width: 64, height: 21, rx: 8, ry: 8, fill: 'rgba(8,8,8,0.12)' });
+      text(186, 92, branchStateLabel(branch.status), {
+        fill: 'rgba(8,8,8,0.72)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9',
+        'text-anchor': 'middle'
+      });
+      text(20, 119, 'current shape', {
+        fill: 'rgba(8,8,8,0.42)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
         'font-size': '9'
       });
-      if (item?.meta?.triangle_format !== 'claims-v1') {
-        text(frame.x + frame.width - 18, frame.y - 4, 'legacy', {
-          fill: 'rgba(8,8,8,0.42)',
-          'font-family': 'PowerGrotesk-Regular, sans-serif',
-          'font-size': '7',
-          'text-anchor': 'end'
-        });
-      }
-    }
-    drawKnowEvidenceGlyph(item?.evidenceStrength || 0, frame.x + frame.width - 42, frame.y + 10);
-    drawKnowDepthGlyph(item?.threadDepth || 0, frame.x + frame.width - 22, frame.y + frame.height - 16);
-    if (!(item?.threadDepth > 0) && !getUIState().depth_chevron_seen) {
-      const chevron = text(frame.x + frame.width - 16, frame.y + frame.height - 30, '⌄', {
-        fill: 'rgba(8,8,8,0.28)',
+      wrapTextBlock(undefined, branch.summary || 'this branch is still forming', 20, 136, 198, 12, 'rgba(8,8,8,0.82)', '11', 3);
+      text(20, 178, 'question that advances it', {
+        fill: 'rgba(8,8,8,0.42)',
         'font-family': 'PowerGrotesk-Regular, sans-serif',
-        'font-size': '12'
+        'font-size': '9'
       });
-      mk('animateTransform', {
-        attributeName: 'transform',
-        type: 'translate',
-        values: '0 0;0 3;0 0',
-        dur: '0.52s',
-        repeatCount: '1'
-      }, chevron);
+      wrapTextBlock(undefined, branch.driving_question || 'what would make this branch clear?', 20, 195, 198, 12, 'rgba(8,8,8,0.92)', '11', 3);
+      const evidenceCount = Number(branch.evidenceCount ?? branch.evidence_ids?.length ?? 0);
+      const unknownCount = Number(branch.unknownCount ?? ((branch.question_ids?.length || 0) + (branch.blocker_count || 0)));
+      const decisionCount = Number(branch.decisionCount ?? branch.decision_ids?.length ?? 0);
+      text(14, 259, 'evidence ' + evidenceCount + '  ·  unknowns ' + unknownCount + '  ·  decisions ' + decisionCount, {
+        fill: 'rgba(8,8,8,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9'
+      });
+      text(226, 274, 'hold ptt · develop   back · map', {
+        fill: 'rgba(8,8,8,0.44)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
     }
 
-    if (!detailMode) {
-      const frameTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x: frame.x, y: frame.y, width: frame.width, height: frame.height, rx: 10, ry: 10, fill: 'transparent' }, frameTap);
-      frameTap.addEventListener('pointerup', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
+    text(14, 58, compactProjectName(map.title || projectDisplayName()), {
+      fill: 'rgba(8,8,8,0.58)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '11'
+    });
+    text(226, 58, Number(map.completeness || 0) + '% mapped', {
+      fill: 'rgba(8,8,8,0.46)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+
+    if (!branches.length) {
+      wrapTextBlock(undefined, 'capture a thought to begin the project map', 18, 112, 204, 16, 'rgba(8,8,8,0.88)', '15', 4);
+      text(226, 274, 'back · tell', {
+        fill: 'rgba(8,8,8,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10',
+        'text-anchor': 'end'
+      });
+      return;
+    }
+
+    const selectedHeight = branches.length >= 6 ? 45 : 52;
+    const idleHeight = branches.length >= 7 ? 20 : (branches.length >= 6 ? 23 : (branches.length === 5 ? 27 : 31));
+    let cursorY = 68;
+    branches.forEach(function(item, index) {
+      const isSelected = index === selected.index;
+      const rowHeight = isSelected ? selectedHeight : idleHeight;
+      const rowTap = mk('g', { style: 'cursor: pointer;' });
+      const centerY = cursorY + rowHeight / 2;
+      if (index < branches.length - 1) mk('rect', { x: 23, y: centerY, width: 1, height: rowHeight + 2, fill: 'rgba(8,8,8,0.16)' }, rowTap);
+      mk('circle', {
+        cx: 23.5, cy: centerY, r: isSelected ? 5 : 3.2,
+        fill: item.status === 'blocked' || item.status === 'decision_ready'
+          ? '#ff8a65'
+          : (item.status === 'validate' ? '#77d5ff' : (item.status === 'closed' ? 'rgba(8,8,8,0.76)' : 'rgba(8,8,8,0.50)')),
+        stroke: isSelected ? 'rgba(8,8,8,0.92)' : 'none',
+        'stroke-width': 1.5
+      }, rowTap);
+      mk('rect', {
+        x: 34, y: cursorY, width: 194, height: rowHeight, rx: isSelected ? 11 : 7, ry: isSelected ? 11 : 7,
+        fill: isSelected ? 'rgba(8,8,8,0.88)' : 'rgba(8,8,8,0.09)'
+      }, rowTap);
+      text(44, cursorY + (isSelected ? 16 : rowHeight / 2 + 3.5), lower(item.title || item.id || 'branch'), {
+        fill: isSelected ? '#f4efe4' : 'rgba(8,8,8,0.82)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': isSelected ? '12' : '10'
+      }, rowTap);
+      text(218, cursorY + (isSelected ? 16 : rowHeight / 2 + 3.5), (isSelected ? branchStateLabel(item.status) + ' · ' : '') + Number(item.completeness || 0) + '%', {
+        fill: isSelected ? 'rgba(244,239,228,0.56)' : 'rgba(8,8,8,0.42)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '9',
+        'text-anchor': 'end'
+      }, rowTap);
+      if (isSelected) {
+        const selectedSummary = lower(item.summary || item.driving_question || 'this branch is forming');
+        wrapTextBlock(rowTap, selectedSummary, 44, cursorY + 32, 162, 10, 'rgba(244,239,228,0.70)', '9', 2);
+        mk('rect', { x: 207, y: cursorY + 24, width: 11, height: 3, rx: 1.5, ry: 1.5, fill: 'rgba(244,239,228,0.18)' }, rowTap);
+        mk('rect', { x: 207, y: cursorY + 24, width: Math.max(1, 11 * Number(item.completeness || 0) / 100), height: 3, rx: 1.5, ry: 1.5, fill: '#f4efe4' }, rowTap);
+      }
+      rowTap.addEventListener('pointerup', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
         fireFeedback('touch-commit');
-        transition(STATES.KNOW_DETAIL);
+        if (stateData.mapBranchId === item.id) {
+          transition(STATES.KNOW_DETAIL, { mapBranchIndex: index, mapBranchId: item.id });
+          return;
+        }
+        stateData.mapBranchIndex = index;
+        stateData.mapBranchId = item.id;
+        render();
       });
-    } else if (item?.triangulated && item?.meta?.triangle_format === 'claims-v1') {
-      const rejectTap = mk('g', { style: 'cursor: pointer;' });
-      mk('rect', { x: frame.x, y: frame.y, width: frame.width, height: frame.height, rx: 10, ry: 10, fill: 'transparent' }, rejectTap);
-      rejectTap.addEventListener('pointerup', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        fireFeedback('blocked');
-        if (rejectTriangleSignal(item)) transition(STATES.KNOW_BROWSE);
-      });
-    }
+      cursorY += rowHeight + 2;
+    });
 
-    const footerLeft = `${Math.min(safeItemIdx + 1, Math.max(items.length, 1))} of ${Math.max(items.length, 1)}`;
-    const footerRight = !detailMode
-      ? 'click · detail'
-      : (item?.triangulated && item?.meta?.triangle_format === 'claims-v1'
-        ? 'click · reject'
-        : (item?.source === 'question' ? 'hold ptt · answer' : 'hold ptt · reflect'));
-    text(14, footerY, footerLeft, {
-      fill: 'rgba(8,8,8,0.44)',
+    text(14, 274, branches.length + ' branches', {
+      fill: 'rgba(8,8,8,0.38)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10'
     });
-    text(226, footerY, footerRight, {
+    text(226, 274, 'wheel · move   side · open', {
       fill: 'rgba(8,8,8,0.44)',
       'font-family': 'PowerGrotesk-Regular, sans-serif',
       'font-size': '10',
@@ -4324,7 +4857,7 @@
     drawAmbientQueueIndicator();
 
     const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
-    logDrawer.style.display = isContentSurface ? 'none' : '';
+    logDrawer.style.display = debugMode && !isContentSurface ? '' : 'none';
     lastRenderDurationMs = performance.now() - renderStartedAt;
   }
 
@@ -4353,6 +4886,15 @@
       }
 
       case STATES.SHOW_BROWSE:
+        {
+          const captures = getCaptureList();
+          if (!captures.length) break;
+          const next = ((stateData.showCaptureIndex || 0) + (direction > 0 ? 1 : -1) + captures.length) % captures.length;
+          stateData.showCaptureIndex = next;
+          stateData.showCaptureEntryId = captureIdentity(captures[next]);
+          stateData.showStatus = 'reviewing';
+          render();
+        }
         break;
 
       case STATES.TELL_BROWSE: {
@@ -4365,10 +4907,6 @@
         break;
       }
 
-      case STATES.SHOW_PRIMED:
-        fireFeedback('blocked');
-        break;
-
       case STATES.CAMERA_OPEN:
         window.StructaCamera?.flip?.();
         break;
@@ -4377,36 +4915,39 @@
         break;
 
       case STATES.KNOW_BROWSE: {
-        const model = buildKnowModel();
-        const items = getKnowVisibleItems(model);
-        if (!items.length) break;
-        stateData.knowItemIndex = ((stateData.knowItemIndex || 0) + (direction > 0 ? 1 : -1) + items.length) % items.length;
+        const branches = getProjectMapView().branches || [];
+        if (!branches.length) break;
+        const next = ((stateData.mapBranchIndex || 0) + (direction > 0 ? 1 : -1) + branches.length) % branches.length;
+        stateData.mapBranchIndex = next;
+        stateData.mapBranchId = branches[next]?.id || '';
         render();
         break;
       }
 
       case STATES.KNOW_DETAIL: {
-        const model = buildKnowModel();
-        const items = getKnowVisibleItems(model);
-        if (!items.length) break;
-        const maxScroll = Math.max(0, Number(stateData.knowBodyMaxScroll || 0));
-        const currentScroll = Math.max(0, Number(stateData.knowBodyScrollTop || 0));
-        if (maxScroll > 6) {
-          const nextScroll = Math.max(0, Math.min(maxScroll, currentScroll + (direction > 0 ? 36 : -36)));
-          if (nextScroll !== currentScroll) {
-            stateData.knowBodyScrollTop = nextScroll;
-            render();
-            break;
-          }
-        }
-        stateData.knowItemIndex = (stateData.knowItemIndex + (direction > 0 ? 1 : -1) + items.length) % items.length;
-        stateData.knowBodyScrollTop = 0;
-        stateData.knowBodyMaxScroll = 0;
+        const branches = getProjectMapView().branches || [];
+        if (!branches.length) break;
+        const next = ((stateData.mapBranchIndex || 0) + (direction > 0 ? 1 : -1) + branches.length) % branches.length;
+        stateData.mapBranchIndex = next;
+        stateData.mapBranchId = branches[next]?.id || '';
         render();
         break;
       }
 
       case STATES.NOW_BROWSE: {
+        const intervention = getNowV3View();
+        if (intervention.type !== 'decision') break;
+        const options = intervention.options || [];
+        if (!options.length) break;
+        stateData.selectedOption = ((stateData.selectedOption || 0) + (direction > 0 ? 1 : -1) + options.length) % options.length;
+        render();
+        break;
+      }
+
+      case STATES.UNCERTAINTY_REVIEW: {
+        const actions = 3;
+        stateData.uncertaintyActionIndex = ((stateData.uncertaintyActionIndex || 0) + (direction > 0 ? 1 : -1) + actions) % actions;
+        render();
         break;
       }
 
@@ -4443,14 +4984,8 @@
 
   function supportsDoubleSideClick() {
     switch (currentState) {
-      case STATES.HOME:
-      case STATES.PROJECT_SWITCHER:
-      case STATES.SHOW_BROWSE:
       case STATES.TELL_BROWSE:
-      case STATES.KNOW_BROWSE:
       case STATES.KNOW_DETAIL:
-      case STATES.NOW_BROWSE:
-      case STATES.LOG_OPEN:
         return true;
       default:
         return false;
@@ -4469,7 +5004,7 @@
         selectedIndex = cards.findIndex(function(card) { return card.id === 'show'; });
         native?.setActiveNode?.('show');
         native?.updateUIState?.({ selected_card_id: 'show', last_surface: 'home' });
-        transition(STATES.SHOW_BROWSE, { showStatus: 'show is coming later' });
+        transition(STATES.SHOW_BROWSE, { showStatus: 'ready' });
         break;
       }
 
@@ -4512,7 +5047,8 @@
         break;
 
       case STATES.SHOW_BROWSE:
-        fireFeedback('blocked');
+        fireFeedback('touch-commit');
+        openCameraFromShow('side');
         break;
 
       case STATES.TELL_BROWSE: {
@@ -4535,10 +5071,6 @@
         break;
       }
 
-      case STATES.SHOW_PRIMED:
-        fireFeedback('blocked');
-        break;
-
       case STATES.CAMERA_OPEN:
         // Side = capture
         fireFeedback('touch-commit');
@@ -4548,41 +5080,51 @@
       case STATES.VOICE_OPEN:
         if (window.StructaVoice?.listening) {
           window.StructaVoice?.stopListening?.(true);
-          transition(STATES.VOICE_PROCESSING);
+          if (currentState === STATES.VOICE_OPEN) transition(STATES.VOICE_PROCESSING);
         } else {
-          goHome();
+          window.StructaVoice?.close?.();
         }
         break;
 
       case STATES.KNOW_BROWSE:
         // Side = open detail
         fireFeedback('touch-commit');
-        transition(STATES.KNOW_DETAIL);
+        transition(STATES.KNOW_DETAIL, {
+          mapBranchIndex: stateData.mapBranchIndex || 0,
+          mapBranchId: stateData.mapBranchId || ''
+        });
         break;
 
       case STATES.KNOW_DETAIL: {
-        const model = buildKnowModel();
-        const items = getKnowVisibleItems(model);
-        const item = items[stateData.knowItemIndex || 0];
-        if (item && item.source === 'question' && item.questionIndex !== undefined) {
-          fireFeedback('touch-commit');
-          transition(STATES.KNOW_ANSWER, {
-            question: {
-              index: item.questionIndex,
-              nodeId: item.node_id || '',
-              text: item.body,
-              source: item.source || 'question'
-            }
-          });
-          return;
-        }
         fireFeedback('touch-commit');
-        transition(STATES.KNOW_BROWSE, { preserveKnowFocus: true });
+        transition(STATES.KNOW_BROWSE, {
+          preserveKnowFocus: true,
+          mapBranchIndex: stateData.mapBranchIndex || 0,
+          mapBranchId: stateData.mapBranchId || ''
+        });
         break;
       }
 
       case STATES.NOW_BROWSE: {
-        fireFeedback('blocked');
+        const intervention = getNowV3View();
+        if (intervention.type === 'decision') {
+          fireFeedback('touch-commit');
+          if (!approveCurrentNowDecision()) fireFeedback('blocked');
+          return;
+        }
+        if (intervention.type === 'uncertainty_review') {
+          fireFeedback('touch-commit');
+          transition(STATES.UNCERTAINTY_REVIEW, { uncertaintyId: intervention.id });
+          return;
+        }
+        fireFeedback('touch-commit');
+        openNowNextMove();
+        return;
+      }
+
+      case STATES.UNCERTAINTY_REVIEW: {
+        fireFeedback('touch-commit');
+        applyCurrentUncertaintyAction();
         return;
       }
 
@@ -4599,7 +5141,7 @@
         break;
 
       case STATES.HOME:
-        openCard(currentCard());
+        openCard(currentCard(), { source: 'side' });
         break;
 
       default:
@@ -4661,7 +5203,7 @@
   }
 
   function forceOpenDebugLogs() {
-    if (!touchLogAllowed() || currentState === STATES.LOG_OPEN) return false;
+    if (!debugMode || !touchLogAllowed() || currentState === STATES.LOG_OPEN) return false;
     clearPendingSideClick();
     logReturnState = currentState;
     transition(STATES.LOG_OPEN);
@@ -4737,74 +5279,95 @@
       return;
     }
     switch (currentState) {
+      case STATES.CAMERA_OPEN:
+        // PTT while camera is open = SHOW+TELL voice strip.
+        window.StructaCamera?.startVoiceStrip?.();
+        break;
+
+      case STATES.CAMERA_CAPTURE:
+        return;
+
+      case STATES.VOICE_OPEN:
+        // A tapped voice affordance opens this state before the physical hold.
+        // Start the capture here; duplicate native aliases are filtered by the
+        // logical PTT gate before they reach the state machine.
+        document.body.classList.add('input-locked');
+        if (!window.StructaVoice?.listening) window.StructaVoice?.startListening?.();
+        return;
+
+      case STATES.VOICE_PROCESSING: {
+        const returnState = voiceReturnState || STATES.HOME;
+        voiceReturnState = STATES.HOME;
+        stateData.inlinePTTSurface = '';
+        transition(returnState);
+        return;
+      }
+
       case STATES.PROJECT_SWITCHER:
         break;
 
       case STATES.HOME: {
         if (onboardingActive()) break;
-        const tellIndex = Math.max(0, cards.findIndex(function(card) { return card.id === 'tell'; }));
-        selectedIndex = tellIndex;
-        native?.setActiveNode?.('tell');
-        native?.updateUIState?.({ selected_card_id: 'tell', last_surface: 'home' });
+        const card = currentCard();
+        if (card.id === 'show' && !buildShowSummary().current) {
+          primeCameraFromHardware('ptt');
+          break;
+        }
+        if (card.id === 'now') {
+          beginNowInterventionVoice(STATES.HOME, true, 'home');
+          break;
+        }
+        const buildContext = card.id === 'show'
+          ? (buildShowCommentContext() || buildShowVoiceContext())
+          : (card.id === 'know' ? buildKnowVoiceContext() : { kind: 'tell', text: '', surface: 'tell' });
+        native?.setActiveNode?.(card.id);
+        native?.updateUIState?.({ selected_card_id: card.id, last_surface: 'home' });
         voiceReturnState = STATES.HOME;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'listening',
+          tellStatus: card.id === 'tell' ? 'listening' : 'developing',
           inlinePTTSurface: 'home',
-          buildContext: { kind: 'tell', text: '', surface: 'tell' }
+          buildContext: buildContext
         });
         break;
       }
 
-      case STATES.TELL_BROWSE:
-        if (!buildTellCommentContext()) break;
+      case STATES.TELL_BROWSE: {
+        const tellContext = buildTellCommentContext() || buildTellVoiceContext();
         voiceReturnState = STATES.TELL_BROWSE;
         transition(STATES.VOICE_OPEN, {
           fromPTT: true,
-          tellStatus: 'commenting',
+          tellStatus: tellContext.nodeId ? 'commenting' : 'listening',
           inlinePTTSurface: 'tell',
-          buildContext: buildTellCommentContext()
+          buildContext: tellContext
         });
-        break;
-
-      case STATES.SHOW_BROWSE:
-        break;
-
-      case STATES.CAMERA_OPEN:
-        // PTT while camera is open = SHOW+TELL voice strip
-        window.StructaCamera?.startVoiceStrip?.();
-        break;
-
-      case STATES.NOW_BROWSE: {
-        const data = buildNowSummary();
-        voiceReturnState = STATES.NOW_BROWSE;
-        if (data.activeQuestionNodeId) {
-          transition(STATES.VOICE_OPEN, {
-            answeringQuestion: {
-              index: 0,
-              nodeId: data.activeQuestionNodeId || '',
-              text: data.nextPromptText || '',
-              source: data.activeQuestionNode?.source || 'question'
-            },
-            fromPTT: true,
-            inlinePTTSurface: 'project'
-          });
-        } else {
-          transition(STATES.VOICE_OPEN, {
-            fromPTT: true,
-            inlinePTTSurface: 'project',
-            tellStatus: 'listening',
-            buildContext: buildNowVoiceContext()
-          });
-        }
         break;
       }
 
-      case STATES.VOICE_OPEN:
-        // PTT while voice is already open — no-op
-        document.body.classList.add('input-locked');
-        window.StructaVoice?.startListening?.();
+      case STATES.SHOW_BROWSE:
+        if (!buildShowSummary().current) {
+          primeCameraFromHardware('ptt');
+          break;
+        }
+        voiceReturnState = STATES.SHOW_BROWSE;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'adding context',
+          inlinePTTSurface: 'show',
+          buildContext: buildShowCommentContext() || buildShowVoiceContext()
+        });
         break;
+
+      case STATES.NOW_BROWSE: {
+        beginNowInterventionVoice(STATES.NOW_BROWSE, true, 'project');
+        break;
+      }
+
+      case STATES.UNCERTAINTY_REVIEW: {
+        const item = getActiveUncertainty().item;
+        if (item) beginUncertaintyCorrection(item);
+        break;
+      }
 
       case STATES.LOG_OPEN:
         voiceReturnState = STATES.LOG_OPEN;
@@ -4832,28 +5395,14 @@
         break;
 
       case STATES.KNOW_DETAIL: {
-        const model = buildKnowModel();
-        const items = getKnowVisibleItems(model);
-        const item = items[stateData.knowItemIndex || 0];
-        if (item && item.source === 'question' && item.questionIndex !== undefined) {
-          transition(STATES.KNOW_ANSWER, {
-            question: {
-              index: item.questionIndex,
-              nodeId: item.node_id || '',
-              text: item.body,
-              source: item.source || 'question'
-            }
-          });
-        } else {
-          if (!buildKnowCommentContext()) break;
-          voiceReturnState = STATES.KNOW_DETAIL;
-          transition(STATES.VOICE_OPEN, {
-            fromPTT: true,
-            tellStatus: 'commenting',
-            inlinePTTSurface: 'insight',
-            buildContext: buildKnowCommentContext()
-          });
-        }
+        if (!buildKnowCommentContext()) break;
+        voiceReturnState = STATES.KNOW_DETAIL;
+        transition(STATES.VOICE_OPEN, {
+          fromPTT: true,
+          tellStatus: 'developing branch',
+          inlinePTTSurface: 'insight',
+          buildContext: buildKnowCommentContext()
+        });
         break;
       }
 
@@ -4882,11 +5431,6 @@
     }
 
     switch (currentState) {
-      case STATES.SHOW_PRIMED:
-        stateData.pendingShowNarration = false;
-        transition(STATES.SHOW_BROWSE, { showStatus: 'show is coming later' });
-        break;
-
       case STATES.SHOW_BROWSE:
         stateData.pendingShowNarration = false;
         if (stateData.showStatus && stateData.showStatus.indexOf('opening') === 0) {
@@ -4899,7 +5443,6 @@
         // PTT released = finalize voice strip and capture with annotation
         if (window.StructaCamera?.voiceStripActive) {
           window.StructaCamera?.finalizeVoiceStripCapture?.();
-          transition(STATES.CAMERA_CAPTURE);
         }
         break;
 
@@ -4908,6 +5451,14 @@
         if (stateData.inlinePTTSurface === 'triangle') {
           const heard = lower(document.getElementById('voice-transcript')?.textContent || '').trim();
           if (!heard) stateData.triangleStatus = 'no angle heard — hold ptt again';
+        }
+        if (stateData.uncertaintyCorrectionId) {
+          const correction = document.getElementById('voice-transcript')?.textContent || '';
+          if (completeUncertaintyCorrection(correction)) {
+            window.StructaVoice?.stopListening?.(false);
+            if (currentState === STATES.VOICE_OPEN) transition(getQueuedUncertainties().length ? STATES.UNCERTAINTY_REVIEW : STATES.NOW_BROWSE);
+            break;
+          }
         }
         window.StructaVoice?.stopListening?.(true);
         if (currentState === STATES.VOICE_OPEN) {
@@ -4926,7 +5477,7 @@
     }
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
       cameraReturnState = STATES.HOME;
-      window.StructaCamera?.close?.();
+      window.StructaCamera?.close?.({ reason: 'navigation', teardown: true });
       return;
     }
     transition(STATES.HOME);
@@ -4934,6 +5485,7 @@
 
   function handleNativeBack(event) {
     clearPendingSideClick();
+    pttInputActive = false;
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       if (event) event.preventDefault?.();
       native?.updateUIState?.({ flush_undo_available_until: 0 });
@@ -4952,6 +5504,20 @@
         transition(STATES.HOME);
         return;
 
+      case STATES.VOICE_OPEN:
+        if (event) event.preventDefault?.();
+        stateData.uncertaintyCorrectionId = '';
+        if (window.StructaVoice?.listening) window.StructaVoice.stopListening(false);
+        else window.StructaVoice?.close?.();
+        return;
+
+      case STATES.CAMERA_OPEN:
+      case STATES.CAMERA_CAPTURE:
+        if (event) event.preventDefault?.();
+        cameraReturnState = STATES.SHOW_BROWSE;
+        window.StructaCamera?.close?.({ reason: 'back', teardown: true });
+        return;
+
       case STATES.SHOW_BROWSE:
         if (event) event.preventDefault?.();
         goHome();
@@ -4967,6 +5533,12 @@
         goHome();
         return;
       }
+
+      case STATES.UNCERTAINTY_REVIEW:
+        if (event) event.preventDefault?.();
+        stateData.uncertaintyCorrectionId = '';
+        transition(STATES.NOW_BROWSE);
+        return;
 
       case STATES.KNOW_DETAIL:
         if (event) event.preventDefault?.();
@@ -4988,7 +5560,6 @@
         // Don't preventDefault — let R1 close the app
         return;
 
-      case STATES.SHOW_PRIMED:
       case STATES.TELL_PRIMED:
         if (event) event.preventDefault?.();
         goHome();
@@ -5096,25 +5667,42 @@
   });
 
   // Camera events — transition state machine
+  function selectShowCaptureEntry(entryId) {
+    const preferredId = String(entryId || '').trim();
+    // storeCaptureBundle mutates native memory before emitting capture-stored,
+    // so the SHOW cache must be retired before resolving the new stable ID.
+    invalidateDataCaches();
+    const captures = getCaptureList();
+    const index = preferredId
+      ? captures.findIndex(function(capture) {
+          return [captureIdentity(capture), capture?.entry_id || '', capture?.id || '', capture?.node_id || '', capture?.meta?.bundle_id || '']
+            .filter(Boolean)
+            .includes(preferredId);
+        })
+      : -1;
+    stateData.showCaptureEntryId = preferredId || (captures[captures.length - 1] ? captureIdentity(captures[captures.length - 1]) : '');
+    stateData.showCaptureIndex = index >= 0 ? index : Math.max(0, captures.length - 1);
+    return index >= 0;
+  }
+
   window.addEventListener('structa-camera-open', () => {
-    if (currentState === STATES.SHOW_PRIMED || currentState === STATES.SHOW_BROWSE) {
+    if (currentState === STATES.SHOW_BROWSE) {
+      stateData.cameraRequestPending = false;
       transition(STATES.CAMERA_OPEN);
     }
     stateData.pendingShowNarration = false;
   });
 
-  window.addEventListener('structa-camera-close', () => {
+  window.addEventListener('structa-camera-close', (event) => {
     if (currentState === STATES.CAMERA_OPEN || currentState === STATES.CAMERA_CAPTURE) {
+      const captured = currentState === STATES.CAMERA_CAPTURE || event?.detail?.reason === 'capture';
       const returnState = cameraReturnState;
       cameraReturnState = STATES.HOME;
-      const captures = getCaptureList();
-      if (captures.length) {
-        const lastCapture = captures[captures.length - 1];
-        stateData.showCaptureIndex = captures.length - 1;
-        stateData.showCaptureEntryId = lastCapture?.entry_id || lastCapture?.id || '';
+      if (captured) {
+        selectShowCaptureEntry(stateData.showCaptureEntryId || getUIState().last_capture_entry_id || '');
       }
       transition(returnState === STATES.SHOW_BROWSE ? STATES.SHOW_BROWSE : STATES.HOME, returnState === STATES.SHOW_BROWSE ? {
-        showStatus: 'capture ready'
+        showStatus: captured ? 'capture ready' : 'camera cancelled'
       } : {});
     }
     scheduleLogRefresh({ forceFollow: true });
@@ -5122,15 +5710,7 @@
 
   window.addEventListener('structa-capture-stored', event => {
     const entryId = event && event.detail ? event.detail.entryId : '';
-    const captures = getCaptureList();
-    const index = entryId ? captures.findIndex(capture => (capture?.entry_id || capture?.id || '') === entryId) : -1;
-    if (index >= 0) {
-      stateData.showCaptureIndex = index;
-      stateData.showCaptureEntryId = entryId;
-    } else if (captures.length) {
-      stateData.showCaptureIndex = captures.length - 1;
-      stateData.showCaptureEntryId = captures[captures.length - 1]?.entry_id || captures[captures.length - 1]?.id || '';
-    }
+    selectShowCaptureEntry(entryId || getUIState().last_capture_entry_id || '');
     if (currentState === STATES.SHOW_BROWSE) render();
     native?.updateUIState?.({ tutorial_step4_camera_denied: false });
     if (onboardingActive() && getOnboardingStep() === 4) {
@@ -5168,12 +5748,48 @@
   });
 
   window.addEventListener('structa-camera-denied', function(event) {
+    if (currentState === STATES.SHOW_BROWSE) {
+      stateData.cameraRequestPending = false;
+      stateData.cameraTouchArmed = false;
+      stateData.showStatus = 'camera blocked · tap lens to retry';
+      scheduleRender();
+    }
     if (!onboardingActive() || getOnboardingStep() !== 4) return;
     native?.updateUIState?.({ tutorial_step4_camera_denied: true });
     traceTutorial('tutorial.step', 'camera_denied', '4', { step: 4 });
     stateData.showStatus = 'click once to allow camera · long-press home to skip';
     scheduleRender();
   });
+
+  // Browser recognition returns through the angle callback; consume that
+  // callback as correction data before the triangle engine sees it.
+  window.addEventListener('structa-triangle-submit', function(event) {
+    if (!stateData.uncertaintyCorrectionId) return;
+    event.stopImmediatePropagation?.();
+    const transcript = String(event?.detail?.transcript || '').trim();
+    if (!completeUncertaintyCorrection(transcript)) {
+      stateData.nowFeedback = 'say the correction, then release';
+      fireFeedback('blocked');
+    }
+  }, true);
+
+  // Correction dictation is a human review action, not a general project note.
+  // Capture phase keeps the generic voice pipeline from storing it twice.
+  window.addEventListener('structa-stt-ended', function(event) {
+    if (!stateData.uncertaintyCorrectionId) return;
+    const transcript = String(event?.detail?.transcript || '').trim();
+    event.stopImmediatePropagation?.();
+    if (!transcript || !completeUncertaintyCorrection(transcript)) {
+      stateData.nowFeedback = 'say the correction, then release';
+      fireFeedback('blocked');
+    }
+    window.StructaVoice?.stopListening?.(false);
+    if (currentState === STATES.VOICE_OPEN || currentState === STATES.VOICE_PROCESSING) {
+      transition(getQueuedUncertainties().length ? STATES.UNCERTAINTY_REVIEW : STATES.NOW_BROWSE);
+    } else {
+      scheduleRender();
+    }
+  }, true);
 
   window.addEventListener('structa-voice-open', () => {
     if (currentState === STATES.TELL_PRIMED || currentState === STATES.KNOW_ANSWER) {
@@ -5183,13 +5799,17 @@
   });
 
   window.addEventListener('structa-voice-close', () => {
+    pttInputActive = false;
     if (currentState === STATES.VOICE_OPEN || currentState === STATES.VOICE_PROCESSING || currentState === STATES.KNOW_ANSWER) {
       // Clean up answer mode styling
       var voiceOverlay = document.getElementById('voice-overlay');
       var contextLabel = document.getElementById('voice-context-label');
       if (voiceOverlay) voiceOverlay.classList.remove('answer-mode');
       if (contextLabel) contextLabel.textContent = '';
-      const returnState = voiceReturnState;
+      let returnState = voiceReturnState;
+      if (returnState === STATES.UNCERTAINTY_REVIEW && !getQueuedUncertainties().length) {
+        returnState = STATES.NOW_BROWSE;
+      }
       voiceReturnState = STATES.HOME;
       transition(returnState || STATES.HOME, { tellStatus: 'voice saved' });
     }
@@ -5333,12 +5953,29 @@
   window.addEventListener('scrollUp', event => { event.preventDefault?.(); dispatchScrollStep(1, 'native'); });
   window.addEventListener('scrollDown', event => { event.preventDefault?.(); dispatchScrollStep(-1, 'native'); });
   window.addEventListener('sideClick', event => { event.preventDefault?.(); triggerSideClick(); });
-  window.addEventListener('longPressStart', event => { event.preventDefault?.(); handleLongPressStart(); });
-  window.addEventListener('longPressEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
-  window.addEventListener('pttStart', event => { event.preventDefault?.(); handleLongPressStart(); });
-  window.addEventListener('pttEnd', event => { event.preventDefault?.(); handleLongPressEnd(); });
+  function handlePTTInputStart(event) {
+    event.preventDefault?.();
+    if (pttInputActive) return;
+    pttInputActive = true;
+    handleLongPressStart();
+  }
+
+  function handlePTTInputEnd(event) {
+    event.preventDefault?.();
+    if (!pttInputActive) return;
+    pttInputActive = false;
+    handleLongPressEnd();
+  }
+
+  window.addEventListener('longPressStart', handlePTTInputStart);
+  window.addEventListener('longPressEnd', handlePTTInputEnd);
+  window.addEventListener('pttStart', handlePTTInputStart);
+  window.addEventListener('pttEnd', handlePTTInputEnd);
   window.addEventListener('backbutton', handleNativeBack);
-  window.addEventListener('popstate', handleNativeBack);
+  window.addEventListener('pagehide', function() { pttInputActive = false; });
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) pttInputActive = false;
+  });
 
   // Keyboard fallback
   document.addEventListener('keydown', event => {
@@ -5350,7 +5987,7 @@
     if (currentState === STATES.HOME) {
       if (event.key === 'ArrowRight') selectIndex(selectedIndex + 1);
       if (event.key === 'ArrowLeft') selectIndex(selectedIndex - 1);
-      if (event.key === 'Enter' || event.key === ' ') openCard(currentCard());
+      if (event.key === 'Enter' || event.key === ' ') openCard(currentCard(), { source: 'keyboard' });
       if (event.key === 'Escape') goHome();
     } else {
       if (event.key === 'Escape') handleNativeBack(event);
@@ -5516,15 +6153,9 @@
     }, opts.duration || 120);
   }
 
-  // === Heartbeat visual micro-pulse ===
+  // Heartbeats remain operational data only; the professional surface stays still.
   window.addEventListener('structa-heartbeat', function() {
-    if (currentState === STATES.HOME) {
-      Array.prototype.slice.call(svg.querySelectorAll('[data-card-index]')).forEach(function(cardEl, index) {
-        var driftX = index === selectedIndex ? 0.32 : (index % 2 === 0 ? -0.18 : 0.18);
-        var driftY = index === selectedIndex ? -0.24 : 0.14;
-        pulseCardElement(cardEl, { x: driftX, y: driftY, scale: 1.006, duration: 200 });
-      });
-    }
+    scheduleOpsRefresh();
   });
 
   window.addEventListener('structa-fast-feedback', function(e) {

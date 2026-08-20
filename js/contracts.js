@@ -41,7 +41,7 @@
       approval_mode: input.approval_mode || 'human_required',
       fallback: input.fallback || 'log-only',
       created_at: input.created_at || now,
-      updated_at: now,
+      updated_at: input.updated_at || now,
       payload: input.payload || null,
       meta: input.meta || {}
     };
@@ -75,8 +75,8 @@
       project_code: input.project_code || baseProjectCode,
       entry_id: input.entry_id || makeEntryId('journal'),
       source_type: input.source_type || 'voice',
-      title: (input.title || 'untitled entry').toLowerCase(),
-      body: (input.body || '').toLowerCase(),
+      title: String(input.title || 'untitled entry').trim(),
+      body: String(input.body || '').trim(),
       attachments: Array.isArray(input.attachments) ? input.attachments : [],
       created_at: input.created_at || now,
       meta: input.meta || {}
@@ -119,19 +119,19 @@
       project_id: input.project_id || baseProjectCode,
       type: nodeTypes.includes(input.type) ? input.type : 'insight',
       status: nodeStatuses.includes(input.status) ? input.status : 'open',
-      title: (input.title || '').toLowerCase(),
-      body: (input.body || '').toLowerCase(),
+      title: String(input.title || '').trim(),
+      body: String(input.body || '').trim(),
       source: input.source || 'voice',
       links: Array.isArray(input.links) ? input.links : [],
       tags: Array.isArray(input.tags) ? input.tags : [],
-      decision_options: Array.isArray(input.decision_options) ? input.decision_options.slice(0, 3) : [],
+      decision_options: Array.isArray(input.decision_options) ? input.decision_options.slice(0, 4) : [],
       selected_option: input.selected_option || null,
       question_answer: input.question_answer || null,
       capture_image: input.capture_image || null,
       voice_annotation: input.voice_annotation || null,
       research_findings: Array.isArray(input.research_findings) ? input.research_findings : [],
       confidence: input.confidence || 'med',
-      next_action: (input.next_action || '').toLowerCase(),
+      next_action: String(input.next_action || '').trim(),
       created_at: input.created_at || now,
       resolved_at: input.resolved_at || null,
       meta: input.meta || {}
@@ -144,7 +144,7 @@
       id: input.id || makeEntryId('claim'),
       projectId: input.projectId || baseProjectCode,
       branchId: input.branchId || 'main',
-      text: String(input.text || '').trim().toLowerCase(),
+      text: String(input.text || '').trim(),
       kind: claimKinds.includes(input.kind) ? input.kind : 'fact',
       source: input.source || 'voice',
       sourceRef: input.sourceRef && typeof input.sourceRef === 'object' ? input.sourceRef : {},
@@ -165,7 +165,7 @@
     return {
       id: input.id || makeEntryId('answer'),
       questionId: input.questionId || '',
-      body: String(input.body || '').trim().toLowerCase(),
+      body: String(input.body || '').trim(),
       claims: Array.isArray(input.claims) ? input.claims.filter(Boolean) : [],
       sttConfidence: typeof input.sttConfidence === 'number' ? input.sttConfidence : null,
       at: input.at || now
@@ -202,10 +202,10 @@
     const now = new Date().toISOString();
     return {
       project_id: input.project_id || makeEntryId('project'),
-      name: (input.name || 'untitled project').toLowerCase(),
+      name: String(input.name || 'untitled project').trim(),
       project_mark: String(input.project_mark || '').trim().toUpperCase().slice(0, 2),
       type: projectTypes.includes(input.type) ? input.type : 'general',
-      user_role: (input.user_role || '').toLowerCase(),
+      user_role: String(input.user_role || '').trim(),
       device_scope_key: input.device_scope_key || '',
       brief: typeof input.brief === 'string' ? input.brief : '',
       derived_candidates: input.derived_candidates && typeof input.derived_candidates === 'object' ? input.derived_candidates : {
@@ -230,7 +230,8 @@
       exports: Array.isArray(input.exports) ? input.exports : [],
       clarity_score: typeof input.clarity_score === 'number' ? input.clarity_score : 0,
       created_at: input.created_at || now,
-      updated_at: now,
+      updated_at: input.updated_at || now,
+      structa_v3: input.structa_v3 && typeof input.structa_v3 === 'object' ? input.structa_v3 : null,
       meta: input.meta || {}
     };
   }
@@ -341,7 +342,7 @@
             id: String(entry.id || ''),
             body: String(entry.body || '').trim(),
             evidence: normalizeChainEvidence(entry.evidence),
-            options: Array.isArray(entry.options) ? entry.options.slice(0, 3).map(function(option) { return String(option || '').trim(); }).filter(Boolean) : [],
+            options: Array.isArray(entry.options) ? entry.options.slice(0, 4).map(function(option) { return String(option || '').trim(); }).filter(Boolean) : [],
             recommended: entry.recommended || ''
           };
         }),

@@ -2,24 +2,21 @@
 
 Open the app with:
 
-- `#probe`
+- `?debug=1#probe`
 
 Example:
 
-- `https://your-staging-url/#probe`
+- `https://your-staging-url/?debug=1#probe`
 
-Expected first visible log lines:
+The production diagnostic drawer stays hidden. This lab URL adds a 44×44 **proof** control in the top-right corner instead.
 
-- `probe started`
-- `probe mode active`
-- `window viewport ...`
-- `window screen ...`
+At launch, tap **proof**, then **check build**. Stop if it reports a missing, fallback, or mismatched server build.
 
 ## Test sequence
 
 Do these slowly, one by one:
 
-1. Open app in `#probe`
+1. Open app in `?debug=1#probe`, tap **proof**, and run **check build**
 2. Press system back once
 3. Scroll wheel up once
 4. Scroll wheel down once
@@ -35,21 +32,23 @@ Do these slowly, one by one:
 14. Open `now`
 15. Approve or skip one blocker if available
 
+After the sequence, open **proof**, advance the phase as directed by the full lab protocol, and tap **finish + send**. Keep every sequential email part from that session.
+
 ## What to send back
 
 Minimum:
 
-1. A photo of the Rabbit screen right after boot in `#probe`
+1. A photo of the Rabbit screen showing the **check build** result
 2. A photo of the Rabbit screen after the full sequence
-3. A Replit console or shell screenshot if anything suspicious appears
+3. Every emailed proof part, plus a Replit console or shell screenshot if anything suspicious appears
 
 Best evidence:
 
-- One photo focused on probe boot logs
-- One photo focused on SHOW / SHOW+TELL logs
-- One photo focused on blocker / NOW logs
+- One photo focused on the build check
+- One short video focused on any failed SHOW / SHOW+TELL interaction
+- The machine-readable emailed proof parts
 
-## What I want to read in the logs
+## What the proof should capture
 
 - `window backbutton`
 - `window scrollup`
@@ -67,6 +66,6 @@ Best evidence:
 
 ## Notes
 
-- If `probe started` does not appear, stop and send that first photo.
+- If the **proof** control or build check is unavailable, stop and send that first photo.
 - If a capture fails, still continue and take the after-test photo.
-- If logs scroll too fast, take multiple photos instead of trying to summarize.
+- Use **journal backup** only after the run if email transport fails; it deliberately writes one Rabbit Hole entry.

@@ -45,12 +45,61 @@
     return value.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
   }
 
-  function currentProject() {
+  function currentProject(projectId) {
+    if (projectId && native?.getProjectMemoryById) {
+      return native.getProjectMemoryById(projectId) || {};
+    }
     return native?.getProjectMemory?.() || {};
   }
 
-  function currentFocus() {
+  function currentFocus(projectId) {
+    if (projectId && native?.getActiveFocusForProject) {
+      return native.getActiveFocusForProject(projectId) || null;
+    }
     return native?.getActiveFocus?.() || null;
+  }
+
+  function activeProjectMatches(projectId) {
+    return !!projectId && native?.getActiveProjectId?.() === projectId;
+  }
+
+  function touchBoundProject(projectId, mutator) {
+    if (native?.touchProjectMemoryById) {
+      return native.touchProjectMemoryById(projectId, mutator);
+    }
+    if (activeProjectMatches(projectId)) return native?.touchProjectMemory?.(mutator) || null;
+    native?.traceEvent?.('chain.stale_project', projectId || '', 'write-skipped', { projectId: projectId || '' });
+    return null;
+  }
+
+  function addBoundNode(projectId, input) {
+    if (native?.addNodeToProject) return native.addNodeToProject(projectId, input);
+    if (activeProjectMatches(projectId)) return native?.addNode?.(input) || null;
+    return null;
+  }
+
+  function ingestBoundClaims(projectId, claims, options) {
+    if (native?.ingestClaimsForProject) return native.ingestClaimsForProject(projectId, claims, options) || [];
+    if (activeProjectMatches(projectId)) return native?.ingestClaims?.(claims, options) || [];
+    return [];
+  }
+
+  function activateBoundFocus(projectId, options) {
+    if (native?.activateNextFocusForProject) return native.activateNextFocusForProject(projectId, options);
+    if (activeProjectMatches(projectId)) return native?.activateNextFocus?.(options) || null;
+    return null;
+  }
+
+  function updateBoundFocus(projectId, focusId, patch) {
+    if (native?.updateFocusForProject) return native.updateFocusForProject(projectId, focusId, patch);
+    if (activeProjectMatches(projectId)) return native?.updateActiveFocus?.(patch) || null;
+    return null;
+  }
+
+  function completeBoundFocus(projectId, focusId, outcome, options) {
+    if (native?.completeFocusForProject) return native.completeFocusForProject(projectId, focusId, outcome, options);
+    if (activeProjectMatches(projectId)) return native?.completeActiveFocus?.(outcome, options) || null;
+    return null;
   }
 
   function diagnosticsMuted() {
@@ -163,9 +212,11 @@
       : [];
   }
 
-  function buildChainPayload(focus) {
-    var project = currentProject();
+  function buildChainPayload(focus, projectId) {
+    var project = currentProject(projectId);
     return {
+      projectId: projectId || project?.project_id || '',
+      baseRevision: project?.structa_v3?.revision || project?.updated_at || '',
       project: project,
       focus: {
         kind: focus?.target?.kind || 'branch',
@@ -217,9 +268,9 @@
     });
   }
 
-  function writeFocusStep(focusId, patch) {
+  function writeFocusStep(focusId, patch, projectId) {
     var updated = null;
-    native?.touchProjectMemory?.(function(project) {
+    touchBoundProject(projectId, function(project) {
       var focus = (project.focuses || []).find(function(entry) { return entry.id === focusId; });
       if (!focus) return;
       focus.steps = Array.isArray(focus.steps) ? focus.steps : [];
@@ -273,14 +324,14 @@
     }) || null;
   }
 
-  function mergeQuestionNode(question) {
+  function mergeQuestionNode(question, projectId) {
     var merged = null;
     var created = null;
     var questionId = '';
-    var project = currentProject();
+    var project = currentProject(projectId);
     var existing = findDuplicateQuestion(project, question);
     if (existing) {
-      native?.touchProjectMemory?.(function(nextProject) {
+      touchBoundProject(projectId, function(nextProject) {
         var node = (nextProject.nodes || []).find(function(entry) { return entry.node_id === existing.node_id; });
         if (!node) return;
         node.meta = { ...(node.meta || {}) };
@@ -298,7 +349,7 @@
         questionId = node.node_id;
       });
     } else {
-      created = native?.addNode?.({
+      created = addBoundNode(projectId, {
         type: 'question',
         status: 'open',
         title: 'guided ask',
@@ -325,8 +376,8 @@
     return questionId;
   }
 
-  function createDecisionNode(item) {
-    var node = native?.addNode?.({
+  function createDecisionNode(item, projectId) {
+    var node = addBoundNode(projectId, {
       type: 'decision',
       status: 'open',
       title: item.body,
@@ -344,8 +395,8 @@
     return node?.node_id || '';
   }
 
-  function createTaskNode(item) {
-    var node = native?.addNode?.({
+  function createTaskNode(item, projectId) {
+    var node = addBoundNode(projectId, {
       type: 'task',
       status: 'open',
       title: item.body,
@@ -359,9 +410,9 @@
     return node?.node_id || '';
   }
 
-  function maybeResurrectQuestions(storedClaims) {
+  function maybeResurrectQuestions(storedClaims, projectId) {
     if (!Array.isArray(storedClaims) || !storedClaims.length) return;
-    native?.touchProjectMemory?.(function(project) {
+    touchBoundProject(projectId, function(project) {
       (project.nodes || []).forEach(function(node) {
         if (node?.type !== 'question' || node.status !== 'open' || !node.meta?.skipped_until) return;
         var skippedUntil = new Date(node.meta.skipped_until).getTime();
@@ -382,7 +433,7 @@
     });
   }
 
-  function applyProduced(validated, focus) {
+  function applyProduced(validated, focus, projectId) {
     var produced = validated?.produced || {};
     var branchId = focus?.target?.branchId || 'main';
     var storedClaims = [];
@@ -397,29 +448,29 @@
           confidence: item.confidence || validated?.step_metadata?.confidence || 0.64
         };
       });
-      storedClaims = native?.ingestClaims?.(claimsPayload, {
+      storedClaims = ingestBoundClaims(projectId, claimsPayload, {
         source: 'chain',
         branchId: branchId,
         dedupByBranchText: true
       }) || [];
-      maybeResurrectQuestions(storedClaims);
+      maybeResurrectQuestions(storedClaims, projectId);
     }
 
     var questionIds = [];
     (produced.questions || []).forEach(function(question) {
-      questionIds.push(mergeQuestionNode(question));
+      questionIds.push(mergeQuestionNode(question, projectId));
     });
     questionIds = questionIds.filter(Boolean);
 
     var decisionIds = [];
     (produced.decisions || []).forEach(function(item) {
-      var nodeId = createDecisionNode(item);
+      var nodeId = createDecisionNode(item, projectId);
       if (nodeId) decisionIds.push(nodeId);
     });
 
     var taskIds = [];
     (produced.tasks || []).forEach(function(item) {
-      var nodeId = createTaskNode(item);
+      var nodeId = createTaskNode(item, projectId);
       if (nodeId) taskIds.push(nodeId);
     });
 
@@ -434,7 +485,7 @@
     });
     chain.impacts = chain.impacts.slice(0, 24);
 
-    native?.touchProjectMemory?.(function(project) {
+    touchBoundProject(projectId, function(project) {
       project.impact_chain = Array.isArray(project.impact_chain) ? project.impact_chain : [];
       project.impact_chain.unshift({
         focus_id: focus?.id || '',
@@ -445,8 +496,17 @@
       project.impact_chain = project.impact_chain.slice(0, 32);
     });
 
+    var producedCounts = {
+      claimIds: storedClaims.map(function(entry) { return entry.id; }),
+      questionIds: questionIds,
+      decisionIds: decisionIds,
+      taskIds: taskIds,
+      count: storedClaims.length + questionIds.length + decisionIds.length + taskIds.length
+    };
+
     window.dispatchEvent(new CustomEvent('structa-impact', {
       detail: {
+        projectId: projectId || '',
         focusId: focus?.id || '',
         summary: compact(validated?.step_metadata?.rationale || '', 120),
         produced: producedCounts
@@ -461,13 +521,7 @@
       }));
     }
 
-    return {
-      claimIds: storedClaims.map(function(entry) { return entry.id; }),
-      questionIds: questionIds,
-      decisionIds: decisionIds,
-      taskIds: taskIds,
-      count: storedClaims.length + questionIds.length + decisionIds.length + taskIds.length
-    };
+    return producedCounts;
   }
 
   function rejectCodeToTrace(code, detail) {
@@ -493,7 +547,7 @@
     }
   }
 
-  function recordRejectedStep(focus, reason, errors) {
+  function recordRejectedStep(focus, reason, errors, projectId) {
     var nextRejectCount = Number(focus?.rejectCount || 0) + 1;
     var nextPlateau = Number(focus?.plateauCount || 0) + 1;
     writeFocusStep(focus.id, {
@@ -501,7 +555,7 @@
       outcome: 'rejected',
       rejectCount: nextRejectCount,
       plateauCount: nextPlateau
-    });
+    }, projectId);
     native?.traceEvent?.('focus.step.rejected', focus.id, lower(reason || 'validator'), {
       focusId: focus.id,
       reason: lower(reason || 'validator')
@@ -510,39 +564,54 @@
       rejectCodeToTrace(error.code, error);
     });
     if (nextRejectCount >= 3) {
-      native?.completeActiveFocus?.('blocked', { producedClaimCount: 0 });
+      completeBoundFocus(projectId, focus.id, 'blocked', { producedClaimCount: 0 });
       chain.active = false;
       syncPhaseWithFocus();
       return true;
     }
     if (nextPlateau >= 3) {
-      native?.completeActiveFocus?.('plateau', { producedClaimCount: 0 });
+      completeBoundFocus(projectId, focus.id, 'plateau', { producedClaimCount: 0 });
       chain.active = false;
       syncPhaseWithFocus();
       return true;
     }
-    native?.updateActiveFocus?.({
+    updateBoundFocus(projectId, focus.id, {
       rejectCount: nextRejectCount,
       plateauCount: nextPlateau
     });
     return false;
   }
 
-  function maybeResolveFocus(focus, validated, producedCounts) {
+  function maybeResolveFocus(focus, validated, producedCounts, projectId) {
     if (!focus) return false;
     var decisionEvidenceStrong = (validated?.produced?.decisions || []).some(function(item) {
       return Array.isArray(item.evidence) && item.evidence.length >= 2;
     });
     if (focus.phase === 'decision' && producedCounts.decisionIds.length && decisionEvidenceStrong) {
-      native?.completeActiveFocus?.('resolved', { producedClaimCount: producedCounts.claimIds.length });
+      completeBoundFocus(projectId, focus.id, 'resolved', { producedClaimCount: producedCounts.claimIds.length });
       return true;
     }
     return false;
   }
 
-  function handleStepResult(focus, jobId, result) {
+  function handleStepResult(focus, jobId, result, requestPayload) {
     chain.stepInFlight = false;
-    var project = currentProject();
+    var projectId = requestPayload?.projectId || result?.projectId || result?.meta?.projectId || '';
+    var resultProjectId = result?.projectId || result?.meta?.projectId || '';
+    if (resultProjectId && projectId && resultProjectId !== projectId) {
+      native?.traceEvent?.('chain.stale_project', resultProjectId, 'result-skipped', {
+        expectedProjectId: projectId,
+        resultProjectId: resultProjectId
+      });
+      if (!chain.manuallyStopped) scheduleNextBeat(120);
+      return;
+    }
+    var project = currentProject(projectId);
+    if (!project?.project_id || (projectId && project.project_id !== projectId)) {
+      native?.traceEvent?.('chain.stale_project', projectId || '', 'missing', { projectId: projectId || '' });
+      if (!chain.manuallyStopped) scheduleNextBeat(120);
+      return;
+    }
     var verdict = contracts?.validateChainOutput
       ? contracts.validateChainOutput(result || {}, {
           project: project,
@@ -552,13 +621,13 @@
       : { ok: true, value: result, errors: [] };
 
     if (!result?.ok || !verdict.ok) {
-      var blocked = recordRejectedStep(focus, result?.error || 'validator', verdict.errors || []);
+      var blocked = recordRejectedStep(focus, result?.error || 'validator', verdict.errors || [], projectId);
       if (!blocked && !chain.manuallyStopped) scheduleNextBeat(Math.max(5000, Math.round(60000 / Math.max(1, chain.bpm))));
       return;
     }
 
     var validated = verdict.value;
-    var producedCounts = applyProduced(validated, focus);
+    var producedCounts = applyProduced(validated, focus, projectId);
     var nextPlateau = producedCounts.count > 0 ? 0 : Number(focus?.plateauCount || 0) + 1;
     var updatedFocus = writeFocusStep(focus.id, {
       phase: focus.phase,
@@ -569,7 +638,7 @@
       producedQuestionIds: producedCounts.questionIds || [],
       plateauCount: nextPlateau,
       rejectCount: 0
-    });
+    }, projectId);
     native?.traceEvent?.('focus.step.produced', focus.id, validated.focus.phase_next || focus.phase, {
       focusId: focus.id,
       claims: producedCounts.claimIds.length,
@@ -577,26 +646,28 @@
       decisions: producedCounts.decisionIds.length,
       tasks: producedCounts.taskIds.length
     });
-    native?.validateEvidenceIntegrity?.();
+    if (activeProjectMatches(projectId)) native?.validateEvidenceIntegrity?.();
     window.dispatchEvent(new CustomEvent('structa-chain-updated', {
       detail: {
         phase: validated.focus.phase_next || focus.phase,
-        focusId: focus.id
+        focusId: focus.id,
+        projectId: projectId
       }
     }));
-    if (maybeResolveFocus(updatedFocus || focus, validated, producedCounts)) {
+    if (maybeResolveFocus(updatedFocus || focus, validated, producedCounts, projectId)) {
       chain.active = false;
       syncPhaseWithFocus();
-      if (!native?.activateNextFocus?.()) {
+      if (!activateBoundFocus(projectId)) {
         native?.traceEvent?.('chain.idle', 'resolved', 'idle', {
-          resolvedCount: (currentProject()?.chainHistory || []).filter(function(entry) { return entry?.outcome === 'resolved'; }).length,
-          awaitingCount: (currentProject()?.open_question_nodes || []).length
+          projectId: projectId,
+          resolvedCount: (currentProject(projectId)?.chainHistory || []).filter(function(entry) { return entry?.outcome === 'resolved'; }).length,
+          awaitingCount: (currentProject(projectId)?.open_question_nodes || []).length
         });
       }
       return;
     }
     if (nextPlateau >= 3) {
-      native?.completeActiveFocus?.('plateau', { producedClaimCount: producedCounts.claimIds.length });
+      completeBoundFocus(projectId, focus.id, 'plateau', { producedClaimCount: producedCounts.claimIds.length });
       chain.active = false;
       syncPhaseWithFocus();
       return;
@@ -624,7 +695,8 @@
       scheduleNextBeat(1800);
       return;
     }
-    var focus = native?.getActiveFocus?.() || native?.activateNextFocus?.();
+    var projectId = native?.getActiveProjectId?.() || currentProject()?.project_id || '';
+    var focus = currentFocus(projectId) || activateBoundFocus(projectId);
     if (!focus) {
       chain.active = false;
       syncPhaseWithFocus();
@@ -632,7 +704,7 @@
     }
     chain.active = true;
     syncPhaseWithFocus();
-    var payload = buildChainPayload(focus);
+    var payload = buildChainPayload(focus, projectId);
     native?.traceEvent?.('focus.step', focus.id, focus.phase || 'observe', {
       focusId: focus.id,
       phase: focus.phase || 'observe',
@@ -640,10 +712,10 @@
     });
     chain.stepInFlight = true;
     runChainStep(payload).then(function(result) {
-      handleStepResult(focus, result?.jobId || '', result || {});
+      handleStepResult(focus, result?.jobId || '', result || {}, payload);
     }).catch(function(error) {
       chain.stepInFlight = false;
-      recordRejectedStep(focus, error?.message || 'request failed', []);
+      recordRejectedStep(focus, error?.message || 'request failed', [], projectId);
       if (!chain.manuallyStopped) scheduleNextBeat(Math.max(5000, Math.round(60000 / Math.max(1, chain.bpm))));
     });
   }

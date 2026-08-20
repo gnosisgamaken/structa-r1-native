@@ -358,7 +358,9 @@
   const deviceScopeKey = hashText(deviceId);
   const cacheKey = `structa-native-cache-v2:${deviceScopeKey}`;
 
-  const MAX_NODES = 60;
+  // V3 projects are long-lived professional corpora. Full-resolution media is
+  // stored once in assets, so the text graph can safely keep a deeper history.
+  const MAX_NODES = 240;
 
   function createDefaultProject(input = {}) {
     const project = contracts.createProject({
@@ -376,6 +378,8 @@
       exports: input.exports || [],
       clarity_score: input.clarity_score || 0,
       created_at: input.created_at,
+      updated_at: input.updated_at,
+      structa_v3: input.structa_v3,
       meta: input.meta || {}
     });
     project.status = input.status || 'active';
@@ -421,6 +425,9 @@
     project.focuses = Array.isArray(project.focuses) ? project.focuses : [];
     project.activeFocusId = project.activeFocusId || null;
     project.chainHistory = Array.isArray(project.chainHistory) ? project.chainHistory : [];
+    if (project.structa_v3 && typeof project.structa_v3 !== 'object') {
+      project.structa_v3 = null;
+    }
     return project;
   }
 
@@ -821,7 +828,7 @@
         id: rawClaim.id || contracts.makeEntryId('claim'),
         projectId: project.project_id,
         branchId: rawClaim.branchId || opts.branchId || 'main',
-        text: normalizeClaimText(rawClaim.text || ''),
+        text: compact(String(rawClaim.text || '').trim(), 160),
         kind: rawClaim.kind || opts.kind || 'fact',
         source: rawClaim.source || opts.source || 'voice',
         sourceRef: normalizeClaimRef(rawClaim.sourceRef, opts.sourceRef),
@@ -1075,21 +1082,24 @@
   }
 
   // === Node helpers ===
-  function addNode(input) {
-    ensureProjectKnowledge(memory.projectMemory);
-    var node = contracts.createNode({
-      ...input,
-      project_id: memory.projectMemory.project_id
+  function addNodeToProject(projectId, input) {
+    var created = null;
+    touchProjectMemoryById(projectId, function(project) {
+      created = contracts.createNode({
+        ...(input || {}),
+        project_id: project.project_id
+      });
+      project.nodes.unshift(created);
+      if (project.nodes.length > MAX_NODES) {
+        project.nodes = project.nodes.slice(0, MAX_NODES);
+      }
     });
-    memory.projectMemory.nodes.unshift(node);
-    if (memory.projectMemory.nodes.length > MAX_NODES) {
-      memory.projectMemory.nodes = memory.projectMemory.nodes.slice(0, MAX_NODES);
-    }
-    rebuildLegacyViews();
-    memory.projectMemory.updated_at = new Date().toISOString();
-    persist();
-    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-    return node;
+    return created ? cloneValue(created) : null;
+  }
+
+  function addNode(input) {
+    ensureProjectRegistry();
+    return addNodeToProject(memory.active_project_id, input);
   }
 
   function addVoiceEntry(raw = {}) {
@@ -1141,6 +1151,7 @@
         return entry && (entry.node_id === nodeId || entry.capture_image === entryId || entry.meta?.bundle_id === entryId);
       }) || null;
       if (capture) {
+        capture.input_type = 'image+voice';
         capture.voice_annotation = bodyText || capture.voice_annotation || '';
         capture.prompt_text = bodyText || capture.prompt_text || '';
         capture.meta = {
@@ -1195,6 +1206,11 @@
           id: entry.id || '',
           kind: entry.kind || key.slice(0, -1),
           text: normalizeCandidateText(entry.text || entry.body || ''),
+          options: Array.isArray(entry.options) ? entry.options.slice(0, 4).map(normalizeCandidateText).filter(Boolean) : [],
+          why: normalizeCandidateText(entry.why || entry.rationale || ''),
+          recommended: normalizeCandidateText(entry.recommended || ''),
+          branch_id: entry.branch_id || entry.branchId || '',
+          requires_user_approval: entry.requires_user_approval === true,
           confidence: entry.confidence || 'med',
           source: entry.source || 'derive',
           sourceRef: entry.sourceRef && typeof entry.sourceRef === 'object' ? cloneValue(entry.sourceRef) : {},
@@ -1214,23 +1230,29 @@
   function setProjectBrief(brief, meta) {
     var value = compact(String(brief || '').trim(), 320);
     if (!value) return '';
-    touchProjectMemory(function(project) {
+    var details = meta && typeof meta === 'object' ? meta : {};
+    var targetProjectId = String(details.projectId || details.project_id || '').trim();
+    var apply = function(project) {
       ensureProjectKnowledge(project);
       project.brief = value;
       project.meta = {
         ...(project.meta || {}),
         brief_meta: {
           ...(project.meta?.brief_meta || {}),
-          ...(meta && typeof meta === 'object' ? cloneValue(meta) : {}),
+          ...cloneValue(details),
           updated_at: new Date().toISOString()
         }
       };
-    });
+    };
+    var touched = targetProjectId
+      ? touchProjectMemoryById(targetProjectId, apply)
+      : touchProjectMemory(apply);
     traceEvent('project', 'brief', 'stored', {
       brief: value,
-      operationId: meta?.operation_id || ''
+      operationId: details.operation_id || '',
+      projectId: targetProjectId || memory.active_project_id
     });
-    return value;
+    return touched ? value : '';
   }
 
   function saveDerivedCandidates(raw, options) {
@@ -1238,7 +1260,8 @@
     var normalized = normalizeCandidateBuckets(raw);
     var summary = { decisions: 0, asks: 0, blockers: 0, themes: 0 };
     var added = { decisions: 0, asks: 0, blockers: 0, themes: 0 };
-    touchProjectMemory(function(project) {
+    var targetProjectId = String(opts.projectId || opts.project_id || '').trim();
+    var apply = function(project) {
       ensureProjectKnowledge(project);
       var target = project.derived_candidates;
       Object.keys(normalized).forEach(function(key) {
@@ -1253,6 +1276,11 @@
             id: entry.id || contracts.makeEntryId('candidate'),
             kind: entry.kind || key.slice(0, -1),
             text: entry.text,
+            options: Array.isArray(entry.options) ? entry.options.slice(0, 4) : [],
+            why: entry.why || '',
+            recommended: entry.recommended || '',
+            branch_id: entry.branch_id || '',
+            requires_user_approval: entry.kind === 'decision' ? true : entry.requires_user_approval === true,
             confidence: entry.confidence || 'med',
             source: entry.source || opts.source || 'derive',
             sourceRef: entry.sourceRef && typeof entry.sourceRef === 'object'
@@ -1270,18 +1298,22 @@
         target[key] = existing.slice(0, opts.limit || 12);
         summary[key] = target[key].length;
       });
-    });
+    };
+    if (targetProjectId) touchProjectMemoryById(targetProjectId, apply);
+    else touchProjectMemory(apply);
     traceEvent('derive', 'candidates', 'stored', {
       decisions: summary.decisions,
       asks: summary.asks,
       blockers: summary.blockers,
       themes: summary.themes,
-      operationId: opts.operation_id || ''
+      operationId: opts.operation_id || '',
+      projectId: targetProjectId || memory.active_project_id
     });
-    if (added.asks > 0) appendLogEntry({ kind: 'question', message: 'follow-up queued' });
-    if (added.themes > 0) appendLogEntry({ kind: 'llm', message: 'signal derived' });
-    if (added.decisions > 0) appendLogEntry({ kind: 'decision', message: 'decision candidate ready' });
-    if (added.blockers > 0) appendLogEntry({ kind: 'llm', message: 'background blocker flagged' });
+    var targetIsActive = !targetProjectId || targetProjectId === memory.active_project_id;
+    if (targetIsActive && added.asks > 0) appendLogEntry({ kind: 'question', message: 'follow-up queued' });
+    if (targetIsActive && added.themes > 0) appendLogEntry({ kind: 'llm', message: 'signal derived' });
+    if (targetIsActive && added.decisions > 0) appendLogEntry({ kind: 'decision', message: 'decision candidate ready' });
+    if (targetIsActive && added.blockers > 0) appendLogEntry({ kind: 'llm', message: 'background blocker flagged' });
     return cloneValue(normalized);
   }
 
@@ -1363,7 +1395,10 @@
         origin: entry.origin || 'ptt',
         claim_ids: Array.isArray(entry.claim_ids) ? entry.claim_ids.filter(Boolean) : [],
         clarifies: entry.clarifies || '',
-        contradicts: entry.contradicts || ''
+        contradicts: entry.contradicts || '',
+        request_id: entry.request_id || '',
+        capture_id: entry.capture_id || '',
+        voice_entry_id: entry.voice_entry_id || ''
       };
     }) : [];
   }
@@ -1378,11 +1413,13 @@
     return seen.size;
   }
 
-  function appendThreadComment(nodeId, text, kind, origin) {
+  function appendThreadComment(nodeId, text, kind, origin, options) {
     var bodyText = String(text || '').trim();
     if (!nodeId || bodyText.length < 3) return null;
+    var opts = options && typeof options === 'object' ? options : {};
+    var targetProjectId = String(opts.projectId || opts.project_id || memory.active_project_id || '').trim();
     var created = null;
-    touchProjectMemory(function(project) {
+    touchProjectMemoryById(targetProjectId, function(project) {
       var node = (project.nodes || []).find(function(entry) {
         return entry.node_id === nodeId && entry.status !== 'archived';
       });
@@ -1411,15 +1448,195 @@
     });
     if (created) {
       traceEvent('thread', 'append-request', 'comment-added', {
+        projectId: targetProjectId,
         nodeId: created.nodeId,
         commentId: created.comment.id,
         depth: created.depth,
         kind: created.comment.kind,
         origin: created.comment.origin
       });
-      emitModelChange({ scope: 'item', itemId: created.nodeId, commentId: created.comment.id });
+      if (targetProjectId === memory.active_project_id) {
+        emitModelChange({ scope: 'item', itemId: created.nodeId, commentId: created.comment.id });
+      }
     }
     return created;
+  }
+
+  /**
+   * Persist the user's exact spoken comment as one atomic, project-bound
+   * visual-comment record. The capture/node thread is the SHOW projection;
+   * the linked voice-entry is the TELL projection. requestId makes a repeated
+   * native STT terminal idempotent without collapsing intentional later
+   * comments that happen to use the same words.
+   */
+  function appendCaptureComment(entryId, nodeId, text, options) {
+    var bodyText = String(text || '').trim();
+    var opts = options && typeof options === 'object' ? options : {};
+    var targetProjectId = String(opts.projectId || opts.project_id || memory.active_project_id || '').trim();
+    var requestId = String(opts.requestId || opts.request_id || '').trim();
+    if ((!entryId && !nodeId) || bodyText.length < 3 || !targetProjectId) return null;
+    var created = null;
+    touchProjectMemoryById(targetProjectId, function(project) {
+      var capture = (project.captures || []).find(function(entry) {
+        return captureRefMatches(entry, entryId, nodeId);
+      }) || null;
+      var node = (project.nodes || []).find(function(entry) {
+        return entry && entry.type === 'capture' && captureRefMatches(entry, entryId, nodeId);
+      }) || null;
+      if (!capture && !node) return;
+
+      var priorVoice = requestId ? (project.nodes || []).find(function(entry) {
+        return entry && entry.type === 'voice-entry' && entry.meta?.entry_mode === 'visual-comment'
+          && entry.meta?.comment_request_id === requestId;
+      }) : null;
+      if (priorVoice) {
+        var priorThread = cloneThread(node?.meta?.thread || capture?.thread || capture?.meta?.thread);
+        var priorComment = priorThread.find(function(entry) {
+          return entry.request_id === requestId || entry.voice_entry_id === priorVoice.node_id;
+        }) || null;
+        created = {
+          projectId: project.project_id,
+          entryId: entryId || capture?.entry_id || capture?.id || node?.capture_image || '',
+          nodeId: node?.node_id || nodeId || capture?.node_id || '',
+          comment: priorComment ? { ...priorComment } : null,
+          voiceEntry: cloneValue(priorVoice),
+          duplicate: true
+        };
+        return;
+      }
+
+      var resolvedEntryId = entryId || capture?.entry_id || capture?.id || node?.capture_image || node?.meta?.bundle_id || '';
+      var resolvedNodeId = node?.node_id || nodeId || capture?.node_id || '';
+      var commentId = contracts.makeEntryId('thread');
+      var at = new Date().toISOString();
+      var voiceEntry = contracts.createNode({
+        project_id: project.project_id,
+        type: 'voice-entry',
+        status: 'open',
+        title: bodyText.slice(0, 42) || 'visual comment',
+        body: bodyText,
+        source: 'show-comment',
+        links: resolvedNodeId ? [resolvedNodeId] : [],
+        meta: {
+          entry_mode: 'visual-comment',
+          created_via: opts.origin || 'show',
+          build_surface: 'show',
+          capture_id: resolvedEntryId,
+          capture_node_id: resolvedNodeId,
+          thread_entry_id: commentId,
+          comment_request_id: requestId,
+          operation_id: opts.operationId || opts.operation_id || ''
+        }
+      });
+      project.nodes.unshift(voiceEntry);
+      if (project.nodes.length > MAX_NODES) project.nodes = project.nodes.slice(0, MAX_NODES);
+
+      var thread = cloneThread(node?.meta?.thread || capture?.thread || capture?.meta?.thread);
+      var comment = {
+        id: commentId,
+        kind: opts.kind || 'context',
+        body: bodyText,
+        summary: compact(bodyText, 72),
+        at: at,
+        origin: opts.origin || 'ptt',
+        request_id: requestId,
+        capture_id: resolvedEntryId,
+        voice_entry_id: voiceEntry.node_id,
+        claim_ids: [],
+        clarifies: '',
+        contradicts: ''
+      };
+      thread.push(comment);
+
+      if (capture) {
+        capture.input_type = 'image+voice';
+        capture.voice_annotation = bodyText;
+        capture.prompt_text = bodyText;
+        capture.latest_comment_text = bodyText;
+        capture.thread = cloneThread(thread);
+        capture.thread_summary = compact(bodyText, 72);
+        capture.meta = {
+          ...(capture.meta || {}),
+          voiceAnnotation: bodyText,
+          annotation_text: bodyText,
+          annotation_updated_at: at,
+          annotation_window_until: 0,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          visual_comment_count: Number(capture.meta?.visual_comment_count || 0) + 1
+        };
+      }
+      if (node) {
+        node.voice_annotation = bodyText;
+        node.tags = Array.isArray(node.tags) ? node.tags : [];
+        if (node.tags.indexOf('show-tell') === -1) node.tags.push('show-tell');
+        node.links = Array.isArray(node.links) ? node.links : [];
+        if (voiceEntry.node_id && node.links.indexOf(voiceEntry.node_id) === -1) node.links.push(voiceEntry.node_id);
+        node.meta = {
+          ...(node.meta || {}),
+          annotation_text: bodyText,
+          annotation_updated_at: at,
+          annotation_window_until: 0,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          thread_updated_at: at,
+          visual_comment_count: Number(node.meta?.visual_comment_count || 0) + 1
+        };
+      }
+      memory.captures = (memory.captures || []).map(function(rawCapture) {
+        if (!captureRefMatches(rawCapture, resolvedEntryId, resolvedNodeId)) return rawCapture;
+        if (rawCapture.project_id && rawCapture.project_id !== project.project_id) return rawCapture;
+        return {
+          ...rawCapture,
+          input_type: 'image+voice',
+          node_id: rawCapture.node_id || resolvedNodeId,
+          voice_annotation: bodyText,
+          prompt_text: bodyText,
+          latest_comment_text: bodyText,
+          thread: cloneThread(thread),
+          thread_summary: compact(bodyText, 72),
+          meta: {
+            ...(rawCapture.meta || {}),
+            voiceAnnotation: bodyText,
+            annotation_text: bodyText,
+            annotation_updated_at: at,
+            annotation_window_until: 0,
+            latest_comment_text: bodyText,
+            thread: cloneThread(thread),
+            thread_summary: compact(bodyText, 72),
+            visual_comment_count: Number(rawCapture.meta?.visual_comment_count || 0) + 1
+          }
+        };
+      });
+      created = {
+        projectId: project.project_id,
+        entryId: resolvedEntryId,
+        nodeId: resolvedNodeId,
+        comment: { ...comment },
+        voiceEntry: cloneValue(voiceEntry),
+        duplicate: false
+      };
+    });
+    if (created) {
+      traceEvent('capture.comment', created.duplicate ? 'duplicate' : 'captured', 'stored', {
+        projectId: created.projectId,
+        entryId: created.entryId,
+        nodeId: created.nodeId,
+        commentId: created.comment?.id || '',
+        voiceEntryId: created.voiceEntry?.node_id || '',
+        requestId: requestId
+      });
+      if (created.projectId === memory.active_project_id) {
+        emitModelChange({
+          scope: 'item',
+          itemId: created.nodeId || created.entryId,
+          commentId: created.comment?.id || ''
+        });
+      }
+    }
+    return created ? cloneValue(created) : null;
   }
 
   function findClaimById(project, claimId) {
@@ -1457,7 +1674,7 @@
   function buildReconciliationQuestionBody(previousText, nextText) {
     var prior = compact(previousText || 'that earlier claim', 52).replace(/[.?!]+$/g, '');
     var next = compact(nextText || 'this newer claim', 52).replace(/[.?!]+$/g, '');
-    return ('you said ' + prior + ' earlier, now ' + next + ' — which holds?').toLowerCase();
+    return 'You said ' + prior + ' earlier, now ' + next + ' — which holds?';
   }
 
   function ensureReconciliationQuestion(project, contradictedClaim, newClaim, nodeId, commentId) {
@@ -1492,8 +1709,9 @@
   function applyThreadExtraction(nodeId, commentId, extraction, options) {
     if (!nodeId || !commentId || !extraction || typeof extraction !== 'object') return null;
     var opts = options && typeof options === 'object' ? options : {};
+    var targetProjectId = String(opts.projectId || opts.project_id || '').trim();
     var updated = null;
-    touchProjectMemory(function(project) {
+    var apply = function(project) {
       ensureProjectKnowledge(project);
       var node = (project.nodes || []).find(function(entry) {
         return entry.node_id === nodeId && entry.status !== 'archived';
@@ -1599,7 +1817,9 @@
         claimStatusUpdate: claimStatusUpdate,
         depth: countDistinctThreadClaims(node.meta.thread)
       };
-    });
+    };
+    if (targetProjectId) touchProjectMemoryById(targetProjectId, apply);
+    else touchProjectMemory(apply);
     if (updated) {
       if (updated.claims.length) {
         traceEvent('claim', 'pending', 'stored', {
@@ -1624,7 +1844,9 @@
           reason: updated.claimStatusUpdate?.reason || 'comment-contradiction'
         });
       }
-      emitModelChange({ scope: updated.reconciliationQuestionId ? 'now' : 'item', itemId: updated.nodeId, commentId: updated.comment.id });
+      if (!targetProjectId || targetProjectId === memory.active_project_id) {
+        emitModelChange({ scope: updated.reconciliationQuestionId ? 'now' : 'item', itemId: updated.nodeId, commentId: updated.comment.id });
+      }
     }
     return updated;
   }
@@ -1684,19 +1906,22 @@
     return created;
   }
 
-  function enrichAnswerNode(answerId, patch) {
+  function enrichAnswerNode(answerId, patch, projectId) {
     if (!answerId || !patch || typeof patch !== 'object') return null;
+    var targetProjectId = String(projectId || patch.projectId || patch.project_id || '').trim();
     var updated = null;
-    touchProjectMemory(function(project) {
+    var apply = function(project) {
       ensureProjectKnowledge(project);
       var answerNode = findAnswerNode(project, answerId);
       if (!answerNode) return;
-      if (typeof patch.body === 'string' && patch.body.trim()) answerNode.body = patch.body.trim().toLowerCase();
+      if (typeof patch.body === 'string' && patch.body.trim()) answerNode.body = patch.body.trim();
       if (Array.isArray(patch.claims)) answerNode.claims = patch.claims.filter(Boolean);
       if (typeof patch.sttConfidence === 'number') answerNode.sttConfidence = patch.sttConfidence;
       if (patch.at) answerNode.at = patch.at;
       updated = JSON.parse(JSON.stringify(answerNode));
-    });
+    };
+    if (targetProjectId) touchProjectMemoryById(targetProjectId, apply);
+    else touchProjectMemory(apply);
     if (updated) {
       traceEvent('answer', 'stored', 'enriched', {
         answerId: updated.id,
@@ -1707,8 +1932,13 @@
   }
 
   function ingestClaims(rawClaims, options) {
+    ensureProjectRegistry();
+    return ingestClaimsForProject(memory.active_project_id, rawClaims, options);
+  }
+
+  function ingestClaimsForProject(projectId, rawClaims, options) {
     var added = [];
-    touchProjectMemory(function(project) {
+    touchProjectMemoryById(projectId, function(project) {
       added = addClaimsToProject(project, rawClaims, options);
     });
     if (added.length) {
@@ -1772,16 +2002,17 @@
     return memory.projectMemory.nodes.filter(function(n) { return n.status === status; });
   }
 
-  function computeClarityScore() {
-    var nodes = memory.projectMemory.nodes;
+  function computeClarityScore(projectInput) {
+    var project = projectInput || memory.projectMemory;
+    var nodes = Array.isArray(project?.nodes) ? project.nodes : [];
     if (!nodes.length) return 0;
     var resolved = nodes.filter(function(n) { return n.status === 'resolved'; }).length;
     return Math.round((resolved / nodes.length) * 100);
   }
 
   // Rebuild legacy flat-array views from unified nodes[]
-  function rebuildLegacyViews() {
-    var pm = memory.projectMemory;
+  function rebuildLegacyViews(projectInput) {
+    var pm = projectInput || memory.projectMemory;
     ensureProjectKnowledge(pm);
     var nodes = pm.nodes;
 
@@ -1837,7 +2068,8 @@
         return {
           id: n.node_id,
           entry_id: meta.bundle_id || n.capture_image || n.node_id,
-          type: n.capture_image ? 'image' : 'voice',
+          type: n.capture_image ? (n.voice_annotation ? 'image+voice' : 'image') : 'voice',
+          input_type: n.capture_image ? (n.voice_annotation ? 'image+voice' : 'image') : 'voice',
           summary: n.body || n.title,
           description_text: meta.description_text || '',
           latest_comment_text: meta.latest_comment_text || '',
@@ -1902,7 +2134,7 @@
         };
       });
 
-    pm.clarity_score = computeClarityScore();
+    pm.clarity_score = computeClarityScore(pm);
 
     pm.structure = [
       { title: 'captures', count: pm.captures.length },
@@ -2142,17 +2374,36 @@
     return { sent: false, bridge: 'fallback' };
   }
 
+  function touchProjectMemoryById(projectId, mutator) {
+    ensureProjectRegistry();
+    var targetId = String(projectId || '').trim();
+    var project = memory.projects.find(function(entry) {
+      return entry && entry.project_id === targetId;
+    }) || null;
+    if (!project) return null;
+    ensureProjectKnowledge(project);
+    if (typeof mutator === 'function') mutator(project);
+    rebuildClaimIndex(project);
+    repairEvidenceIntegrity(project, { silent: false });
+    try {
+      window.StructaProjectEngine?.ensure?.(project);
+      window.StructaProjectEngine?.reconcile?.(project);
+    } catch (_) {}
+    project.updated_at = new Date().toISOString();
+    rebuildLegacyViews(project);
+    if (project.project_id === memory.active_project_id) {
+      memory.projectMemory = project;
+    }
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-memory-updated', {
+      detail: { projectId: project.project_id }
+    }));
+    return project;
+  }
+
   function touchProjectMemory(mutator) {
     ensureProjectRegistry();
-    ensureProjectKnowledge(memory.projectMemory);
-    mutator(memory.projectMemory);
-    rebuildClaimIndex(memory.projectMemory);
-    repairEvidenceIntegrity(memory.projectMemory, { silent: false });
-    memory.projectMemory.updated_at = new Date().toISOString();
-    rebuildLegacyViews();
-    persist();
-    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-    return memory.projectMemory;
+    return touchProjectMemoryById(memory.active_project_id, mutator);
   }
 
   function getProjects() {
@@ -2925,11 +3176,11 @@
 
   function inferCaptureInsight(bundle) {
     if (!bundle) return '';
-    if (bundle.description_text) return lower(bundle.description_text);
-    if (bundle.ai_response) return lower(bundle.ai_response);
-    if (bundle.ai_analysis) return lower(bundle.ai_analysis);
-    if (bundle.summary) return lower(bundle.summary);
-    if (bundle.prompt_text) return lower(bundle.prompt_text);
+    if (bundle.description_text) return String(bundle.description_text).trim();
+    if (bundle.ai_response) return String(bundle.ai_response).trim();
+    if (bundle.ai_analysis) return String(bundle.ai_analysis).trim();
+    if (bundle.summary) return String(bundle.summary).trim();
+    if (bundle.prompt_text) return String(bundle.prompt_text).trim();
     return 'new capture stored';
   }
 
@@ -2939,10 +3190,10 @@
       project.captures.push({
         id: bundle.entry_id,
         type: bundle.input_type,
-        summary: lower(bundle.summary || bundle.prompt_text || 'capture'),
-        description_text: lower(bundle.description_text || ''),
-        latest_comment_text: lower(bundle.latest_comment_text || ''),
-        ai_analysis: lower(bundle.ai_analysis || bundle.ai_response || bundle.summary || bundle.prompt_text || 'capture'),
+        summary: String(bundle.summary || bundle.prompt_text || 'capture').trim(),
+        description_text: String(bundle.description_text || '').trim(),
+        latest_comment_text: String(bundle.latest_comment_text || '').trim(),
+        ai_analysis: String(bundle.ai_analysis || bundle.ai_response || bundle.summary || bundle.prompt_text || 'capture').trim(),
         image_asset: bundle.image_asset || null,
         prompt_text: bundle.prompt_text || '',
         voice_annotation: bundle.meta?.voiceAnnotation || '',
@@ -2963,7 +3214,7 @@
       ];
     });
     updateUIState({
-      last_capture_summary: lower(bundle.summary || bundle.prompt_text || 'capture stored')
+      last_capture_summary: String(bundle.summary || bundle.prompt_text || 'capture stored').trim()
     });
   }
 
@@ -3010,8 +3261,8 @@
   function buildLLMMessage(envelope) {
     var verb = lower(envelope.verb || 'capture');
     var target = lower(envelope.target || 'item');
-    var intent = lower(envelope.intent || '');
-    var goal = lower(envelope.goal || '');
+    var intent = String(envelope.intent || '').trim();
+    var goal = String(envelope.goal || '').trim();
 
     if (envelope.input_type === 'ptt-stop' && envelope.payload?.transcript) {
       return envelope.payload.transcript;
@@ -3047,9 +3298,9 @@
       }
     });
     updateUIState({
-      user_status: lower(payload.title),
-      last_event_summary: lower(payload.title),
-      last_insight_summary: lower(payload.body.slice(0, 80))
+      user_status: payload.title,
+      last_event_summary: payload.title,
+      last_insight_summary: payload.body.slice(0, 80)
     });
     persist();
     return { ok: true, payload };
@@ -3085,7 +3336,7 @@
   }
 
   function requestEmailWithdrawal(raw = {}) {
-    const body = lower(raw.body || raw.note || 'prepare export');
+    const body = String(raw.body || raw.note || 'prepare export').trim();
     appendLogEntry({ kind: 'withdraw', message: body });
     return sendStructuredMessage({
       project_code: raw.project_code || memory.active_project_id,
@@ -3188,14 +3439,19 @@
 
   function getActiveFocus() {
     ensureProjectRegistry();
-    var focus = getActiveFocusOnProject(memory.projectMemory);
+    return getActiveFocusForProject(memory.active_project_id);
+  }
+
+  function getActiveFocusForProject(projectId) {
+    var project = getProjectMemoryById(projectId);
+    var focus = project ? getActiveFocusOnProject(project) : null;
     return focus ? cloneValue(focus) : null;
   }
 
-  function activateNextFocus(options) {
+  function activateNextFocusForProject(projectId, options) {
     var activated = null;
     var selection = null;
-    touchProjectMemory(function(project) {
+    touchProjectMemoryById(projectId, function(project) {
       ensureProjectChainState(project);
       var existing = getActiveFocusOnProject(project);
       if (existing) {
@@ -3219,8 +3475,9 @@
         targetId: activated.target?.id || ''
       });
     } else if (!activated) {
-      var project = getProjectMemory();
+      var project = getProjectMemoryById(projectId);
       traceEvent('chain.idle', 'selection', 'idle', {
+        projectId: projectId || '',
         resolvedCount: Array.isArray(project?.chainHistory) ? project.chainHistory.filter(function(entry) { return entry?.outcome === 'resolved'; }).length : 0,
         awaitingCount: (project?.open_question_nodes || []).length
       });
@@ -3228,25 +3485,50 @@
     return activated;
   }
 
-  function updateActiveFocus(patch) {
+  function activateNextFocus(options) {
+    ensureProjectRegistry();
+    return activateNextFocusForProject(memory.active_project_id, options);
+  }
+
+  function updateFocusForProject(projectId, focusId, patch) {
     var updated = null;
-    touchProjectMemory(function(project) {
-      updated = updateActiveFocusOnProject(project, patch);
+    touchProjectMemoryById(projectId, function(project) {
+      ensureProjectChainState(project);
+      var focus = focusId
+        ? (project.focuses || []).find(function(entry) { return entry.id === focusId; }) || null
+        : getActiveFocusOnProject(project);
+      if (!focus || !patch || typeof patch !== 'object') return;
+      Object.keys(patch).forEach(function(key) {
+        if (key === 'target' && patch.target && typeof patch.target === 'object') {
+          focus.target = { ...(focus.target || {}), ...patch.target };
+          return;
+        }
+        focus[key] = patch[key];
+      });
+      updated = focus;
       if (updated) updated = cloneValue(updated);
     });
     return updated;
   }
 
-  function completeActiveFocus(outcome, options) {
+  function updateActiveFocus(patch) {
+    ensureProjectRegistry();
+    return updateFocusForProject(memory.active_project_id, null, patch);
+  }
+
+  function completeFocusForProject(projectId, focusId, outcome, options) {
     var result = null;
-    touchProjectMemory(function(project) {
-      var active = getActiveFocusOnProject(project);
+    touchProjectMemoryById(projectId, function(project) {
+      var active = focusId
+        ? (project.focuses || []).find(function(entry) { return entry.id === focusId; }) || null
+        : getActiveFocusOnProject(project);
       if (!active) return;
       result = endFocusOnProject(project, active.id, outcome, options);
       if (result) result = cloneValue(result);
     });
     if (result) {
       traceEvent('focus.end', result.focus?.id || '', lower(outcome || ''), {
+        projectId: projectId || '',
         focusId: result.focus?.id || '',
         outcome: lower(outcome || ''),
         durationMs: result.historyEntry?.durationMs || 0,
@@ -3255,6 +3537,11 @@
       emitModelChange({ scope: 'chain', focusId: result.focus?.id || '' });
     }
     return result;
+  }
+
+  function completeActiveFocus(outcome, options) {
+    ensureProjectRegistry();
+    return completeFocusForProject(memory.active_project_id, null, outcome, options);
   }
 
   function openCamera(mode = 'environment') {
@@ -3323,6 +3610,15 @@
     return JSON.parse(JSON.stringify(memory.projectMemory));
   }
 
+  function getProjectMemoryById(projectId) {
+    ensureProjectRegistry();
+    var targetId = String(projectId || '').trim();
+    var project = memory.projects.find(function(entry) {
+      return entry && entry.project_id === targetId;
+    }) || null;
+    return project ? cloneValue(project) : null;
+  }
+
   function getActiveProjectId() {
     ensureProjectRegistry();
     return memory.active_project_id;
@@ -3358,11 +3654,12 @@
         resolvedOption = options[optionIndex];
       }
       resolveNode(node.node_id, { selected_option: resolvedOption });
-      // Also journal the decision
+      // Keep the lock in the project ledger; do not create an unsolicited
+      // Rabbit Hole journal entry for a UI approval.
       pushLimited(memory.messages, {
         message: 'decision locked: ' + (node.title || '').slice(0, 60),
         useLLM: false,
-        wantsJournalEntry: true
+        wantsJournalEntry: false
       });
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'decision-approved' }
@@ -3377,17 +3674,20 @@
       var pending = project.pending_decisions.splice(idx, 1)[0];
       // Convert to node
       var text = typeof pending === 'string' ? pending : (pending.text || 'decision locked');
-      var pendingOptions = Array.isArray(pending && pending.options) ? pending.options.slice(0, 3) : [];
+      var pendingOptions = Array.isArray(pending && pending.options) ? pending.options.slice(0, 4) : [];
       var resolvedOpt = optionLabel;
       if (!resolvedOpt && optionIndex !== null && optionIndex >= 0 && optionIndex < pendingOptions.length) {
         resolvedOpt = pendingOptions[optionIndex];
       }
-      addNode({
+      var legacyNode = contracts.createNode({
+        project_id: project.project_id,
         type: 'decision', status: 'resolved', title: text,
         body: pending.insight_body || text, source: (pending.source || 'voice'),
         decision_options: pendingOptions, selected_option: resolvedOpt,
         resolved_at: new Date().toISOString()
       });
+      project.nodes.unshift(legacyNode);
+      project.nodes = project.nodes.slice(0, MAX_NODES);
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'decision-approved' }
       }));
@@ -3415,6 +3715,213 @@
       if (idx >= project.pending_decisions.length) return;
       project.pending_decisions.splice(idx, 1);
     });
+  }
+
+  function decisionIdsFor(entry) {
+    if (!entry || typeof entry !== 'object') return [];
+    return [
+      entry.node_id,
+      entry.id,
+      entry.decision_id,
+      entry.meta?.decision_id
+    ].map(function(value) { return String(value || '').trim(); }).filter(Boolean);
+  }
+
+  function matchesDecisionId(entry, decisionId) {
+    var target = String(decisionId || '').trim();
+    return !!target && decisionIdsFor(entry).some(function(value) { return value === target; });
+  }
+
+  function selectedDecisionOption(options, selectedOptionIndex, selectedOption) {
+    var values = Array.isArray(options) ? options : [];
+    if (typeof selectedOption === 'string' && selectedOption.trim()) return selectedOption;
+    if (typeof selectedOptionIndex === 'number' && selectedOptionIndex >= 0 && selectedOptionIndex < values.length) {
+      return values[selectedOptionIndex];
+    }
+    return null;
+  }
+
+  function preserveOtherLegacyDecisions(project, excludedId) {
+    (project.pending_decisions || []).forEach(function(entry) {
+      if (matchesDecisionId(entry, excludedId)) return;
+      var ids = decisionIdsFor(entry);
+      if (ids.some(function(id) {
+        return (project.nodes || []).some(function(node) { return matchesDecisionId(node, id); });
+      })) return;
+      var legacy = entry && typeof entry === 'object' ? entry : { text: String(entry || '') };
+      var text = String(legacy.text || legacy.title || '').trim();
+      if (!text) return;
+      project.nodes.unshift(contracts.createNode({
+        node_id: legacy.node_id || legacy.id || legacy.decision_id || contracts.makeEntryId('decision'),
+        project_id: project.project_id,
+        type: 'decision',
+        status: 'open',
+        title: text,
+        body: legacy.insight_body || legacy.body || text,
+        source: legacy.source || 'migration',
+        decision_options: Array.isArray(legacy.options) ? legacy.options.slice(0, 4) : [],
+        created_at: legacy.created_at,
+        meta: legacy.meta || {}
+      }));
+    });
+  }
+
+  /** Resolve a pending decision by its stable id, never by its current list position. */
+  function approvePendingDecisionById(decisionId, selectedOptionIndex, selectedOption) {
+    ensureProjectRegistry();
+    var target = String(decisionId || '').trim();
+    if (!target) return { ok: false, error: 'decision id required' };
+    var node = (memory.projectMemory.nodes || []).find(function(entry) {
+      return entry?.type === 'decision' && entry.status === 'open' && matchesDecisionId(entry, target);
+    }) || null;
+    var resolved = null;
+
+    if (node) {
+      resolved = resolveNode(node.node_id, {
+        selected_option: selectedDecisionOption(node.decision_options, selectedOptionIndex, selectedOption)
+      });
+    } else {
+      var existingNode = (memory.projectMemory.nodes || []).find(function(entry) {
+        return entry?.type === 'decision' && matchesDecisionId(entry, target);
+      }) || null;
+      if (existingNode) return { ok: false, error: 'decision is not pending', decisionId: target };
+      var legacyIndex = (memory.projectMemory.pending_decisions || []).findIndex(function(entry) {
+        return matchesDecisionId(entry, target);
+      });
+      if (legacyIndex < 0) return { ok: false, error: 'decision not found', decisionId: target };
+      touchProjectMemory(function(project) {
+        preserveOtherLegacyDecisions(project, target);
+        var pending = project.pending_decisions.splice(legacyIndex, 1)[0];
+        if (!pending || typeof pending !== 'object') return;
+        var text = String(pending.text || pending.title || 'decision locked').trim();
+        var options = Array.isArray(pending.options) ? pending.options.slice(0, 4) : [];
+        resolved = contracts.createNode({
+          node_id: pending.node_id || pending.id || pending.decision_id || target,
+          project_id: project.project_id,
+          type: 'decision',
+          status: 'resolved',
+          title: text,
+          body: pending.insight_body || pending.body || text,
+          source: pending.source || 'voice',
+          decision_options: options,
+          selected_option: selectedDecisionOption(options, selectedOptionIndex, selectedOption),
+          created_at: pending.created_at,
+          resolved_at: new Date().toISOString(),
+          meta: { ...(pending.meta || {}), decision_id: target }
+        });
+        project.nodes.unshift(resolved);
+        project.nodes = project.nodes.slice(0, MAX_NODES);
+      });
+      if (resolved) emitModelChange({ scope: 'now', itemId: resolved.node_id });
+    }
+
+    if (!resolved) return { ok: false, error: 'decision not found', decisionId: target };
+    pushLimited(memory.messages, {
+      message: 'decision locked: ' + String(resolved.title || '').slice(0, 60),
+      useLLM: false,
+      wantsJournalEntry: false
+    });
+    persist();
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'decision-approved', decisionId: target }
+    }));
+    return {
+      ok: true,
+      decisionId: target,
+      decision: cloneValue(resolved),
+      project: getProjectMemory()
+    };
+  }
+
+  /** Dismiss a pending decision by its stable id, never by its current list position. */
+  function dismissPendingDecisionById(decisionId) {
+    ensureProjectRegistry();
+    var target = String(decisionId || '').trim();
+    if (!target) return { ok: false, error: 'decision id required' };
+    var existingNode = (memory.projectMemory.nodes || []).find(function(entry) {
+      return entry?.type === 'decision' && matchesDecisionId(entry, target);
+    }) || null;
+    if (existingNode && existingNode.status !== 'open') {
+      return { ok: false, error: 'decision is not pending', decisionId: target };
+    }
+    var dismissed = null;
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry?.type === 'decision' && entry.status === 'open' && matchesDecisionId(entry, target);
+      }) || null;
+      if (node) {
+        node.status = 'archived';
+        node.meta = { ...(node.meta || {}), dismissed_at: new Date().toISOString() };
+        dismissed = cloneValue(node);
+        return;
+      }
+      var legacyIndex = (project.pending_decisions || []).findIndex(function(entry) {
+        return matchesDecisionId(entry, target);
+      });
+      if (legacyIndex < 0) return;
+      preserveOtherLegacyDecisions(project, target);
+      dismissed = cloneValue(project.pending_decisions.splice(legacyIndex, 1)[0]);
+    });
+    if (!dismissed) return { ok: false, error: 'decision not found', decisionId: target };
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'decision-dismissed', decisionId: target }
+    }));
+    emitModelChange({ scope: 'now', itemId: target });
+    return {
+      ok: true,
+      decisionId: target,
+      decision: dismissed,
+      project: getProjectMemory()
+    };
+  }
+
+  /** Explicit human reversal: reopen a resolved decision while retaining its audit trail. */
+  function reopenDecisionById(decisionId, reason) {
+    ensureProjectRegistry();
+    var target = String(decisionId || '').trim();
+    if (!target) return { ok: false, error: 'decision id required' };
+    var reopened = null;
+    var reversalReason = String(reason || 'Human requested reconsideration').trim();
+    touchProjectMemory(function(project) {
+      var node = (project.nodes || []).find(function(entry) {
+        return entry?.type === 'decision' && entry.status === 'resolved' && matchesDecisionId(entry, target);
+      }) || null;
+      if (!node) return;
+      var at = new Date().toISOString();
+      node.meta = { ...(node.meta || {}) };
+      node.meta.history = Array.isArray(node.meta.history) ? node.meta.history : [];
+      node.meta.history.push({
+        action: 'reopened',
+        actor: 'human',
+        at: at,
+        reason: reversalReason,
+        prior_status: node.status,
+        prior_selected_option: node.selected_option || null,
+        prior_resolved_at: node.resolved_at || null
+      });
+      node.status = 'open';
+      node.selected_option = null;
+      node.resolved_at = null;
+      node.meta.reopened_at = at;
+      node.meta.reopen_reason = reversalReason;
+      reopened = cloneValue(node);
+    });
+    if (!reopened) return { ok: false, error: 'resolved decision not found', decisionId: target };
+    traceEvent('decision.reopen', 'resolved', 'open', {
+      decisionId: target,
+      reason: reversalReason,
+      actor: 'human'
+    });
+    window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+      detail: { source: 'decision-reopened', decisionId: target }
+    }));
+    emitModelChange({ scope: 'now', itemId: target });
+    return {
+      ok: true,
+      decisionId: target,
+      decision: reopened,
+      project: getProjectMemory()
+    };
   }
 
   /**
@@ -3543,23 +4050,31 @@
   /**
    * setProjectName -- sets the project name (first meaningful voice input).
    */
-  function setProjectName(name) {
+  function setProjectName(name, projectId) {
     if (!name || name === 'untitled project') return;
-    return touchProjectMemory(function(project) {
+    var targetProjectId = String(projectId || '').trim();
+    var apply = function(project) {
       if (project.name === 'untitled project') {
         project.name = name;
       }
-    });
+    };
+    return targetProjectId
+      ? touchProjectMemoryById(targetProjectId, apply)
+      : touchProjectMemory(apply);
   }
 
-  function setProjectMark(mark) {
+  function setProjectMark(mark, projectId) {
     var value = String(mark || '').trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
     if (value.length !== 2) return '';
-    touchProjectMemory(function(project) {
+    var targetProjectId = String(projectId || '').trim();
+    var apply = function(project) {
       ensureProjectKnowledge(project);
       project.project_mark = value;
-    });
-    return value;
+    };
+    var touched = targetProjectId
+      ? touchProjectMemoryById(targetProjectId, apply)
+      : touchProjectMemory(apply);
+    return touched ? value : '';
   }
 
   function setProjectType(type) {
@@ -3629,6 +4144,7 @@
     isVisibleLogEntry,
     exportLatestLogs,
     getProjectMemory,
+    getProjectMemoryById,
     getProjects,
     getActiveProjectId,
     switchProject,
@@ -3655,8 +4171,12 @@
     returnHome,
     emit,
     touchProjectMemory,
+    touchProjectMemoryById,
     approvePendingDecision,
+    approvePendingDecisionById,
     dismissPendingDecision,
+    dismissPendingDecisionById,
+    reopenDecisionById,
     resolveQuestion,
     isBlockerLive,
     addBacklogItem,
@@ -3673,18 +4193,24 @@
     recordOperationWrite,
     finishOperation,
     appendThreadComment,
+    appendCaptureComment,
     setThreadCommentSummary,
     applyThreadExtraction,
     getNodeThread,
     addAnswerNode,
     enrichAnswerNode,
     ingestClaims,
+    ingestClaimsForProject,
     getClaimsForItem,
     getOpenQuestionNodes: function() { return JSON.parse(JSON.stringify(memory.projectMemory?.open_question_nodes || [])); },
     getActiveFocus,
+    getActiveFocusForProject,
     activateNextFocus,
+    activateNextFocusForProject,
     updateActiveFocus,
+    updateFocusForProject,
     completeActiveFocus,
+    completeFocusForProject,
     markQuestionSkipped,
     validateEvidenceIntegrity: function() {
       return validateEvidenceIntegrity(memory.projectMemory || {}, { silent: false });
@@ -3693,6 +4219,7 @@
     appendToVoiceEntry,
     annotateCapture,
     addNode,
+    addNodeToProject,
     resolveNode,
     archiveNode,
     getNodesByType,

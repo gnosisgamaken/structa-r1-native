@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STRUCTA · B04 target pack</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #080808;
+      --paper: #f4efe4;
+      --show: #77d5ff;
+      --tell: #92ff9d;
+      --know: #f8c15d;
+      --now: #ff8a65;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-snap-type: y mandatory; }
+    body {
+      margin: 0;
+      background: var(--ink);
+      color: var(--paper);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    header, section {
+      min-height: 100svh;
+      scroll-snap-align: start;
+      padding: clamp(18px, 4vw, 52px);
+      display: grid;
+      align-content: center;
+      gap: 18px;
+    }
+    header { background: var(--show); color: var(--ink); }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(44px, 9vw, 108px); font-weight: 400; line-height: .92; }
+    h2 { font-size: clamp(28px, 5vw, 58px); font-weight: 400; }
+    p, li { font-size: clamp(16px, 2vw, 24px); line-height: 1.35; }
+    .lede { max-width: 850px; }
+    .target { background: #151515; }
+    .target:nth-of-type(2n) { background: #202020; }
+    .target-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+    .target-id { color: var(--show); font-size: clamp(18px, 3vw, 34px); }
+    .frame {
+      width: min(100%, 980px);
+      aspect-ratio: 4 / 3;
+      justify-self: center;
+      overflow: hidden;
+      background: var(--paper);
+      border: 2px solid rgba(244,239,228,.28);
+    }
+    .frame svg { width: 100%; height: 100%; display: block; }
+    .hint { color: rgba(244,239,228,.62); font-size: 14px; }
+    .field-list { background: var(--paper); color: var(--ink); }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    .field-card { border: 2px solid var(--ink); border-radius: 16px; padding: 18px; min-height: 150px; }
+    .field-card b { display: block; color: #245a72; font-size: 20px; margin-bottom: 8px; }
+    .rules { background: var(--know); color: var(--ink); }
+    .rules ul { margin: 0; padding-left: 24px; max-width: 900px; }
+    @media print {
+      html { scroll-snap-type: none; }
+      header, section { min-height: 0; height: 100vh; page-break-after: always; }
+      .hint { color: #555; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p>STRUCTA · physical R1 lab</p>
+    <h1>B04<br>target pack</h1>
+    <p class="lede">Exactly 20 captures: 7 screen targets + 7 real spaces + 6 materials/objects. Use S1–S7 from this screen or print them. Fill the R1 camera frame with only the cream test area, then use your surroundings for P1–P7 and M1–M6.</p>
+  </header>
+
+  <section class="target">
+    <div class="target-head"><h2>bold hand sketch</h2><span class="target-id">S1</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="bold hand sketch of a studio arrangement">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <path d="M105 92 L665 76 L704 462 L512 510 L111 472 Z" fill="none" stroke="#111" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M106 270 L304 270 L304 90 M515 84 L515 286 L688 286" fill="none" stroke="#111" stroke-width="14" stroke-linecap="round"/>
+        <rect x="352" y="332" width="176" height="92" rx="12" fill="none" stroke="#111" stroke-width="13"/>
+        <path d="M174 470 Q177 385 109 370 M622 465 Q619 390 698 374" fill="none" stroke="#111" stroke-width="11"/>
+        <path d="M210 352 C268 317 303 317 343 337" fill="none" stroke="#111" stroke-width="10"/>
+        <path d="M328 322 L350 337 L327 352" fill="none" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+        <circle cx="202" cy="176" r="42" fill="none" stroke="#111" stroke-width="12"/>
+        <path d="M172 176 L232 176 M202 146 L202 206" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <p class="hint">Expected: recognizes a working sketch or spatial diagram; does not invent measurements.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>annotated plan</h2><span class="target-id">S2</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="annotated architectural plan">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <g stroke="#222" fill="none">
+          <path d="M126 90 H665 V475 H126 Z" stroke-width="9"/>
+          <path d="M126 290 H392 V90 M392 290 H665 M392 475 V370 H665" stroke-width="7"/>
+          <path d="M126 386 H238 M238 386 V475" stroke-width="6"/>
+          <path d="M162 291 A70 70 0 0 1 232 361" stroke-width="3"/>
+          <path d="M530 370 A62 62 0 0 0 592 432" stroke-width="3"/>
+          <path d="M84 90 V475 M74 90 H94 M74 475 H94" stroke-width="2"/>
+          <path d="M126 522 H665 M126 512 V532 M665 512 V532" stroke-width="2"/>
+          <path d="M210 430 C300 391 410 332 528 320" stroke="#e55f45" stroke-width="7"/>
+          <path d="M511 305 L534 319 L515 340" stroke="#e55f45" stroke-width="7"/>
+        </g>
+        <g font-family="Arial, sans-serif" fill="#222">
+          <text x="205" y="178" font-size="30">WORK</text>
+          <text x="478" y="185" font-size="30">MEET</text>
+          <text x="156" y="345" font-size="20">ENTRY</text>
+          <text x="273" y="435" font-size="24">STORE</text>
+          <text x="498" y="418" font-size="24">QUIET</text>
+          <text x="32" y="292" font-size="18" transform="rotate(-90 32 292)">6.4 m</text>
+          <text x="370" y="554" font-size="18">9.1 m</text>
+          <text x="546" y="292" font-size="18" fill="#e55f45">keep path clear</text>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Expected: OCRs some labels and separates visible annotations from inferred use.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>flow diagram</h2><span class="target-id">S3</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="project decision flow diagram">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#111"/></marker></defs>
+        <g fill="none" stroke="#111" stroke-width="6">
+          <rect x="55" y="90" width="170" height="78" rx="18"/>
+          <rect x="315" y="90" width="170" height="78" rx="18"/>
+          <path d="M624 65 L725 129 L624 193 L523 129 Z"/>
+          <rect x="555" y="285" width="170" height="78" rx="18"/>
+          <rect x="315" y="285" width="170" height="78" rx="18"/>
+          <rect x="55" y="285" width="170" height="78" rx="18"/>
+          <path d="M225 129 H315 M485 129 H523 M624 193 V285 M555 324 H485 M315 324 H225" marker-end="url(#arrow)"/>
+          <path d="M650 65 C650 24 400 28 400 90" marker-end="url(#arrow)"/>
+          <path d="M140 363 V485 H400" marker-end="url(#arrow)"/>
+        </g>
+        <g font-family="Arial, sans-serif" fill="#111" text-anchor="middle">
+          <text x="140" y="138" font-size="27">CAPTURE</text>
+          <text x="400" y="138" font-size="27">CLASSIFY</text>
+          <text x="624" y="122" font-size="22">ENOUGH</text><text x="624" y="149" font-size="22">EVIDENCE?</text>
+          <text x="640" y="333" font-size="27">RESEARCH</text>
+          <text x="400" y="333" font-size="27">REVIEW</text>
+          <text x="140" y="333" font-size="27">DECIDE</text>
+          <text x="424" y="505" font-size="28">PROJECT MAP</text>
+          <text x="690" y="54" font-size="18">NO</text><text x="644" y="230" font-size="18">YES</text>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Expected: extracts nodes and direction; uncertainty should remain explicit.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>low-contrast pencil</h2><span class="target-id">S4</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="faint pencil perspective sketch">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <g fill="none" stroke="#aaa69d" stroke-width="3" opacity=".62">
+          <path d="M68 505 L400 285 L745 505 M400 285 V70 M68 505 H745"/>
+          <path d="M170 438 V183 L400 285 L628 182 V438"/>
+          <path d="M238 391 V244 L327 283 V420 M486 419 V283 L568 245 V390"/>
+          <path d="M330 451 L400 410 L478 453 L400 498 Z"/>
+          <path d="M354 440 V376 L447 378 V440"/>
+          <path d="M188 216 L236 238 M580 235 L616 215"/>
+          <path d="M119 478 C250 462 327 458 400 464 C491 456 585 465 692 480"/>
+        </g>
+        <g fill="#9f9b93" opacity=".55" font-family="Georgia, serif" font-style="italic">
+          <text x="92" y="548" font-size="18">light from west?</text>
+          <text x="514" y="454" font-size="17">bench</text>
+          <text x="350" y="353" font-size="16">screen</text>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Expected: may be uncertain, but should recognize a faint interior sketch rather than fabricate details.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>rotated page</h2><span class="target-id">S5</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="sideways working diagram">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <g transform="translate(700 -75) rotate(90)">
+          <rect x="120" y="90" width="430" height="500" fill="none" stroke="#222" stroke-width="5"/>
+          <text x="150" y="145" font-family="Arial" font-size="32" fill="#222">ENTRY SEQUENCE</text>
+          <path d="M165 205 H485" stroke="#222" stroke-width="4"/>
+          <circle cx="205" cy="275" r="42" fill="none" stroke="#222" stroke-width="5"/>
+          <rect x="300" y="235" width="110" height="80" rx="12" fill="none" stroke="#222" stroke-width="5"/>
+          <path d="M248 275 H300 M410 275 H482" stroke="#222" stroke-width="5"/>
+          <path d="M470 261 L490 275 L470 289" fill="none" stroke="#222" stroke-width="5"/>
+          <text x="165" y="380" font-family="Arial" font-size="24" fill="#222">1 arrive</text>
+          <text x="165" y="425" font-family="Arial" font-size="24" fill="#222">2 orient</text>
+          <text x="165" y="470" font-family="Arial" font-size="24" fill="#222">3 choose</text>
+          <text x="165" y="535" font-family="Arial" font-size="18" fill="#e55f45">do not rotate source</text>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Expected: notices the rotation and still recovers some structure/OCR.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>dense notes</h2><span class="target-id">S6</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="dense project notes with arrows and callouts">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <g font-family="Georgia, serif" fill="#242424">
+          <text x="45" y="62" font-size="30">FIELD NOTES · first pass</text>
+          <text x="48" y="112" font-size="19">audience: small creative teams</text>
+          <text x="48" y="145" font-size="19">constraint: no external backend</text>
+          <text x="48" y="178" font-size="19">question: what must be proven first?</text>
+          <text x="48" y="250" font-size="18">• preserve originals</text>
+          <text x="48" y="280" font-size="18">• batch uncertainty</text>
+          <text x="48" y="310" font-size="18">• never approve decisions</text>
+          <text x="48" y="340" font-size="18">• export a useful corpus</text>
+          <text x="425" y="112" font-size="17">reference ≠ evidence</text>
+          <text x="425" y="145" font-size="17">proposal ≠ condition</text>
+          <text x="425" y="178" font-size="17">research needs source</text>
+          <text x="418" y="286" font-size="18">NOW:</text>
+          <text x="418" y="318" font-size="18">one highest-leverage</text>
+          <text x="418" y="345" font-size="18">human intervention</text>
+          <text x="84" y="474" font-size="17">capture → structure → review → decide → test</text>
+          <text x="486" y="522" font-size="18" fill="#d45d45">avoid endless research</text>
+        </g>
+        <g fill="none" stroke="#333" stroke-width="3">
+          <ellipse cx="206" cy="165" rx="184" ry="28"/>
+          <path d="M310 191 C382 220 413 238 456 280"/>
+          <path d="M444 265 L459 282 L438 285"/>
+          <rect x="392" y="256" width="310" height="118" rx="12"/>
+          <path d="M88 445 H630"/>
+          <path d="M630 445 L610 432 M630 445 L610 458"/>
+          <path d="M474 495 Q580 455 699 488" stroke="#d45d45"/>
+        </g>
+      </svg>
+    </div>
+    <p class="hint">Expected: summarizes instead of pretending to transcribe every line; bounded OCR is acceptable.</p>
+  </section>
+
+  <section class="target">
+    <div class="target-head"><h2>ambiguous sketch</h2><span class="target-id">S7</span></div>
+    <div class="frame">
+      <svg viewBox="0 0 800 600" aria-label="intentionally ambiguous abstract sketch">
+        <rect width="800" height="600" fill="#f4efe4"/>
+        <g fill="none" stroke="#171717" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M120 438 C190 374 212 257 178 155 C295 185 330 143 401 91 C436 197 527 214 680 166 C642 260 649 357 699 442 C556 414 483 450 404 510 C317 440 241 421 120 438 Z"/>
+          <path d="M178 155 C260 264 300 312 404 510"/>
+          <path d="M401 91 C409 225 440 332 699 442"/>
+          <path d="M120 438 C282 391 469 319 680 166"/>
+          <circle cx="402" cy="305" r="45"/>
+          <path d="M358 304 H447 M402 260 V349"/>
+        </g>
+        <g fill="#171717"><circle cx="178" cy="155" r="13"/><circle cx="401" cy="91" r="13"/><circle cx="680" cy="166" r="13"/><circle cx="699" cy="442" r="13"/><circle cx="404" cy="510" r="13"/><circle cx="120" cy="438" r="13"/></g>
+      </svg>
+    </div>
+    <p class="hint">Expected: explicitly uncertain. A confident claim that it is a specific object or floor plan is wrong.</p>
+  </section>
+
+  <section class="field-list">
+    <div class="target-head"><h2>real spaces</h2><span class="target-id">P1–P7</span></div>
+    <div class="field-grid">
+      <div class="field-card"><b>P1 · room overview</b>Stand in a doorway and capture most of a bedroom, office, or living room.</div>
+      <div class="field-card"><b>P2 · circulation</b>Frame a doorway with the connected corridor or next room visible beyond it.</div>
+      <div class="field-card"><b>P3 · exterior</b>Capture a courtyard, balcony, façade, or quiet street without identifiable people.</div>
+      <div class="field-card"><b>P4 · low light</b>Use the same room with the main light off; keep enough shape to judge uncertainty.</div>
+      <div class="field-card"><b>P5 · reflection</b>Capture a mirror, glazed door, or reflective appliance showing layered space.</div>
+      <div class="field-card"><b>P6 · obstruction</b>Frame a chair, doorway, or table partly hidden by a bag, blanket, or open door.</div>
+      <div class="field-card"><b>P7 · no scale</b>Capture a tight architectural corner with no hand, furniture, ruler, or familiar object.</div>
+    </div>
+  </section>
+
+  <section class="field-list">
+    <div class="target-head"><h2>materials + objects</h2><span class="target-id">M1–M6</span></div>
+    <div class="field-grid">
+      <div class="field-card"><b>M1 · material close-up</b>Fill the frame with wood, stone, woven fabric, tile, or cardboard.</div>
+      <div class="field-card"><b>M2 · assembly</b>Capture a chair joint, cabinet hinge, lamp connection, or visible fastener.</div>
+      <div class="field-card"><b>M3 · damage</b>Use a harmless scratch, chipped edge, loose thread, dent, or small surface crack.</div>
+      <div class="field-card"><b>M4 · object group</b>Arrange four to six ordinary objects together on a desk or table.</div>
+      <div class="field-card"><b>M5 · fine texture</b>Move close to a textile weave, paper fibres, brushed metal, or wood grain.</div>
+      <div class="field-card"><b>M6 · ambiguous material</b>Crop painted metal, silicone, plastic, or laminate so its object context disappears.</div>
+    </div>
+  </section>
+
+  <section class="rules">
+    <h2>capture rules</h2>
+    <ul>
+      <li>Use only synthetic/non-client material and avoid faces, addresses, screens, and personal documents.</li>
+      <li>Store exactly one original and wait for its reading or explicit unavailable/degraded state before the next target.</li>
+      <li>A schema-valid “visual signal insufficient” result is transport-valid, not degraded. It is a semantic non-match for clear targets S1–S6, P1–P6, and M1–M5.</li>
+      <li>For deliberately ambiguous controls S7, P7, and M6, appropriate uncertainty may be a semantic match if it avoids a confident unsupported claim.</li>
+      <li>Record: ID · transport valid/degraded · semantic matched/non-match · clipped yes/no · silent yes/no.</li>
+      <li>Stop for speech, a Rabbit Hole entry, a lost original, a mismatched result, 90 seconds unresolved, or the third semantic non-match (including a target whose transport degraded).</li>
+    </ul>
+  </section>
+</body>
+</html>

@@ -1,3 +1,5 @@
+> Historical document. `STRUCTA_V3_PRODUCT_SPEC.md` is canonical where the specifications conflict.
+
 # Structa R1 Native Interaction Spec v1
 
 ## 1. Purpose

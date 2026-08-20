@@ -35,6 +35,8 @@
   let activeQuestion = null; // { index, text } when answering a question
   let activeBuildContext = null; // { kind, nodeId, text, surface }
   let activeTriangleContext = null; // { label }
+  let nativeCapture = null; // Context/state for the current R1 native STT cycle.
+  let captureRequestSequence = 0;
   let onboardingStartTimer = null;
   const COMMAND_PRIORITY = {
     'delete-project': 0,
@@ -50,6 +52,48 @@
 
   function lower(text) {
     return String(text || '').toLowerCase();
+  }
+
+  function makeCaptureRequestId(prefix) {
+    captureRequestSequence += 1;
+    return String(prefix || 'voice') + '-' + Date.now().toString(36) + '-' + captureRequestSequence.toString(36);
+  }
+
+  function activeProjectId() {
+    return String(native?.getActiveProjectId?.() || native?.getProjectMemory?.()?.project_id || native?.getProjectMemory?.()?.id || '');
+  }
+
+  function projectById(projectId) {
+    var target = String(projectId || '').trim();
+    if (target && native?.getProjectMemoryById) return native.getProjectMemoryById(target) || null;
+    var active = native?.getProjectMemory?.() || null;
+    if (!target || String(active?.project_id || active?.id || '') === target) return active;
+    return null;
+  }
+
+  function originProjectActive(projectId) {
+    return !projectId || activeProjectId() === String(projectId);
+  }
+
+  function touchOriginProject(projectId, mutator) {
+    var target = String(projectId || '').trim();
+    if (target && native?.touchProjectMemoryById) return native.touchProjectMemoryById(target, mutator);
+    if (!originProjectActive(target)) return null;
+    return native?.touchProjectMemory?.(mutator) || null;
+  }
+
+  function ingestOriginClaims(projectId, claims, options) {
+    var target = String(projectId || '').trim();
+    if (target && native?.ingestClaimsForProject) return native.ingestClaimsForProject(target, claims, options) || [];
+    if (!originProjectActive(target)) return [];
+    return native?.ingestClaims?.(claims, options) || [];
+  }
+
+  function addOriginNode(projectId, input) {
+    var target = String(projectId || '').trim();
+    if (target && native?.addNodeToProject) return native.addNodeToProject(target, input);
+    if (!originProjectActive(target)) return null;
+    return native?.addNode?.(input) || null;
   }
 
   function deriveProjectMark(title, brief) {
@@ -102,7 +146,9 @@
   }
 
   function inlineMode() {
-    return !!window.__STRUCTA_INLINE_PTT__;
+    // V3 always presents the full-screen recording plane. Context is routed in
+    // data and accessibility text, never as a cramped inline status strip.
+    return false;
   }
 
   function setStatus(text) {
@@ -179,6 +225,7 @@
 
     switch (cmd.type) {
       case 'research':
+          var researchProjectId = activeProjectId();
           native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch working in background: ' + arg.slice(0, 40) });
           if (window.StructaLLM && window.StructaLLM.research) {
             window.StructaLLM.withOperationPolicy({
@@ -187,13 +234,15 @@
               source: 'research-command',
               reason: 'branch work stays quiet'
             }, function() {
-              return window.StructaLLM.research(arg);
+              return window.StructaLLM.research(arg, { projectId: researchProjectId });
             }).then(function(result) {
-              if (result && result.ok) {
+              if (result && result.ok && originProjectActive(researchProjectId)) {
                 native?.appendLogEntry?.({ kind: 'diagnostic', message: 'branch ready: ' + result.findings.slice(0, 2).join('; ').slice(0, 50) });
                 native?.updateUIState?.({ last_insight_summary: 'branch working · ' + arg.slice(0, 30) });
               }
-              window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+              if (originProjectActive(researchProjectId)) {
+                window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+              }
             });
           }
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
@@ -379,10 +428,11 @@
 
   function enqueueClaimsBackfill(payload) {
     if (!queue || !payload?.nodeId || !payload?.body) return;
+    var projectId = String(payload.projectId || payload?.project?.id || activeProjectId() || '');
     queue.enqueue({
       kind: 'claims-backfill',
       priority: 'P3',
-      payload: payload,
+      payload: { ...(payload || {}), projectId: projectId },
       origin: {
         screen: payload.surface || 'backfill',
         itemId: payload.nodeId
@@ -423,6 +473,7 @@
               summary: project?.summary || '',
               selectedSurface: node.type || 'backfill'
             },
+            projectId: project?.project_id || '',
             source: node.source || node.type || 'backfill',
             sourceRef: { itemId: node.node_id }
           });
@@ -493,11 +544,12 @@
 
   function storeVoiceInterpretation(payload, result) {
     var voiceEntryId = payload.voiceEntryId || payload.buildContext?.nodeId || '';
+    var projectId = String(payload.projectId || activeProjectId() || '');
     var transcript = payload.transcript || '';
     var sourceRef = voiceEntryId ? { itemId: voiceEntryId } : {};
     var candidates = deriveVoiceCandidates(result, transcript, sourceRef);
-    if (voiceEntryId && native?.touchProjectMemory) {
-      native.touchProjectMemory(function(project) {
+    if (voiceEntryId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+      touchOriginProject(projectId, function(project) {
         var node = (project.nodes || []).find(function(entry) {
           return entry.node_id === voiceEntryId && entry.type === 'voice-entry';
         });
@@ -519,21 +571,32 @@
       native.saveDerivedCandidates(candidates, {
         source: 'voice-note',
         sourceRef: sourceRef,
-        operation_id: payload.operationId || ''
+        operation_id: payload.operationId || '',
+        projectId: projectId
+      });
+      window.StructaProjectEngine?.ingestDecisionCandidates?.(candidates.decisions || [], {
+        projectId: projectId,
+        source: 'voice-note',
+        voiceEntryId: voiceEntryId || ''
       });
     }
-    native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
+    if (originProjectActive(projectId)) {
+      native?.updateUIState?.({ last_insight_summary: String(result?.clean || '').slice(0, 60) });
+    }
     return candidates;
   }
 
   function applyProjectBriefResult(payload, result) {
+    var projectId = String(payload.projectId || activeProjectId() || '');
     var title = String(result?.title || '').trim();
     var brief = String(result?.brief || '').trim();
-    if (title && lower(title) !== 'untitled project') {
-      native?.setProjectName?.(title);
+    var currentProjectName = String(projectById(projectId)?.name || 'untitled project');
+    if (title && lower(title) !== 'untitled project' && lower(currentProjectName) === 'untitled project') {
+      native?.setProjectName?.(title, projectId);
+      currentProjectName = title;
     }
-    var projectMark = deriveProjectMark(title, brief);
-    if (projectMark) native?.setProjectMark?.(projectMark);
+    var projectMark = deriveProjectMark(currentProjectName, brief);
+    if (projectMark) native?.setProjectMark?.(projectMark, projectId);
     var briefWrite = native?.recordOperationWrite?.(payload.operationId || '', 'project_brief', {
       voiceEntryId: payload.voiceEntryId || ''
     });
@@ -541,7 +604,8 @@
       native.setProjectBrief(brief, {
         source: 'onboarding',
         operation_id: payload.operationId || '',
-        voice_entry_id: payload.voiceEntryId || ''
+        voice_entry_id: payload.voiceEntryId || '',
+        projectId: projectId
       });
     }
     var candidateWrite = native?.recordOperationWrite?.(payload.operationId || '', 'derived_candidate', {
@@ -552,11 +616,12 @@
         source: 'project-brief',
         sourceRef: payload.voiceEntryId ? { itemId: payload.voiceEntryId } : {},
         replace: true,
-        operation_id: payload.operationId || ''
+        operation_id: payload.operationId || '',
+        projectId: projectId
       });
     }
-    if (payload.voiceEntryId && native?.touchProjectMemory) {
-      native.touchProjectMemory(function(project) {
+    if (payload.voiceEntryId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+      touchOriginProject(projectId, function(project) {
         var node = (project.nodes || []).find(function(entry) {
           return entry.node_id === payload.voiceEntryId && entry.type === 'voice-entry';
         });
@@ -571,20 +636,28 @@
         };
       });
     }
-    native?.appendLogEntry?.({ kind: 'llm', message: 'brief stored' });
-    if (projectMark) native?.appendLogEntry?.({ kind: 'llm', message: 'project mark ready' });
-    native?.updateUIState?.({
-      last_insight_summary: (brief || title || '').slice(0, 60),
-      user_status: title ? ('project: ' + title) : 'project brief ready'
+    window.StructaProjectEngine?.seedFromBrief?.(result, {
+      source: 'project-brief',
+      voiceEntryId: payload.voiceEntryId || '',
+      projectId: payload.projectId || ''
     });
+    if (originProjectActive(projectId)) {
+      native?.appendLogEntry?.({ kind: 'llm', message: 'brief stored' });
+      if (projectMark) native?.appendLogEntry?.({ kind: 'llm', message: 'project mark ready' });
+      native?.updateUIState?.({
+        last_insight_summary: (brief || title || '').slice(0, 60),
+        user_status: title ? ('project: ' + title) : 'project brief ready'
+      });
+    }
   }
 
   function queueVoiceInterpret(payload) {
     if (!queue) return;
+    var projectId = String(payload?.projectId || activeProjectId() || '');
     queue.enqueue({
       kind: 'voice-interpret',
       priority: 'P1',
-      payload: payload,
+      payload: { ...(payload || {}), projectId: projectId },
       origin: {
         screen: payload.mode === 'question' ? 'now' : (payload.buildContext?.surface || 'tell'),
         itemId: payload.buildContext?.nodeId || payload.questionText || ''
@@ -596,17 +669,19 @@
     window.__STRUCTA_VOICE_QUEUE_REGISTERED__ = true;
     queue.registerHandler('project-title', function(job) {
       const payload = job.payload || {};
-      const project = native?.getProjectMemory?.();
-      if (!project || (project.project_id || project.id || '') !== (payload.projectId || '')) {
+      const projectId = String(payload.projectId || '');
+      const project = projectById(projectId);
+      if (!project) {
         return { ok: false, stale: true };
       }
       if (lower(project.name || '') !== 'untitled project') {
         return { ok: true, stale: true, title: project.name || '' };
       }
       return resolveProjectTitle(payload.transcript || '', project).then(function(title) {
+        if (!projectById(projectId)) return { ok: false, stale: true, title: '' };
         const finalTitle = title || payload.heuristic || '';
         if (finalTitle && lower(finalTitle) !== 'untitled project') {
-          native?.setProjectName?.(finalTitle);
+          native?.setProjectName?.(finalTitle, projectId);
         }
         return { ok: !!finalTitle, title: finalTitle || payload.heuristic || '' };
       });
@@ -614,6 +689,9 @@
 
     queue.registerHandler('voice-interpret', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || activeProjectId() || '');
+      payload.projectId = projectId;
+      if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable' };
       native?.traceEvent?.('voice', 'queued', 'interpreting', {
         jobId: job.id || '',
         mode: payload.mode || 'voice',
@@ -624,9 +702,10 @@
         return Promise.resolve({ ok: false, error: 'llm unavailable' });
       }
       const options = payload.mode === 'question'
-        ? { answeringQuestion: true, questionText: payload.questionText || '' }
-        : (payload.buildContext ? { buildContext: payload.buildContext } : {});
+        ? { answeringQuestion: true, questionText: payload.questionText || '', projectId: projectId }
+        : (payload.buildContext ? { buildContext: payload.buildContext, projectId: projectId } : { projectId: projectId });
       return window.StructaLLM.processVoice(payload.transcript || '', options).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable', projectId: projectId };
         if (payload.mode === 'question') {
           if (result && result.ok && result.clean) {
             var sourceRef = {
@@ -635,17 +714,24 @@
               answerId: payload.answerNodeId || ''
             };
             var storedClaims = [];
-            if (Array.isArray(result.claims) && native?.ingestClaims) {
-              storedClaims = native.ingestClaims(result.claims, {
+            if (Array.isArray(result.claims) && (native?.ingestClaimsForProject || native?.ingestClaims)) {
+              storedClaims = ingestOriginClaims(projectId, result.claims, {
                 source: 'answer',
                 sourceRef: sourceRef,
                 sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null
               }).map(function(entry) { return entry.id; });
             }
             if (native?.saveDerivedCandidates) {
-              native.saveDerivedCandidates(deriveVoiceCandidates(result, payload.transcript || '', sourceRef), {
+              var answerCandidates = deriveVoiceCandidates(result, payload.transcript || '', sourceRef);
+              native.saveDerivedCandidates(answerCandidates, {
                 source: 'answer',
-                sourceRef: sourceRef
+                sourceRef: sourceRef,
+                projectId: projectId
+              });
+              window.StructaProjectEngine?.ingestDecisionCandidates?.(answerCandidates.decisions || [], {
+                projectId: projectId,
+                source: 'answer',
+                voiceEntryId: payload.answerNodeId || ''
               });
             }
             if (payload.answerNodeId && native?.enrichAnswerNode) {
@@ -654,10 +740,10 @@
                 sttConfidence: typeof result.answerNode?.sttConfidence === 'number' ? result.answerNode.sttConfidence : null,
                 transformed_text: result.clean || '',
                 transformed_structured: result.structured || null
-              });
+              }, projectId);
             }
-            if (payload.answerNodeId && payload.questionNodeId && native?.touchProjectMemory) {
-              native.touchProjectMemory(function(project) {
+            if (payload.answerNodeId && payload.questionNodeId && (native?.touchProjectMemoryById || native?.touchProjectMemory)) {
+              touchOriginProject(projectId, function(project) {
                 var nodes = Array.isArray(project.nodes) ? project.nodes : [];
                 var questionNode = nodes.find(function(entry) { return entry.node_id === payload.questionNodeId; });
                 var answerNode = nodes.find(function(entry) { return entry.node_id === payload.answerNodeId; });
@@ -676,28 +762,31 @@
                 }
               });
             }
-            native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
-            native?.emitModelChange?.({
-              scope: 'now',
-              itemId: payload.questionNodeId || '',
-              jobId: job.id || ''
-            });
+            if (originProjectActive(projectId)) {
+              native?.updateUIState?.({ last_insight_summary: result.clean.slice(0, 60) });
+              native?.emitModelChange?.({
+                scope: 'now',
+                itemId: payload.questionNodeId || '',
+                jobId: job.id || ''
+              });
+            }
             native?.traceEvent?.('blocker', 'answered', 'insight-created', {
               jobId: job.id || '',
               nodeId: payload.questionNodeId || '',
               insightId: payload.answerNodeId || '',
               clean: result.clean || ''
             });
-            if (result.followUpQuestion && native?.addNode) {
+            if (result.followUpQuestion && (native?.addNodeToProject || native?.addNode)) {
               setTimeout(function() {
-                var project = native?.getProjectMemory?.() || {};
+                var project = projectById(projectId) || {};
+                if (!project?.project_id && !project?.id) return;
                 var existing = (project.open_question_nodes || []).some(function(entry) {
                   var current = lower(entry?.body || entry?.title || '');
                   var nextText = lower(result.followUpQuestion || '');
                   return current === nextText || current.indexOf(nextText) !== -1 || nextText.indexOf(current) !== -1;
                 });
                 if (!existing) {
-                  native.addNode({
+                  addOriginNode(projectId, {
                     type: 'question',
                     status: 'open',
                     title: 'follow up',
@@ -716,29 +805,33 @@
                 }
               }, 200);
             }
-            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-              detail: { source: 'question-answer' }
-            }));
+            if (originProjectActive(projectId)) {
+              window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+                detail: { source: 'question-answer' }
+              }));
+            }
           }
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          if (originProjectActive(projectId)) window.dispatchEvent(new CustomEvent('structa-memory-updated'));
           return result;
         }
 
         if (result && result.ok) {
           storeVoiceInterpretation(payload, result);
-          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-            detail: { source: 'voice-transform' }
-          }));
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-        } else {
+          if (originProjectActive(projectId)) {
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'voice-transform' }
+            }));
+            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          }
+        } else if (originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification unavailable' });
         }
         return result;
       }).catch(function(err) {
-        if (payload.mode !== 'question') {
+        if (payload.mode !== 'question' && originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'note clarification failed' });
         }
-        window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        if (originProjectActive(projectId)) window.dispatchEvent(new CustomEvent('structa-memory-updated'));
         throw err;
       }).finally(function() {
         native?.finishOperation?.(payload.operationId || '', {
@@ -749,8 +842,9 @@
 
     queue.registerHandler('project-brief', function(job) {
       const payload = job.payload || {};
-      const project = native?.getProjectMemory?.();
-      if (!project || (project.project_id || project.id || '') !== (payload.projectId || '')) {
+      const projectId = String(payload.projectId || '');
+      const project = projectById(projectId);
+      if (!project) {
         return { ok: false, stale: true };
       }
       if (!window.StructaLLM?.buildProjectBrief) {
@@ -762,19 +856,24 @@
         voiceEntryId: payload.voiceEntryId || ''
       });
       return window.StructaLLM.buildProjectBrief(payload.transcript || '', project).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true, error: 'origin project unavailable' };
         if (result && result.ok) {
           applyProjectBriefResult(payload, result);
-          window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
-            detail: { source: 'project-brief' }
-          }));
-          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
-        } else {
+          if (originProjectActive(projectId)) {
+            window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+              detail: { source: 'project-brief' }
+            }));
+            window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+          }
+        } else if (originProjectActive(projectId)) {
           native?.appendLogEntry?.({ kind: 'llm', message: 'project brief unavailable' });
         }
         return result;
       }).catch(function(err) {
-        native?.appendLogEntry?.({ kind: 'llm', message: 'project brief failed' });
-        window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        if (originProjectActive(projectId)) {
+          native?.appendLogEntry?.({ kind: 'llm', message: 'project brief failed' });
+          window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+        }
         throw err;
       }).finally(function() {
         native?.finishOperation?.(payload.operationId || '', {
@@ -785,9 +884,11 @@
 
     queue.registerHandler('claims-backfill', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || payload?.project?.id || activeProjectId() || '');
       if (!payload.nodeId || !payload.body || !window.StructaLLM?.backfillClaimsForItem) {
         return { ok: false, stale: true, claims: [] };
       }
+      if (!projectById(projectId)) return { ok: false, stale: true, claims: [] };
       native?.traceEvent?.('claim', 'queued', 'backfilling', {
         jobId: job.id || '',
         nodeId: payload.nodeId || ''
@@ -799,13 +900,14 @@
         source: payload.source || 'backfill',
         sourceRef: payload.sourceRef || { itemId: payload.nodeId }
       }).then(function(result) {
-        if (result && result.ok && Array.isArray(result.claims) && result.claims.length && native?.ingestClaims) {
-          native.ingestClaims(result.claims, {
+        if (!projectById(projectId)) return { ok: false, stale: true, claims: [] };
+        if (result && result.ok && Array.isArray(result.claims) && result.claims.length && (native?.ingestClaimsForProject || native?.ingestClaims)) {
+          ingestOriginClaims(projectId, result.claims, {
             source: payload.source || 'backfill',
             sourceRef: payload.sourceRef || { itemId: payload.nodeId }
           });
         }
-        native?.touchProjectMemory?.(function(project) {
+        touchOriginProject(projectId, function(project) {
           var node = (project.nodes || []).find(function(entry) { return entry.node_id === payload.nodeId; });
           if (!node) return;
           node.meta = { ...(node.meta || {}), claims_backfilled: true };
@@ -821,9 +923,11 @@
 
     queue.registerHandler('thread-refine', function(job) {
       const payload = job.payload || {};
+      const projectId = String(payload.projectId || activeProjectId() || '');
       if (!payload.nodeId || !payload.commentId || !window.StructaLLM?.refineThreadComment) {
         return { ok: false, stale: true };
       }
+      if (!projectById(projectId)) return { ok: false, stale: true };
       return window.StructaLLM.refineThreadComment({
         project: {
           id: payload.projectId || '',
@@ -843,13 +947,15 @@
           transcript: payload.commentText || ''
         }
       }).then(function(result) {
+        if (!projectById(projectId)) return { ok: false, stale: true };
         const applied = native?.applyThreadExtraction?.(payload.nodeId, payload.commentId, {
           summary: (result && result.summary) || payload.commentText || '',
           claims: Array.isArray(result?.claims) ? result.claims : [],
           clarifies: result?.clarifies || '',
           contradicts: result?.contradicts || ''
         }, {
-          sttConfidence: typeof result?.sttConfidence === 'number' ? result.sttConfidence : null
+          sttConfidence: typeof result?.sttConfidence === 'number' ? result.sttConfidence : null,
+          projectId: projectId
         });
         return {
           ok: !!applied,
@@ -878,9 +984,17 @@
   function handleTranscript(text, overrides) {
     if (!text || !text.trim()) return;
     text = text.trim();
-    var questionContext = overrides && overrides.activeQuestion ? overrides.activeQuestion : activeQuestion;
-    var buildContext = overrides && overrides.activeBuildContext ? overrides.activeBuildContext : activeBuildContext;
-    var triangleContext = overrides && overrides.activeTriangleContext ? overrides.activeTriangleContext : activeTriangleContext;
+    var hasOverrides = !!(overrides && typeof overrides === 'object');
+    var questionContext = hasOverrides ? (overrides.activeQuestion || null) : activeQuestion;
+    var buildContext = hasOverrides ? (overrides.activeBuildContext || null) : activeBuildContext;
+    var triangleContext = hasOverrides ? (overrides.activeTriangleContext || null) : activeTriangleContext;
+    var requestId = hasOverrides ? String(overrides.requestId || '') : '';
+    var isCaptureComment = !!(buildContext && (
+      buildContext.kind === 'capture-comment'
+      || (buildContext.kind === 'thread-comment'
+        && buildContext.surface === 'show'
+        && (buildContext.captureId || buildContext.entryId))
+    ));
 
     // Clean up STT artifacts — spoken punctuation → actual punctuation
     text = text.replace(/\bquestion mark\b/gi, '?');
@@ -891,7 +1005,10 @@
     text = text.replace(/\s+/g, ' ').trim();
 
     // === Voice commands — intercept before normal processing ===
-    var commandHandled = tryVoiceCommand(text);
+    // A selected visual establishes a concrete comment target. Command-shaped
+    // speech such as "research the roof material" is evidence about that
+    // frame, not a global navigation/research command.
+    var commandHandled = !isCaptureComment && tryVoiceCommand(text);
     if (commandHandled) return;
 
     if (triangleContext) {
@@ -953,12 +1070,33 @@
           }
         }));
       } else {
-        resolution = native?.resolveQuestion?.({
-          index: question.index,
-          nodeId: question.nodeId || '',
-          text: question.text || '',
-          source: question.source || 'question'
-        }, text);
+        if (question.mapGap) {
+          resolution = window.StructaProjectEngine?.answerMapGap?.(
+            question.branchId || '',
+            text,
+            {
+              projectId: question.projectId || activeProjectId(),
+              questionText: question.text || ''
+            }
+          );
+        } else {
+          resolution = native?.resolveQuestion?.({
+            index: question.index,
+            nodeId: question.nodeId || '',
+            text: question.text || '',
+            source: question.source || 'question'
+          }, text);
+        }
+      }
+      if (question.mapGap && (!resolution || resolution.ok !== true)) {
+        native?.traceEvent?.('voice', 'processing', 'map-gap-rejected', {
+          branchId: question.branchId || '',
+          projectId: question.projectId || ''
+        });
+        window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+          detail: { source: 'map-gap-answer-failed' }
+        }));
+        return;
       }
       window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
         detail: { source: 'question-answer' }
@@ -976,10 +1114,60 @@
       queueVoiceInterpret({
         mode: 'question',
         transcript: text,
+        projectId: question.projectId || activeProjectId(),
         questionText: question.text || '',
         questionNodeId: question.nodeId || '',
-        answerNodeId: resolution?.answerNode?.id || ''
+        answerNodeId: resolution?.answerNode?.node_id
+          || resolution?.answerNode?.id
+          || resolution?.voiceEntry?.node_id
+          || resolution?.voiceEntry?.id
+          || resolution?.node?.node_id
+          || resolution?.node?.id
+          || resolution?.answerNodeId
+          || resolution?.voiceEntryId
+          || resolution?.nodeId
+          || resolution?.node_id
+          || ''
       });
+      return;
+    }
+
+    if (buildContext && buildContext.kind === 'decision-answer') {
+      voiceTarget = null;
+      var decisionProjectId = String(buildContext.projectId || buildContext.project_id || activeProjectId() || '');
+      var decisionId = String(buildContext.decisionId || buildContext.decision_id || buildContext.nodeId || '').trim();
+      if (!decisionId || !projectById(decisionProjectId)) return;
+      var decisionVoiceEntry = addOriginNode(decisionProjectId, {
+        type: 'voice-entry',
+        status: 'open',
+        title: text.slice(0, 42) || 'decision answer',
+        body: text,
+        source: 'decision-answer',
+        meta: {
+          entry_mode: 'decision-answer',
+          created_via: 'now',
+          decision_id: decisionId,
+          project_id: decisionProjectId
+        }
+      });
+      if (!originProjectActive(decisionProjectId)) return;
+      var decisionResult = window.StructaProjectEngine?.applyOperation?.({
+        type: 'decision.approve',
+        actor: 'human',
+        project_id: decisionProjectId,
+        decision_id: decisionId,
+        selected_option_index: -1,
+        selected_option: text
+      });
+      native?.traceEvent?.('decision.answer', decisionResult?.ok ? 'captured' : 'rejected', decisionId, {
+        projectId: decisionProjectId,
+        voiceEntryId: decisionVoiceEntry?.node_id || '',
+        ok: !!decisionResult?.ok
+      });
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: decisionResult?.ok ? 'decision-approved' : 'decision-answer-rejected' }
+      }));
       return;
     }
 
@@ -993,6 +1181,74 @@
         detail: { source: 'log-note' }
       }));
       window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      return;
+    }
+
+    if (isCaptureComment) {
+      voiceTarget = null;
+      if (text.length < 3) return;
+      var captureProjectId = String(buildContext.projectId || buildContext.project_id || activeProjectId() || '');
+      var captureRequestId = requestId || makeCaptureRequestId('visual-comment');
+      var captureProject = projectById(captureProjectId);
+      if (!captureProject) return;
+      native?.traceEvent?.('capture.comment', 'captured', 'append-request', {
+        entryId: buildContext.captureId || buildContext.entryId || '',
+        nodeId: buildContext.nodeId || '',
+        projectId: captureProjectId,
+        surface: 'show',
+        requestId: captureRequestId
+      });
+      const appended = native?.appendCaptureComment?.(
+        buildContext.captureId || buildContext.entryId || '',
+        buildContext.nodeId || '',
+        text,
+        {
+          projectId: captureProjectId,
+          requestId: captureRequestId,
+          kind: buildContext.commentKind || 'context',
+          origin: 'ptt'
+        }
+      );
+      if (!appended || !appended.voiceEntry) return;
+      if (appended.duplicate) return;
+      window.StructaFeedback?.fire?.('resolve');
+      window.dispatchEvent(new CustomEvent('structa-thread-comment-appended', {
+        detail: {
+          entryId: appended.entryId || buildContext.captureId || buildContext.entryId || '',
+          nodeId: appended.nodeId || buildContext.nodeId || '',
+          commentId: appended.comment?.id || '',
+          comment: appended.comment || null,
+          voiceEntryId: appended.voiceEntry?.node_id || '',
+          surface: 'show'
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
+        detail: { source: 'capture-comment' }
+      }));
+      if (appended.nodeId && appended.comment?.id) {
+        enqueueThreadRefine({
+          nodeId: appended.nodeId,
+          commentId: appended.comment.id,
+          commentText: text,
+          surface: 'show',
+          selection: {
+            kind: 'show',
+            id: appended.nodeId,
+            captureId: appended.entryId || '',
+            title: buildContext.title || 'visual reference',
+            summary: buildContext.text || '',
+            status: 'open',
+            createdAt: buildContext.createdAt || '',
+            claims: native?.getClaimsForItem?.(appended.nodeId) || []
+          },
+          projectId: captureProjectId,
+          projectName: captureProject.name || 'untitled project',
+          projectType: captureProject.type || 'general',
+          projectBrief: captureProject.brief || '',
+          topQuestions: (captureProject.open_questions || []).slice(0, 3),
+          projectSummary: buildContext.projectSummary || ''
+        });
+      }
       return;
     }
 
@@ -1127,10 +1383,39 @@
     queueVoiceInterpret({
       mode: 'voice',
       transcript: text,
+      projectId: String(currentProject?.project_id || currentProject?.id || activeProjectId() || ''),
       buildContext: buildContext || null,
       voiceEntryId: voiceEntry?.node_id || buildContext?.nodeId || '',
       operationId: operationId
     });
+  }
+
+  function createNativeCapture() {
+    return {
+      requestId: makeCaptureRequestId('native-stt'),
+      activeQuestion: activeQuestion ? { ...activeQuestion } : null,
+      activeBuildContext: activeBuildContext ? { ...activeBuildContext } : null,
+      activeTriangleContext: activeTriangleContext ? { ...activeTriangleContext } : null,
+      transcriptHandled: false,
+      sttEnded: false,
+      cancelled: false
+    };
+  }
+
+  function consumeNativeTranscript(capture, text) {
+    if (!capture || capture.cancelled || capture.transcriptHandled || !String(text || '').trim()) return false;
+    var context = {
+      activeQuestion: capture.activeQuestion,
+      activeBuildContext: capture.activeBuildContext,
+      activeTriangleContext: capture.activeTriangleContext,
+      requestId: capture.requestId || ''
+    };
+    capture.transcriptHandled = true;
+    capture.activeQuestion = null;
+    capture.activeBuildContext = null;
+    capture.activeTriangleContext = null;
+    handleTranscript(text, context);
+    return true;
   }
 
   function stopListening(emit) {
@@ -1172,12 +1457,16 @@
       native?.stopPTT?.(text || '');
       // Process the transcript
       if (text) {
-        handleTranscript(text, {
-          activeQuestion: pendingQuestion,
-          activeBuildContext: pendingBuildContext,
-          activeTriangleContext: pendingTriangleContext
-        });
-      } else if (pendingQuestion?.onboarding) {
+        if (nativeCapture) {
+          consumeNativeTranscript(nativeCapture, text);
+        } else {
+          handleTranscript(text, {
+            activeQuestion: pendingQuestion,
+            activeBuildContext: pendingBuildContext,
+            activeTriangleContext: pendingTriangleContext
+          });
+        }
+      } else if (pendingQuestion?.onboarding && typeof CreationVoiceHandler === 'undefined') {
         reportOnboardingSTTFailure('empty-transcript', pendingQuestion);
       } else if (pendingAudioAsset) {
         native?.addVoiceEntry?.({
@@ -1187,6 +1476,17 @@
           entry_mode: 'audio-fallback'
         });
       }
+    } else if (nativeCapture && !nativeCapture.sttEnded) {
+      // A non-emitting stop is cancellation. Retain only a tombstone so a
+      // delayed native callback cannot turn the cancelled capture into input.
+      nativeCapture.cancelled = true;
+      nativeCapture.activeQuestion = null;
+      nativeCapture.activeBuildContext = null;
+      nativeCapture.activeTriangleContext = null;
+      if (typeof CreationVoiceHandler !== 'undefined') {
+        try { CreationVoiceHandler.postMessage('stop'); } catch (_) {}
+      }
+      native?.stopPTT?.('');
     }
 
     // Unmute heartbeat after capture
@@ -1201,13 +1501,18 @@
    * Stores the question so handleTranscript knows to route it as an answer.
    */
   function setQuestionContext(index, questionText, meta) {
+    activeBuildContext = null;
+    activeTriangleContext = null;
     if (typeof index === 'object' && index) {
       activeQuestion = {
         index: typeof index.index === 'number' ? index.index : -1,
         text: index.text || '',
         onboarding: !!index.onboarding,
         nodeId: index.nodeId || '',
-        source: index.source || 'question'
+        source: index.source || 'question',
+        projectId: index.projectId || index.project_id || activeProjectId(),
+        mapGap: !!index.mapGap,
+        branchId: index.branchId || index.branch_id || ''
       };
       native?.traceEvent?.('voice', 'idle', 'question-context', {
         nodeId: activeQuestion.nodeId || '',
@@ -1222,7 +1527,10 @@
       text: questionText,
       onboarding: !!(meta && meta.onboarding),
       nodeId: meta && meta.nodeId ? meta.nodeId : '',
-      source: meta && meta.source ? meta.source : 'question'
+      source: meta && meta.source ? meta.source : 'question',
+      projectId: meta && (meta.projectId || meta.project_id) ? (meta.projectId || meta.project_id) : activeProjectId(),
+      mapGap: !!(meta && meta.mapGap),
+      branchId: meta && (meta.branchId || meta.branch_id) ? (meta.branchId || meta.branch_id) : ''
     };
     native?.traceEvent?.('voice', 'idle', 'question-context', {
       nodeId: activeQuestion.nodeId || '',
@@ -1233,6 +1541,8 @@
   }
 
   function setBuildContext(context) {
+    activeQuestion = null;
+    activeTriangleContext = null;
     activeBuildContext = context ? {
       kind: context.kind || 'context',
       nodeId: context.nodeId || '',
@@ -1241,12 +1551,18 @@
       title: context.title || '',
       createdAt: context.createdAt || '',
       commentKind: context.commentKind || 'comment',
-      projectSummary: context.projectSummary || ''
+      projectSummary: context.projectSummary || '',
+      projectId: context.projectId || context.project_id || activeProjectId(),
+      decisionId: context.decisionId || context.decision_id || '',
+      captureId: context.captureId || context.entryId || context.capture_id || context.entry_id || '',
+      entryId: context.entryId || context.captureId || context.entry_id || context.capture_id || ''
     } : null;
     if (activeBuildContext && !activeQuestion) voiceTarget = 'tell';
   }
 
   function setTriangleContext(context) {
+    activeQuestion = null;
+    activeBuildContext = null;
     activeTriangleContext = context ? {
       label: String(context.label || 'your angle')
     } : null;
@@ -1255,6 +1571,21 @@
 
   async function startListening() {
     if (listening) return;
+    if (typeof CreationVoiceHandler !== 'undefined'
+        && window.__STRUCTA_NATIVE_STT_OWNER__
+        && window.__STRUCTA_NATIVE_STT_OWNER__ !== 'voice') {
+      setStatus('finishing previous capture');
+      native?.traceEvent?.('voice', 'idle', 'start-blocked', { reason: 'native-bridge-owned' });
+      return;
+    }
+    if (typeof CreationVoiceHandler !== 'undefined' && nativeCapture && !nativeCapture.sttEnded) {
+      // Rabbit's STT callback has no capture id. Never let a new hold replace
+      // an unresolved capture context: a late callback could otherwise answer
+      // the next question or even the next project.
+      setStatus('finishing previous capture');
+      native?.traceEvent?.('voice', 'idle', 'start-blocked', { reason: 'native-callback-pending' });
+      return;
+    }
 
     // Don't interfere with camera PTT
     if (window.__STRUCTA_PTT_TARGET__ === 'camera') {
@@ -1292,7 +1623,7 @@
       setStatus('answer mode');
     } else if (activeTriangleContext) {
       setStatus('triangle angle');
-    } else if (activeBuildContext && activeBuildContext.kind === 'thread-comment') {
+    } else if (activeBuildContext && (activeBuildContext.kind === 'thread-comment' || activeBuildContext.kind === 'capture-comment')) {
       setStatus('commenting');
     } else if (activeBuildContext && activeBuildContext.text) {
       setStatus('building ' + (activeBuildContext.surface || 'context'));
@@ -1303,6 +1634,8 @@
 
     // === R1 path: Use CreationVoiceHandler for native STT ===
     if (typeof CreationVoiceHandler !== 'undefined') {
+      nativeCapture = createNativeCapture();
+      window.__STRUCTA_NATIVE_STT_OWNER__ = 'voice';
       try {
         CreationVoiceHandler.postMessage('start');
         if (activeQuestion?.onboarding) {
@@ -1316,6 +1649,8 @@
         }
         return;
       } catch (err) {
+        nativeCapture = null;
+        if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'voice') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
         native?.appendLogEntry?.({ kind: 'voice', message: 'stt err: ' + (err?.message || 'failed') });
         if (activeQuestion?.onboarding) reportOnboardingSTTFailure('bridge-error');
       }
@@ -1404,13 +1739,33 @@
   window.addEventListener('structa-stt-ended', function(event) {
     var data = event && event.detail;
     clearOnboardingStartTimer();
-    if (data && data.transcript) {
-      if (transcriptEl) transcriptEl.textContent = data.transcript;
+    var capture = nativeCapture;
+    if (capture) {
+      if (capture.sttEnded) return;
+      capture.sttEnded = true;
+      if (window.__STRUCTA_NATIVE_STT_OWNER__ === 'voice') window.__STRUCTA_NATIVE_STT_OWNER__ = null;
+      stopListening(false);
+      if (data && data.transcript && !capture.cancelled) {
+        if (transcriptEl) transcriptEl.textContent = data.transcript;
+        consumeNativeTranscript(capture, data.transcript);
+      } else if (!capture.cancelled && capture.activeQuestion?.onboarding) {
+        reportOnboardingSTTFailure('empty-transcript', capture.activeQuestion);
+      }
+      return;
+    }
+    if (typeof CreationVoiceHandler === 'undefined' && data?.transcript
+        && (activeQuestion || activeBuildContext || activeTriangleContext)) {
+      // Browser/test fallback has no native capture cycle; it may still route
+      // an explicitly focused transcript through the active local context.
       handleTranscript(data.transcript);
       stopListening(false);
-    } else if (activeQuestion?.onboarding) {
-      reportOnboardingSTTFailure('empty-transcript');
+      return;
     }
+    // A native callback without a live capture is stale/orphaned. It must not
+    // inherit whatever question or project context happens to be active now.
+    native?.traceEvent?.('voice', 'idle', 'orphan-stt-ignored', {
+      hasTranscript: !!(data && data.transcript)
+    });
   });
 
   function open() {
@@ -1442,6 +1797,9 @@
 
   var cleanupOnHide = function() {
     if (document.hidden || overlay?.classList.contains('open')) close();
+    // Keep an unresolved native capture as a tombstone for the lifetime of
+    // this WebView. Only a new page context may reset it safely: visibility
+    // alone does not prove that Rabbit cannot still deliver the old callback.
   };
 
   window.addEventListener('pagehide', cleanupOnHide);
@@ -1457,6 +1815,7 @@
     setTriangleContext: setTriangleContext,
     setContextLabel: setContextLabel,
     get listening() { return listening; },
-    get activeQuestion() { return activeQuestion; }
+    get activeQuestion() { return activeQuestion; },
+    get nativeCapturePending() { return !!(nativeCapture && !nativeCapture.sttEnded); }
   });
 })();

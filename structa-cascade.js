@@ -96,6 +96,8 @@
   const TUTORIAL_STEP2_TIMEOUT_MS = 45000;
   const TUTORIAL_STEP2_START_TIMEOUT_MS = 800;
   const FLUSH_CONFIRM_HOLD_MS = 1000;
+  const DELETE_CONFIRM_HOLD_MS = 1000;
+  const DELETE_CONFIRM_TIMEOUT_MS = 45000;
   const LOG_FOLLOW_THRESHOLD = 24;
   const WHEEL_STEP_THRESHOLD = 36;
   const NATIVE_SCROLL_DEDUPE_MS = 75;
@@ -141,6 +143,8 @@
   let tutorialSkipSuppressClickUntil = 0;
   let tutorialStep2HintTimer = null;
   let flushConfirmTimer = null;
+  let deleteConfirmTimer = null;
+  let deleteConfirmTicker = null;
   function startDebugFPSMeter() {
     if (!debugMode || fpsMeterEl) return;
     fpsMeterEl = document.createElement('div');
@@ -543,6 +547,76 @@
     if (!flushConfirmTimer) return;
     clearTimeout(flushConfirmTimer);
     flushConfirmTimer = null;
+  }
+
+  function clearDeleteConfirmTimer() {
+    if (!deleteConfirmTimer) return;
+    clearTimeout(deleteConfirmTimer);
+    deleteConfirmTimer = null;
+  }
+
+  function stopDeleteConfirmTicker() {
+    if (!deleteConfirmTicker) return;
+    clearInterval(deleteConfirmTicker);
+    deleteConfirmTicker = null;
+  }
+
+  function startDeleteConfirmTicker() {
+    stopDeleteConfirmTicker();
+    deleteConfirmTicker = setInterval(function() {
+      if (!stateData.deleteConfirmHolding || !stateData.pendingDeleteProject) {
+        stopDeleteConfirmTicker();
+        return;
+      }
+      scheduleRender();
+    }, 90);
+  }
+
+  function clearPendingDeleteProject() {
+    stopDeleteConfirmTicker();
+    clearDeleteConfirmTimer();
+    stateData.pendingDeleteProject = null;
+    stateData.deleteConfirmHolding = false;
+    stateData.deleteConfirmStartedAt = 0;
+  }
+
+  // Spoken delete/remove commands never delete directly: they enter this
+  // explicit on-screen confirmation path. Deletion happens only after a
+  // deliberate approval UI action (hold-to-confirm); back/scroll/release
+  // cancel without side effects.
+  function beginDeleteProjectConfirm(name) {
+    clearPendingDeleteProject();
+    stateData.pendingDeleteProject = { name: String(name || '').trim(), requestedAt: Date.now() };
+    pushLog('delete project: hold to confirm', 'voice');
+    scheduleRender();
+    deleteConfirmTimer = setTimeout(function() {
+      deleteConfirmTimer = null;
+      if (!stateData.pendingDeleteProject) return;
+      pushLog('delete cancelled', 'voice');
+      clearPendingDeleteProject();
+      scheduleRender();
+    }, DELETE_CONFIRM_TIMEOUT_MS);
+  }
+
+  function executePendingDeleteProject() {
+    const pending = stateData.pendingDeleteProject;
+    stopDeleteConfirmTicker();
+    clearDeleteConfirmTimer();
+    stateData.deleteConfirmHolding = false;
+    stateData.deleteConfirmStartedAt = 0;
+    stateData.pendingDeleteProject = null;
+    if (!pending || !native?.deleteProject) {
+      scheduleRender();
+      return;
+    }
+    const deleted = native.deleteProject(pending.name);
+    if (deleted && deleted.ok) {
+      pushLog('project deleted', 'voice');
+    } else {
+      pushLog((deleted && deleted.error) || 'delete unavailable', 'voice');
+    }
+    transition(STATES.HOME);
+    render();
   }
 
   function tutorialSkipEligible(step = getOnboardingStep()) {
@@ -4294,6 +4368,44 @@
     });
   }
 
+  function drawDeleteConfirmOverlay() {
+    const pending = stateData.pendingDeleteProject;
+    if (!pending) return;
+    const holding = !!stateData.deleteConfirmHolding;
+    const name = String(pending.name || 'active project').slice(0, 26);
+    mk('rect', { x: 0, y: 0, width: 240, height: 292, fill: 'rgba(8,8,8,0.72)' });
+    mk('rect', { x: 16, y: 84, width: 208, height: 148, rx: 14, fill: 'rgba(245,240,232,0.98)' });
+    text(26, 112, 'delete project?', {
+      fill: 'rgba(8,8,8,0.96)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '16'
+    });
+    wrapTextBlock(undefined, lower('"' + name + '"'), 26, 138, 180, 14, 'rgba(8,8,8,0.92)', '13', 2);
+    if (holding) {
+      const started = Number(stateData.deleteConfirmStartedAt || 0);
+      const fraction = started ? Math.min(1, (Date.now() - started) / DELETE_CONFIRM_HOLD_MS) : 0;
+      mk('rect', { x: 26, y: 196, width: 188, height: 8, rx: 4, fill: 'rgba(8,8,8,0.16)' });
+      mk('rect', { x: 26, y: 196, width: Math.max(4, Math.round(188 * fraction)), height: 8, rx: 4, fill: '#c73b3b' });
+      text(26, 220, 'releasing cancels', {
+        fill: 'rgba(8,8,8,0.5)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '10'
+      });
+    } else {
+      text(26, 208, 'hold to confirm', {
+        fill: 'rgba(8,8,8,0.9)',
+        'font-family': 'PowerGrotesk-Regular, sans-serif',
+        'font-size': '13'
+      });
+    }
+    text(214, 276, 'back · cancel', {
+      fill: 'rgba(245,240,232,0.9)',
+      'font-family': 'PowerGrotesk-Regular, sans-serif',
+      'font-size': '10',
+      'text-anchor': 'end'
+    });
+  }
+
   // === Main render ===
   function renderNow() {
     const renderStartedAt = performance.now();
@@ -4322,6 +4434,7 @@
     drawTriangleOverlay();
     drawTriangleIndicator();
     drawAmbientQueueIndicator();
+    drawDeleteConfirmOverlay();
 
     const isContentSurface = surface === 'project' || surface === 'insight' || surface === 'show' || surface === 'tell' || surface === 'triangle' || currentState === STATES.PROJECT_SWITCHER;
     logDrawer.style.display = isContentSurface ? 'none' : '';
@@ -4336,6 +4449,11 @@
 
   function handleScrollDirection(direction) {
     clearPendingSideClick();
+    if (stateData.pendingDeleteProject) {
+      clearPendingDeleteProject();
+      scheduleRender();
+      return;
+    }
     if (stateData.flushRequestSource) {
       clearFlushRequest();
       scheduleRender();
@@ -4706,6 +4824,19 @@
 
   function handleLongPressStart() {
     clearPendingSideClick();
+    if (stateData.pendingDeleteProject) {
+      stateData.deleteConfirmHolding = true;
+      stateData.deleteConfirmStartedAt = Date.now();
+      clearDeleteConfirmTimer();
+      deleteConfirmTimer = setTimeout(function() {
+        deleteConfirmTimer = null;
+        executePendingDeleteProject();
+      }, DELETE_CONFIRM_HOLD_MS);
+      startDeleteConfirmTicker();
+      document.body.classList.add('input-locked');
+      scheduleRender();
+      return;
+    }
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE && native?.restoreLastFlushSnapshot) {
       clearFlushConfirmTimer();
       stateData.flushConfirmHolding = true;
@@ -4874,6 +5005,14 @@
   function handleLongPressEnd() {
     clearPendingSideClick();
     document.body.classList.remove('input-locked');
+    if (stateData.deleteConfirmHolding) {
+      stateData.deleteConfirmHolding = false;
+      stateData.deleteConfirmStartedAt = 0;
+      stopDeleteConfirmTicker();
+      clearDeleteConfirmTimer();
+      scheduleRender();
+      return;
+    }
     if (stateData.flushConfirmHolding) {
       stateData.flushConfirmHolding = false;
       clearFlushConfirmTimer();
@@ -4934,6 +5073,13 @@
 
   function handleNativeBack(event) {
     clearPendingSideClick();
+    if (stateData.pendingDeleteProject) {
+      if (event) event.preventDefault?.();
+      pushLog('delete cancelled', 'voice');
+      clearPendingDeleteProject();
+      scheduleRender();
+      return;
+    }
     if (getUIState().flush_undo_available_until > Date.now() && currentState === STATES.NOW_BROWSE) {
       if (event) event.preventDefault?.();
       native?.updateUIState?.({ flush_undo_available_until: 0 });
@@ -5644,14 +5790,10 @@
     }
 
     if (cmd.command === 'delete-project') {
-      var deleted = native?.deleteProject?.(cmd.name);
-      if (deleted && deleted.ok) {
-        pushLog('project deleted', 'voice');
-        transition(STATES.HOME);
-      } else {
-        pushLog((deleted && deleted.error) || 'delete unavailable', 'voice');
-      }
-      render();
+      // Never delete directly from a spoken command. Enter the explicit
+      // on-screen confirmation path; deletion only after deliberate
+      // approval UI action (hold to confirm). Back/scroll cancel safely.
+      beginDeleteProjectConfirm(cmd.name);
     }
   });
 
@@ -5706,6 +5848,9 @@
       if (index >= 0) selectIndex(index);
     },
     notifyCard,
-    STATES
+    STATES,
+    getPendingDeleteProject: () => stateData.pendingDeleteProject
+      ? { ...stateData.pendingDeleteProject, pending: true }
+      : { pending: false }
   });
 })();

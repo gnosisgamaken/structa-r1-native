@@ -1266,7 +1266,13 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def read_json(self):
-        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw_length = self.headers.get("Content-Length", "0") or "0"
+        try:
+            length = int(raw_length)
+        except (TypeError, ValueError):
+            return None
+        if length < 0:
+            return None
         raw = self.rfile.read(length) if length else b"{}"
         try:
             return json.loads(raw.decode("utf-8") or "{}")
@@ -1292,7 +1298,8 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 body = target.read_bytes()
             except Exception as err:
-                self.send_json(500, {"ok": False, "error": str(err)})
+                self.log_error("asset read failed: %r", err)
+                self.send_json(500, {"ok": False, "error": "asset read failed"})
                 return
             self.send_response(200)
             self.send_header("Content-Type", self.guess_type(str(target)))
@@ -1329,7 +1336,23 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
                 ],
             })
             return
-        return super().do_GET()
+        if parsed.path in ("/", "/index.html"):
+            index_path = pathlib.Path(os.getcwd()) / "index.html"
+            try:
+                body = index_path.read_bytes()
+            except Exception as err:
+                self.log_error("index read failed: %r", err)
+                self.send_json(500, {"ok": False, "error": "index unavailable"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        # Unknown paths never fall through to SimpleHTTPRequestHandler:
+        # that would disclose arbitrary files from the working directory.
+        self.send_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -1401,7 +1424,8 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
                 data = handler[0](payload)
             self.send_json(200, data)
         except Exception as err:
-            self.send_json(500, {"ok": False, "error": str(err)})
+            self.log_error("500 on %s: %r", parsed.path, err)
+            self.send_json(500, {"ok": False, "error": "internal error"})
 
 
 if __name__ == "__main__":

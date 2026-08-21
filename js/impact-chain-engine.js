@@ -325,38 +325,143 @@
     return questionId;
   }
 
-  function createDecisionNode(item) {
-    var node = native?.addNode?.({
-      type: 'decision',
-      status: 'open',
-      title: item.body,
-      body: item.body,
-      source: 'chain',
-      decision_options: item.options || [],
-      meta: {
-        evidence_claims: item.evidence || [],
-        rationale: item.rationale || '',
-        recommended: item.recommended || '',
-        reasoning_generated: true
-      }
-    });
-    if (node) chain.totalDecisions += 1;
-    return node?.node_id || '';
+  function normalizeProposalKey(kind, text) {
+    return lower(kind) + '::' + lower(text || '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
-  function createTaskNode(item) {
-    var node = native?.addNode?.({
-      type: 'task',
-      status: 'open',
-      title: item.body,
-      body: item.body,
-      source: 'chain',
-      meta: {
-        evidence_claims: item.evidence || [],
-        reasoning_generated: true
-      }
+  // Autonomous chain steps never create decision/task nodes. Outputs are
+  // kept advisory ("proposed") here until a deliberate user approval
+  // action materializes them via approveChainProposal.
+  function proposeChainOutput(kind, item, branchId) {
+    var proposal = null;
+    native?.touchProjectMemory?.(function(project) {
+      project.pending_chain_outputs = Array.isArray(project.pending_chain_outputs) ? project.pending_chain_outputs : [];
+      var title = compact(item?.body || '', 160);
+      if (!title) return;
+      var key = normalizeProposalKey(kind, title);
+      var duplicate = project.pending_chain_outputs.some(function(existing) {
+        return existing?.kind === kind && normalizeProposalKey(kind, existing.title || existing.body || '') === key;
+      });
+      if (duplicate) return;
+      proposal = {
+        proposal_id: kind + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+        kind: kind,
+        status: 'proposed',
+        title: title,
+        body: title,
+        options: Array.isArray(item.options) ? item.options.slice(0, 3) : [],
+        recommended: compact(item.recommended || '', 48),
+        evidence: Array.isArray(item.evidence) ? item.evidence.slice() : [],
+        rationale: compact(item.rationale || '', 180),
+        branchId: branchId || 'main',
+        source: 'chain',
+        proposed_at: new Date().toISOString()
+      };
+      project.pending_chain_outputs.unshift(proposal);
+      project.pending_chain_outputs = project.pending_chain_outputs.slice(0, 24);
     });
-    return node?.node_id || '';
+    if (proposal) {
+      native?.traceEvent?.('chain.proposal', kind, 'proposed', {
+        proposalId: proposal.proposal_id,
+        title: compact(proposal.title, 60)
+      });
+    }
+    return proposal;
+  }
+
+  function findChainProposal(proposalId) {
+    var project = currentProject();
+    var pending = Array.isArray(project?.pending_chain_outputs) ? project.pending_chain_outputs : [];
+    return pending.find(function(entry) { return entry?.proposal_id === proposalId; }) || null;
+  }
+
+  function removeChainProposal(proposalId) {
+    var removed = null;
+    native?.touchProjectMemory?.(function(project) {
+      project.pending_chain_outputs = Array.isArray(project.pending_chain_outputs) ? project.pending_chain_outputs : [];
+      var index = project.pending_chain_outputs.findIndex(function(entry) { return entry?.proposal_id === proposalId; });
+      if (index === -1) return;
+      removed = project.pending_chain_outputs.splice(index, 1)[0] || null;
+    });
+    return removed;
+  }
+
+  // Explicit user-approved execution of an advisory chain output.
+  // A decision/task node is created ONLY through this deliberate path.
+  function approveChainProposal(proposalId, selectedOptionIndex, selectedOption) {
+    var proposal = findChainProposal(proposalId);
+    if (!proposal) return { ok: false, error: 'proposal not found' };
+    var node = null;
+    if (proposal.kind === 'decision') {
+      var options = Array.isArray(proposal.options) ? proposal.options : [];
+      var resolvedOption = (typeof selectedOption === 'string' && selectedOption) ? selectedOption : null;
+      if (!resolvedOption && typeof selectedOptionIndex === 'number' && options[selectedOptionIndex]) {
+        resolvedOption = options[selectedOptionIndex];
+      }
+      node = native?.addNode?.({
+        type: 'decision',
+        status: 'resolved',
+        title: proposal.title,
+        body: proposal.body,
+        source: 'chain',
+        decision_options: options,
+        selected_option: resolvedOption,
+        resolved_at: new Date().toISOString(),
+        meta: {
+          evidence_claims: proposal.evidence || [],
+          rationale: proposal.rationale || '',
+          recommended: proposal.recommended || '',
+          reasoning_generated: true,
+          approved_by: 'user',
+          proposal_id: proposal.proposal_id
+        }
+      });
+      if (node) chain.totalDecisions += 1;
+    } else {
+      node = native?.addNode?.({
+        type: 'task',
+        status: 'open',
+        title: proposal.title,
+        body: proposal.body,
+        source: 'chain',
+        meta: {
+          evidence_claims: proposal.evidence || [],
+          reasoning_generated: true,
+          approved_by: 'user',
+          proposal_id: proposal.proposal_id
+        }
+      });
+    }
+    removeChainProposal(proposalId);
+    if (node) {
+      native?.traceEvent?.('chain.proposal', proposal.kind, 'approved', {
+        proposalId: proposalId,
+        nodeId: node.node_id || ''
+      });
+      if (proposal.kind === 'decision') {
+        window.dispatchEvent(new CustomEvent('structa-decision-created', {
+          detail: { ids: [node.node_id || ''], count: 1 }
+        }));
+      }
+      window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+      window.dispatchEvent(new CustomEvent('structa-chain-updated', {
+        detail: { phase: chain.currentPhase, focusId: currentFocus()?.id || '' }
+      }));
+    }
+    return { ok: !!node, nodeId: node?.node_id || '', kind: proposal.kind };
+  }
+
+  function dismissChainProposal(proposalId) {
+    var removed = removeChainProposal(proposalId);
+    if (!removed) return { ok: false, error: 'proposal not found' };
+    native?.traceEvent?.('chain.proposal', removed.kind, 'dismissed', { proposalId: proposalId });
+    window.dispatchEvent(new CustomEvent('structa-memory-updated'));
+    return { ok: true };
+  }
+
+  function getPendingChainOutputs() {
+    var project = currentProject();
+    return JSON.parse(JSON.stringify(Array.isArray(project?.pending_chain_outputs) ? project.pending_chain_outputs : []));
   }
 
   function maybeResurrectQuestions(storedClaims) {
@@ -411,16 +516,16 @@
     });
     questionIds = questionIds.filter(Boolean);
 
-    var decisionIds = [];
+    var decisionProposals = [];
     (produced.decisions || []).forEach(function(item) {
-      var nodeId = createDecisionNode(item);
-      if (nodeId) decisionIds.push(nodeId);
+      var proposal = proposeChainOutput('decision', item, branchId);
+      if (proposal) decisionProposals.push(proposal);
     });
 
-    var taskIds = [];
+    var taskProposals = [];
     (produced.tasks || []).forEach(function(item) {
-      var nodeId = createTaskNode(item);
-      if (nodeId) taskIds.push(nodeId);
+      var proposal = proposeChainOutput('task', item, branchId);
+      if (proposal) taskProposals.push(proposal);
     });
 
     chain.totalImpacts += 1;
@@ -429,7 +534,7 @@
       focus_id: focus?.id || '',
       type: focus?.target?.kind || 'focus',
       verb: focus?.phase || 'observe',
-      output: compact(validated?.step_metadata?.rationale || (questionIds[0] ? 'question created' : storedClaims[0]?.text || decisionIds[0] || taskIds[0] || 'no change'), 120),
+      output: compact(validated?.step_metadata?.rationale || (questionIds[0] ? 'question created' : storedClaims[0]?.text || decisionProposals[0]?.title || taskProposals[0]?.title || 'no change'), 120),
       created_at: new Date().toISOString()
     });
     chain.impacts = chain.impacts.slice(0, 24);
@@ -445,6 +550,16 @@
       project.impact_chain = project.impact_chain.slice(0, 32);
     });
 
+    var producedCounts = {
+      claimIds: storedClaims.map(function(entry) { return entry.id; }),
+      questionIds: questionIds,
+      decisionIds: [],
+      taskIds: [],
+      decisionProposals: decisionProposals.map(function(entry) { return entry.proposal_id; }),
+      taskProposals: taskProposals.map(function(entry) { return entry.proposal_id; }),
+      count: storedClaims.length + questionIds.length + decisionProposals.length + taskProposals.length
+    };
+
     window.dispatchEvent(new CustomEvent('structa-impact', {
       detail: {
         focusId: focus?.id || '',
@@ -452,22 +567,8 @@
         produced: producedCounts
       }
     }));
-    if (decisionIds.length) {
-      window.dispatchEvent(new CustomEvent('structa-decision-created', {
-        detail: {
-          ids: decisionIds.slice(),
-          count: decisionIds.length
-        }
-      }));
-    }
 
-    return {
-      claimIds: storedClaims.map(function(entry) { return entry.id; }),
-      questionIds: questionIds,
-      decisionIds: decisionIds,
-      taskIds: taskIds,
-      count: storedClaims.length + questionIds.length + decisionIds.length + taskIds.length
-    };
+    return producedCounts;
   }
 
   function rejectCodeToTrace(code, detail) {
@@ -720,6 +821,9 @@
     isPaused: isPaused,
     touchActivity: touchActivity,
     requestImmediateBeat: requestImmediateBeat,
+    approveChainProposal: approveChainProposal,
+    dismissChainProposal: dismissChainProposal,
+    getPendingChainOutputs: getPendingChainOutputs,
     get active() { return !!chain.active; },
     get phase() { return chain.currentPhase; },
     get bpm() { return chain.bpm; },

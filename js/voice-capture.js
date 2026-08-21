@@ -260,8 +260,10 @@
 
       case 'delete-project':
           native?.appendLogEntry?.({ kind: 'voice', message: 'delete project: ' + (arg || 'active').slice(0, 30) });
+          // Sensitive mutation: the cascade must enter an explicit on-screen
+          // confirmation path — never delete directly from speech.
           window.dispatchEvent(new CustomEvent('structa-voice-command', {
-            detail: { command: 'delete-project', name: arg }
+            detail: { command: 'delete-project', name: arg, pendingConfirm: true }
           }));
           window.dispatchEvent(new CustomEvent('structa-fast-feedback', {
             detail: { source: 'delete-project-command' }

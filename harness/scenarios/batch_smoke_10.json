@@ -1,0 +1,118 @@
+[
+  {
+    "id": "S01",
+    "archetype": "founder-cold-start",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "voice_transcript": "i need this to stop being vague and tell me what matters first",
+    "mode": "summarize"
+  },
+  {
+    "id": "S02",
+    "archetype": "founder-cold-start",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "empty but active",
+    "voice_transcript": "help me begin this right without overcomplicating it",
+    "mode": "clarify"
+  },
+  {
+    "id": "S03",
+    "archetype": "operator-backlog",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "voice_transcript": "we keep collecting things and nothing moves",
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S04",
+    "archetype": "handoff-operator",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "7 captures, 3 open questions, 2 pending decisions, approvals unclear",
+    "voice_transcript": "give me something i can hand off without making up facts",
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S05",
+    "archetype": "camera-observer",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "new structure forming",
+    "image_descriptions": [
+      "whiteboard with four columns labeled show tell know now and arrows between them",
+      "sticky note saying approvals are unclear and nothing moves"
+    ],
+    "voice_transcript": "this is the shape in my head but it still feels loose",
+    "mode": "summarize"
+  },
+  {
+    "id": "S06",
+    "archetype": "camera-observer",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "new structure forming",
+    "image_descriptions": [
+      "dashboard sketch with a large now card and three smaller stacked cards",
+      "annotation says too much noise in the lower area"
+    ],
+    "voice_transcript": "what is the most important thing this image is telling us",
+    "mode": "clarify"
+  },
+  {
+    "id": "S07",
+    "archetype": "asset-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, one selected image asset, one related voice note",
+    "image_descriptions": [
+      "mobile screen mockup with a bulky footer log taking too much space"
+    ],
+    "asset_comments": [
+      "the footer is telling too much and killing calmness"
+    ],
+    "mode": "propose_actions"
+  },
+  {
+    "id": "S08",
+    "archetype": "asset-commenter",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "mid-flight, one selected image asset, one related voice note",
+    "image_descriptions": [
+      "mobile screen mockup with a bulky footer log taking too much space"
+    ],
+    "asset_comments": [
+      "this should become a cleaner handoff note"
+    ],
+    "mode": "withdraw_export"
+  },
+  {
+    "id": "S09",
+    "archetype": "triangle-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle surface open, two assets selected",
+    "triangle": {
+      "point_a": "voice note: we need stricter approval gates",
+      "point_b": "image description: sketch shows actions hidden under the log",
+      "angle": "what signal appears if the app must feel calm but decisive"
+    },
+    "mode": "inspect"
+  },
+  {
+    "id": "S10",
+    "archetype": "triangle-user",
+    "project_name": "Atlas",
+    "project_domain": "professional services project cognition",
+    "project_state": "triangle surface open, two assets selected",
+    "triangle": {
+      "point_a": "voice note: users capture a lot but hesitate to commit",
+      "point_b": "image description: current now card is visually weak",
+      "angle": "what should happen next to make decisions more visible"
+    },
+    "mode": "solve"
+  }
+]

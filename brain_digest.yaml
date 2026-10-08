@@ -1,0 +1,100 @@
+version: 1
+schema: playgranada_evidence_digest_v1
+generated_by: evidence_digest_backlog_graph_v0
+generated_at: 2026-08-06T09:34:07.025206+01:00
+review_status: deterministic_local_review
+folder: /Users/pedro/company/PlayGranada/Operations/structa-r1-native
+relative_to_operations: structa-r1-native
+node_id: evidence:a779da63f649
+concept: Structa
+canonical_state: /Users/pedro/clawd/knowledge/Structa/STATE.yaml
+project: PlayGranada
+mutation_boundary: local_contract_write_only
+proof_scope: "Evidence-folder contract only; does not validate live business facts."
+safety_boundary: "No external LLM, no live mutations, no file moves/deletes."
+backlog_classification:
+  retention_class: live_reference
+  reason: Recent dated/modified Operations evidence; keep as current graph reference.
+  keeper_contract_written: true
+  archive_candidate_policy: "Archive candidates are centrally classified only; no folder-local contract is written unless reclassified."
+node_contract:
+  bounded_input: "One Operations evidence folder, scanned to depth 2 with secret-line redaction."
+  bounded_job: "Summarize folder shape and connect it to the canonical knowledge state."
+  validated_output: "README.md plus brain_digest.yaml present in the folder."
+edge_contracts:
+  - edge_type: feeds_state_context
+    from: evidence:a779da63f649
+    to: state:Structa
+    artifact: brain_digest.yaml
+    validation: "canonical_state path exists at generation time"
+contents:
+  file_count: 371
+  dir_count_scanned: 18
+  total_bytes_scanned_depth_2: 6907797
+  extensions:
+    .json: 171
+    .md: 154
+    .js: 17
+    .png: 6
+    .svg: 6
+    .py: 4
+    .jpg: 2
+    .jsonl: 2
+    .mjs: 2
+    .html: 1
+    .pdf: 1
+    .sh: 1
+    .ttf: 1
+    .txt: 1
+    .yaml: 1
+  recent_files:
+    - path: brain_digest.yaml
+      size_bytes: 4333
+      mtime: 2026-08-06T09:33:17.334673+01:00
+    - path: README.md
+      size_bytes: 3445
+      mtime: 2026-08-06T09:33:17.334411+01:00
+    - path: STRUCTA_FULL_AWESOMENESS_AUDIT_2026-07-02.md
+      size_bytes: 11578
+      mtime: 2026-07-02T19:28:04.654685+01:00
+    - path: harness/outputs/trace-harness-20260702-191130.md
+      size_bytes: 4955
+      mtime: 2026-07-02T19:11:30.496005+01:00
+    - path: harness/outputs/trace-harness-20260702-191130.json
+      size_bytes: 16226
+      mtime: 2026-07-02T19:11:30.495799+01:00
+    - path: play_granada_front_perspective_corrected.jpg
+      size_bytes: 711466
+      mtime: 2026-06-25T18:08:58.207501+01:00
+    - path: play_granada_signage_planning_board.jpg
+      size_bytes: 1182654
+      mtime: 2026-06-25T18:08:55.148267+01:00
+    - path: Briefing_Necesidades_Cliente_Granada_Maslow.pdf
+      size_bytes: 50031
+      mtime: 2026-06-18T22:07:11.305390+01:00
+    - path: harness/outputs/trace-harness-20260424-113710.md
+      size_bytes: 4955
+      mtime: 2026-04-24T10:37:10.351640+01:00
+    - path: harness/outputs/trace-harness-20260424-113710.json
+      size_bytes: 16226
+      mtime: 2026-04-24T10:37:10.351477+01:00
+  sample_headings:
+    - "README.md :: # Structa R1 Native"
+    - "STRUCTA_FULL_AWESOMENESS_AUDIT_2026-07-02.md :: # Structa Full-Awesomeness Audit — 2026-07-02"
+    - "harness/outputs/trace-harness-20260702-191130.md :: # Structa Trace Harness — 20260702-191130"
+    - "harness/outputs/trace-harness-20260424-113710.md :: # Structa Trace Harness — 20260424-113710"
+    - "harness/outputs/trace-harness-20260423-214713.md :: # Structa Trace Harness — 20260423-214713"
+    - "harness/outputs/trace-harness-20260423-214503.md :: # Structa Trace Harness — 20260423-214503"
+    - "harness/outputs/trace-harness-20260423-213417.md :: # Structa Trace Harness — 20260423-213417"
+    - "harness/outputs/trace-harness-20260422-181228.md :: # Structa Trace Harness — 20260422-181228"
+review:
+  method: "Deterministic local metadata scan plus first headings from safe text files."
+  reviewer: "Hermes no-agent script evidence_digest_backlog_graph.py"
+  confidence: medium
+  limitations:
+    - "No semantic LLM review."
+    - "No live Checkfront/Portal/Slack/customer verification."
+    - "Secret-bearing file names and lines are skipped/redacted."
+next_actions:
+  - "If this folder remains operationally important, link this digest from the relevant STATE.yaml context_chain."
+  - "If the folder is obsolete, classify it later; do not delete from this contract."

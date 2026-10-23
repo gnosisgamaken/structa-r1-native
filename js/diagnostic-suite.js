@@ -489,10 +489,14 @@
       method: opts.method || 'POST',
       headers: { 'Content-Type': 'application/json' }
     };
+    if (window.StructaServerConfig) {
+      var auth = window.StructaServerConfig.authHeaders(path);
+      Object.keys(auth).forEach(function(key) { request.headers[key] = auth[key]; });
+    }
     if (request.method !== 'GET') {
       request.body = JSON.stringify(opts.body || {});
     }
-    return fetch(path, request).then(function(response) {
+    return fetch(window.StructaServerConfig ? window.StructaServerConfig.resolve(path) : path, request).then(function(response) {
       return response.text().then(function(text) {
         var data = {};
         try {

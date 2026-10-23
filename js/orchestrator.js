@@ -2,11 +2,15 @@
   'use strict';
 
   function postJSON(path, payload) {
-    return fetch(path, {
+    var target = (window.StructaServerConfig ? window.StructaServerConfig.resolve(path) : path);
+    var headers = { 'Content-Type': 'application/json' };
+    if (window.StructaServerConfig) {
+      var auth = window.StructaServerConfig.authHeaders(path);
+      Object.keys(auth).forEach(function(key) { headers[key] = auth[key]; });
+    }
+    return fetch(target, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: headers,
       body: JSON.stringify(payload || {})
     }).then(function(response) {
       return response.json().catch(function() {

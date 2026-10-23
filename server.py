@@ -10,6 +10,30 @@ CLAIMS_EXTRACT_BUCKETS = {}
 CLAIMS_EXTRACT_PER_MINUTE = 10
 BUILD_SHA = os.environ.get("STRUCTA_BUILD_SHA", "workspace")
 BUILD_AT = os.environ.get("STRUCTA_BUILT_AT", "")
+AUTH_TOKEN = os.environ.get("STRUCTA_AUTH_TOKEN", "")
+ALLOWED_ORIGINS = set(filter(None, os.environ.get("STRUCTA_ALLOWED_ORIGINS", "").split(",")))
+
+
+def auth_ok(headers):
+    """Gate for /v1/* and /buildinfo over a public tunnel.
+
+    Two independent checks; when configured, at least one must pass:
+      - Origin allow-list (STRUCTA_ALLOWED_ORIGINS, comma-separated) — the r1
+        webview sends its creation origin on every fetch.
+      - Shared token (X-Structa-Token == STRUCTA_AUTH_TOKEN) for admin/curl.
+    With neither configured, all requests pass (local dev only).
+    """
+    if not AUTH_TOKEN and not ALLOWED_ORIGINS:
+        return True
+    if ALLOWED_ORIGINS:
+        origin = str(headers.get("Origin") or "").rstrip("/")
+        if origin in {o.rstrip("/") for o in ALLOWED_ORIGINS}:
+            return True
+    if AUTH_TOKEN:
+        supplied = str(headers.get("X-Structa-Token") or "").strip()
+        if supplied == AUTH_TOKEN:
+            return True
+    return False
 
 
 def compact(text, limit=220):
@@ -1314,6 +1338,9 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
             })
             return
         if parsed.path == "/buildinfo":
+            if not auth_ok(self.headers):
+                self.send_json(401, {"ok": False, "error": "unauthorized"})
+                return
             self.send_json(200, {
                 "ok": True,
                 "sha": BUILD_SHA,
@@ -1356,6 +1383,9 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/v1/") and not auth_ok(self.headers):
+            self.send_json(401, {"ok": False, "error": "unauthorized"})
+            return
         payload = self.read_json()
         if payload is None:
             self.send_json(400, {"ok": False, "error": "invalid json body"})

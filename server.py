@@ -1270,7 +1270,31 @@ def project_brief_normalize(payload):
     }
 
 
+CORS_ALLOWED_ORIGINS = ALLOWED_ORIGINS  # same allow-list gates CORS
+
+
+def cors_headers(headers, origin):
+    """Echo the origin back only when it is on the allow-list."""
+    if origin and CORS_ALLOWED_ORIGINS and origin.rstrip("/") in {o.rstrip("/") for o in CORS_ALLOWED_ORIGINS}:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
+        headers["Access-Control-Allow-Headers"] = "Content-Type, X-Structa-Token"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+
+
 class StructaHandler(http.server.SimpleHTTPRequestHandler):
+    def do_OPTIONS(self):
+        origin = str(self.headers.get("Origin") or "")
+        if not auth_ok(self.headers):
+            self.send_response(401)
+            self.end_headers()
+            return
+        self.send_response(204)
+        cors_headers(self.headers, origin)
+        for key, value in self.headers.items():
+            if key.lower().startswith("access-control-"):
+                self.send_header(key, value)
+        self.end_headers()
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
@@ -1286,6 +1310,10 @@ class StructaHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        cors_headers(self.headers, str(self.headers.get("Origin") or ""))
+        for key, value in self.headers.items():
+            if key.lower().startswith("access-control-"):
+                self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
